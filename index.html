@@ -101,7 +101,17 @@
   table.cgrid .nm i { font-style: normal; opacity: .65; margin-left: 2px; font-size: 11px; }
 
   /* 명단 편집 시트 */
+  /* 기본 table 은 width:100% 라 화면이 좁으면 칸을 줄여 글씨를 자른다.
+     최소 폭을 박아 두면 대신 상자가 가로로 굴러간다. */
+  table.sheet-t { min-width: 840px; }
   table.sheet-t td { padding: 2px 4px; }
+  /* 가로로 밀어도 누구 줄인지 보이게 번호·이름은 왼쪽에 붙여 둔다.
+     배경은 tr.gN td 가 이미 칠해 주므로 따로 주지 않는다(학년 색이 살아 있어야 한다). */
+  table.sheet-t th:nth-child(1), table.sheet-t td:nth-child(1) { position: sticky; left: 0; z-index: 1; }
+  table.sheet-t th:nth-child(2), table.sheet-t td:nth-child(2) { position: sticky; left: 34px; z-index: 1;
+    box-shadow: 1px 0 0 var(--line); }
+  table.sheet-t thead th:nth-child(1), table.sheet-t thead th:nth-child(2) { z-index: 3; }
+  table.sheet-t tr.clsrow td { position: static; }
   table.sheet-t input[type=text], table.sheet-t select { width: 100%; border: 1px solid transparent; background: transparent;
     border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 13px; color: inherit; }
   table.sheet-t input[type=text]:hover, table.sheet-t select:hover { border-color: var(--line); background: #fff; }
@@ -165,6 +175,8 @@
   details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 6px 0; }
   @media (max-width: 760px) {
     .nav button { padding: 6px 10px; font-size: 13px; }
+    .tbl, .tbl.tall { max-height: calc(100vh - 240px); }
+    .gridwrap { max-height: calc(100vh - 230px); }
     .wrap { padding: 8px; }
     .card { padding: 12px; }
   }
@@ -718,8 +730,8 @@ function studentEditHtml(assigned) {
       (loose.length ? '<div style="margin-top:' + (drift.length ? "6px" : "0") + '"><b>반에만 있는 항목 ' + loose.length + '건</b> — 사람 정보가 없어 명단에 안 뜬다. ' +
         '<button class="mini" id="st-link">사람으로 만들어 잇기</button></div>' : "") + '</div>' : "") +
     '<div class="tbl tall"><table class="sheet-t"><thead><tr>' +
-    '<th style="width:34px">#</th><th style="width:110px">이름</th><th style="width:74px">학년</th><th style="width:130px">학교</th>' +
-    '<th style="width:92px">담임</th><th style="width:190px">반</th><th>메모</th><th style="width:34px"></th></tr></thead>' +
+    '<th style="width:34px">#</th><th style="width:104px">이름</th><th style="width:82px">학년</th><th style="width:150px">학교</th>' +
+    '<th style="width:104px">담임</th><th style="width:200px">반</th><th style="width:130px">메모</th><th style="width:36px"></th></tr></thead>' +
     '<tbody id="st-rows">' + rows.map(editRowHtml).join("") +
     '<tr class="newrow"><td class="muted">+</td><td colspan="7"><input type="text" id="st-new" placeholder="새 학생 이름을 치고 Enter"></td></tr>' +
     '</tbody></table></div>' +
@@ -746,7 +758,7 @@ function editRowHtml(x, i) {
     '<td><select data-f="grade"><option value="">—</option>' + GRADES.map(function (v) { return '<option' + (v === g ? " selected" : "") + '>' + v + '</option>'; }).join("") + '</select></td>' +
     '<td><input type="text" data-f="school" list="st-schools" value="' + esc(x.school || "") + '"></td>' +
     '<td><select data-f="homeroom"><option value="">—</option>' + S.teachers.map(function (t) { return '<option value="' + esc(t.tid) + '"' + (t.tid === x.homeroom ? " selected" : "") + '>' + esc(t.name) + '</option>'; }).join("") + '</select></td>' +
-    '<td class="wrapc"><button class="mini cls-btn">' + (cls.length ? cls.map(function (c) { return esc(c.name); }).join(", ") : '<span class="red">미배정</span>') + '</button></td>' +
+    '<td><button class="mini cls-btn">' + (cls.length ? cls.map(function (c) { return esc(c.name); }).join(", ") : '<span class="red">미배정</span>') + '</button></td>' +
     '<td><input type="text" data-f="memo" value="' + esc(memo) + '" placeholder="이 앱에만 남는 메모"></td>' +
     '<td><button class="x del" title="지우기">×</button></td></tr>' +
     (S.stOpen === x.pid ? clsRowHtml(x.pid) : "");
