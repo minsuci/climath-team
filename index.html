@@ -237,6 +237,9 @@ async function sheetsApi(body) {
 
 // ---------- 로그인 ----------
 var root = $("#root");
+// 로그인에 실패한 이유. 실패 직후 signOut 이 onAuthStateChanged 를 깨워 renderLogin 이
+// 한 번 더 돌기 때문에, 인자로만 넘기면 메시지가 지워진다. 다음 시도 때 비운다.
+var LOGIN_ERR = "";
 function renderLogin(msg) {
   root.innerHTML =
     '<div class="top"><h1>한민수의 <b>대시보드</b></h1><span class="date">' + fmtMD(TODAY) + '</span></div>' +
@@ -244,7 +247,7 @@ function renderLogin(msg) {
     '<select id="lg-t"><option value="">불러오는 중...</option></select>' +
     '<input id="lg-p" type="password" inputmode="numeric" placeholder="PIN" autocomplete="current-password">' +
     '<button class="btn" id="lg-go">들어가기</button>' +
-    '<div class="err" id="lg-err">' + esc(msg || "") + '</div>' +
+    '<div class="err" id="lg-err">' + esc(msg || LOGIN_ERR || "") + '</div>' +
     '<p class="muted" style="font-size:12px">수업관리 앱과 같은 계정이다. 관리자만 들어올 수 있다.</p></div></div>';
   authApi({ action: "teachers" }).then(function (r) {
     var ts = (r.teachers || []).filter(function (t) { return t.status !== "pending"; });
@@ -254,16 +257,40 @@ function renderLogin(msg) {
   }).catch(function (e) { $("#lg-err").textContent = e.message; });
   var go = async function () {
     var tid = $("#lg-t").value, pin = $("#lg-p").value;
-    $("#lg-err").textContent = "";
+    if (!pin) { $("#lg-err").textContent = "PIN을 넣어주세요"; return; }
+    LOGIN_ERR = ""; $("#lg-err").textContent = "";
+    var btn = $("#lg-go"); btn.disabled = true; btn.textContent = "확인 중...";
+    // 프로젝트 둘에 차례로 로그인한다. 그 사이 boot()이 돌면 "한쪽만 로그인됨"으로 보고
+    // 방금 된 로그인을 도로 끊는다. 끝날 때까지 막아둔다.
+    LOGGING_IN = true;
     try {
       var r = await authApi({ action: "login", tid: tid, pin: pin });
       await firebase.auth().signInWithCustomToken(r.classToken);
       await teamAuth.signInWithCustomToken(r.teamToken);
-      // 로그인 상태 변화가 boot()를 부른다
-    } catch (e) { $("#lg-err").textContent = e.message; }
+      LOGGING_IN = false;
+      await boot();
+    } catch (e) {
+      LOGGING_IN = false;
+      LOGIN_ERR = loginHint(e);
+      try { await signOutAll(); } catch (x) {}
+      renderLogin();
+    }
   };
   $("#lg-go").onclick = go;
   $("#lg-p").addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+}
+
+// 파이어베이스 오류 코드를 "그래서 뭘 하면 되는지"로. 코드만 보고는 알 수가 없다.
+function loginHint(e) {
+  var c = (e && e.code) || "", m = (e && e.message) || String(e);
+  if (/configuration-not-found/.test(c + m))
+    return "climath-team 프로젝트에 Authentication이 아직 켜지지 않았습니다.\n" +
+      "Firebase 콘솔 → climath-team → Authentication → 시작하기 를 누르면 됩니다 (로그인 방법은 켜지 않아도 됩니다).";
+  if (/invalid-custom-token|custom token format/.test(c + m))
+    return "대시보드 서버가 만든 토큰을 파이어베이스가 거절했습니다.\n" +
+      "Vercel 환경변수 TEAM_SERVICE_ACCOUNT 가 climath-team 프로젝트의 키가 맞는지 확인해 주세요.";
+  if (/network|Failed to fetch/i.test(m)) return "네트워크에 닿지 않았습니다. 잠시 뒤 다시 해주세요.";
+  return m;
 }
 
 async function boot() {
@@ -286,8 +313,10 @@ async function boot() {
 }
 // 두 프로젝트의 로그인 복구가 따로 끝난다. 둘 다 첫 응답을 준 뒤에만 boot 한다 —
 // 안 그러면 한쪽만 복구된 순간 로그인 화면이 잠깐 떴다가 대시보드로 바뀐다.
-var authReady = { c: false, t: false }, bootTimer = null;
+// 로그인하는 중에도 막는다 — 첫 프로젝트가 끝난 순간 boot 이 돌면 signOutAll 로 되돌린다.
+var authReady = { c: false, t: false }, bootTimer = null, LOGGING_IN = false;
 function scheduleBoot() {
+  if (LOGGING_IN) return;
   if (!authReady.c || !authReady.t) return;
   clearTimeout(bootTimer);
   bootTimer = setTimeout(function () { boot().catch(function (e) { renderLogin(e.message); }); }, 30);

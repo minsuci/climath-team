@@ -29,6 +29,13 @@ repo/
 `teamToken`(이 프로젝트 서비스 계정이 서명)을 함께 주고, 각각 `signInWithCustomToken` 한다.
 **둘 다 첫 `onAuthStateChanged`를 준 뒤에만 `boot()`** — 한쪽만 복구된 순간 로그인 화면이 깜빡인다.
 
+> [!warning] 로그인하는 동안 boot 을 막아야 한다 (`LOGGING_IN`)
+> 두 프로젝트에 차례로 로그인하는데, **첫 번째가 끝나면 그 자리에서 `onAuthStateChanged` 가 돈다.**
+> 그때 `boot()` 이 돌면 "한쪽만 로그인됨"으로 보고 `signOutAll()` 로 방금 된 로그인을 도로 끊는다.
+> 화면은 오류 없이 로그인 창으로 되돌아가서, 무엇이 틀렸는지 알 길이 없다 (2026-09-04에 이걸로 막혔다).
+> 실패 메시지도 전역 `LOGIN_ERR` 에 둔다 — 실패 직후의 signOut 이 `renderLogin` 을 한 번 더 돌려
+> 인자로 넘긴 메시지를 지운다.
+
 PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. 이 앱은 그 서비스 계정 키를 갖지 않는다.
 앱이 `role: "owner"` 라고 답할 때만 teamToken 을 발급한다.
 
