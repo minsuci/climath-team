@@ -127,6 +127,31 @@ globalThis.__run = async function () {
   await removeOrphans();
   out.orphanCleared = orphanRosterRows().length;
   out.ghostGone = !SRV.classes.c1.roster.some(function(r){return r.id==="rGhost";});
+
+  // 9. 뺐다 다시 넣으면 **옛 번호를 되쓴다**
+  //    출결·과제·질문번호·참여표가 전부 이 번호로 달려 있어서, 새 번호를 만들면
+  //    그 사람의 지난 기록이 통째로 끊긴다 (2026-09-04 실제로 세 명이 끊겨 있었다).
+  //    앞 단계에서 사람을 지우므로 여기서 쓸 사람을 새로 만든다
+  var pr = await stCreate({ name:"되쓰기시험", grade:"고1", school:"중대부고", homeroom:"" });
+  await stAssign("c1", pr);
+  var before = SRV.classes.c1.roster.filter(function(r){return r.pid===pr.pid;})[0].id;
+  await stUnassign("c1", pr.pid);
+  out.pastSaved = ((SRV.classes.c1.pastIds)||{})["pid:"+pr.pid];
+  await stAssign("c1", pr);
+  out.reused = SRV.classes.c1.roster.filter(function(r){return r.pid===pr.pid;})[0].id;
+  out.reusedSame = out.reused === before;
+
+  // 번호가 이미 쓰이고 있으면 되쓰지 않는다 (겹치면 두 사람이 한 칸을 쓴다)
+  var taken = SRV.classes.c2.roster[0].id;        // c2 에서 이미 누가 쓰는 번호
+  var pc = await stCreate({ name:"겹침시험", grade:"고1", school:"경기고", homeroom:"" });
+  SRV.classes.c2.pastIds = {}; SRV.classes.c2.pastIds["pid:"+pc.pid] = taken;
+  var c2 = S.classes.filter(function(c){return c.id==="c2";})[0];
+  c2.pastIds = {}; c2.pastIds["pid:"+pc.pid] = taken;
+  await stAssign("c2", pc);
+  out.noClash = SRV.classes.c2.roster.filter(function(r){return r.pid===pc.pid;})[0].id !== taken;
+
+  // pid 가 없는 사람은 이름으로 찾는다 (동명이인은 A·B·C 로 가른다)
+  out.nameKey = rosterKey({ name:"설민준" }) === "name:설민준" && rosterKey({ pid:"p9", name:"x" }) === "pid:p9";
   return out;
 };
 `, ctx);
@@ -157,6 +182,10 @@ ctx.__p.then((o) => {
   ok("지우기 뒤 유령 없음", o.noOrphan === 0);
   ok("옛 유령을 찾음", o.orphanFound === 1 && o.orphanName === "한성수", o.orphanDump);
   ok("유령을 반 명단에서 뺌", o.orphanCleared === 0 && o.ghostGone === true);
+  ok("뺄 때 옛 번호를 적어둔다", !!o.pastSaved, o.pastSaved);
+  ok("다시 넣으면 옛 번호를 되쓴다   (기록이 안 끊긴다)", o.reusedSame === true, o.reused);
+  ok("이미 쓰는 번호면 되쓰지 않는다", o.noClash === true);
+  ok("pid 없으면 이름으로 찾는다", o.nameKey === true);
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
