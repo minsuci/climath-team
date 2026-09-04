@@ -687,9 +687,12 @@ function studentEditHtml(assigned) {
   });
   rows.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
   var drift = rosterDrift(), loose = looseRosterRows();
-  return (drift.length || loose.length ? '<div class="banner" style="margin:0 0 10px">' +
-      (drift.length ? '<div><b>앱 명단과 어긋난 것 ' + drift.length + '건</b> — 이름·학교·학년이 반 명단에 안 흘러갔다. ' +
-        '<button class="mini" id="st-fix">앱으로 다시 보내기</button></div>' : "") +
+  return '<p class="muted" style="font-size:12px;margin:0 0 8px">' +
+      '<b>이 명단이 곧 수업관리 앱의 명단이다.</b> 사본이 아니라 같은 것 하나를 고치는 것이라, ' +
+      '여기서 고치면 앱의 출석부·참여표·보고서에 바로 나타난다. 메모 칸만 이 앱에 남는다.</p>' +
+    (drift.length || loose.length ? '<div class="banner" style="margin:0 0 10px">' +
+      (drift.length ? '<div><b>반 명단 사본에 안 닿은 것 ' + drift.length + '건</b> — 반 명단은 속도 때문에 이름·학교·학년을 따로 한 벌 더 적어 둔다. ' +
+        '그게 어긋났다. <button class="mini" id="st-fix">반 명단에 반영</button></div>' : "") +
       (loose.length ? '<div style="margin-top:' + (drift.length ? "6px" : "0") + '"><b>반에만 있는 항목 ' + loose.length + '건</b> — 사람 정보가 없어 명단에 안 뜬다. ' +
         '<button class="mini" id="st-link">사람으로 만들어 잇기</button></div>' : "") + '</div>' : "") +
     '<div class="tbl tall"><table class="sheet-t"><thead><tr>' +
@@ -799,9 +802,9 @@ function bindEdit(el, assigned) {
   };
   var fx = $("#st-fix", el);
   if (fx) fx.onclick = async function () {
-    fx.disabled = true; fx.textContent = "보내는 중...";
-    try { var n = await fixDrift(); alert(n + "건을 앱 명단에 맞췄다."); renderStudents(); }
-    catch (e) { fx.disabled = false; alert("보내지 못했다: " + e.message); }
+    fx.disabled = true; fx.textContent = "반영하는 중...";
+    try { var n = await fixDrift(); alert(n + "건을 반 명단에 반영했다."); renderStudents(); }
+    catch (e) { fx.disabled = false; alert("반영하지 못했다: " + e.message); }
   };
   var lk = $("#st-link", el);
   if (lk) lk.onclick = async function () {
