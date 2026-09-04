@@ -13,7 +13,7 @@ repo/
 └── vercel.json       # icn1
 ```
 
-- 배포: Vercel 프로젝트 `climath-team` (GitHub `minsuci/climath-team` main → 자동 배포)
+- 배포: https://climath-team1.vercel.app — Vercel 프로젝트 `climath-team1` (GitHub `minsuci/climath-team` main → 자동 배포)
 - Firebase: `climath-team` (Firestore 서울, Authentication은 커스텀 토큰만 — 익명 켜지 말 것)
 - 환경변수: `TEAM_SERVICE_ACCOUNT` = climath-team 서비스 계정 JSON 한 줄. Production/Preview/Development 셋 다.
   선택: `CLASS_API_URL` (기본 `https://climath-class.vercel.app/api/auth`)
