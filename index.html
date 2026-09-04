@@ -23,6 +23,8 @@
     --yellow: #f2c94c; --blue: #3b6fd9;
   }
   * { box-sizing: border-box; }
+  /* iOS 사파리는 작은 글씨를 저 혼자 키운다. 높이를 못 박은 칸에서 글자가 위아래로 잘린다. */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.5 -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
   a { color: var(--blue); text-decoration: none; }
@@ -91,7 +93,7 @@
   .mweek { grid-auto-rows: min-content; margin-bottom: 4px; }
   .mhead { text-align: center; font-size: 12px; color: var(--muted); padding: 2px 0; font-weight: 600; }
   .mhead.wend { color: #b35d00; }
-  .mday { border: 1px solid var(--line); border-radius: 6px; background: #fff; min-height: 78px;
+  .mday { border: 1px solid var(--line); border-radius: 6px; background: #fff; min-height: 66px;
     cursor: pointer; z-index: 0; }
   .mday:hover { border-color: var(--navy); }
   .mday.wend { background: #fafbfc; }
@@ -104,8 +106,9 @@
   .mn .tn { background: var(--orange); color: #fff; border-radius: 8px; font-size: 10px;
     padding: 0 5px; font-weight: 700; }
   /* 이어지는 막대 */
-  .bar { z-index: 1; pointer-events: none; font-size: 10px; line-height: 15px; height: 15px;
-    margin: 0 1px 2px; padding: 0 5px; border-radius: 0; overflow: hidden;
+  /* ⚠ 높이를 못 박지 않는다. 글꼴이 커지거나 줄바꿈이 생기면 글자가 잘린다. */
+  .bar { z-index: 1; pointer-events: none; font-size: 11px; line-height: 1.5; min-height: 17px;
+    margin: 0 1px 2px; padding: 1px 5px; border-radius: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; background: #eef1f6; color: #374151; }
   .bar.s { border-top-left-radius: 8px; border-bottom-left-radius: 8px; margin-left: 3px; }
   .bar.e { border-top-right-radius: 8px; border-bottom-right-radius: 8px; margin-right: 3px; }
@@ -133,7 +136,7 @@
     line-height: 1; padding: 0 2px; cursor: pointer; }
   .cday .ch .add:hover { color: var(--navy); }
   .cday .chip { font-size: 11px; padding: 2px 5px; border-radius: 4px; margin-bottom: 3px;
-    background: #eef1f6; color: #374151; white-space: normal; }
+    background: #eef1f6; color: #374151; white-space: normal; line-height: 1.4; }
   .cday .chip.school { background: #fff4d6; color: #8a5a00; }
   .cday .chip.test { background: #fde8e8; color: #b42318; }
   .cday .ctask { display: flex; gap: 4px; align-items: flex-start; font-size: 12px; margin-bottom: 3px; }
@@ -590,13 +593,9 @@ function calRanges(want) {
     if (e1 < s0) e1 = s0;                    // 끝이 앞서면 하루짜리로 본다
     out.push({ s: s0, e: e1, kind: kind, text: text, grade: grade || "" });
   };
-  Object.keys(S.schoolTerms).forEach(function (k) {
-    var v = S.schoolTerms[k];
-    if (!v || v.term !== S.term || !gradeHit(v.grade, want)) return;
-    add(v.start, v.end, "exam", v.school + " " + (v.label || "내신"), v.grade);
-    add(v.math, v.math, "math", v.school + " 수학시험", v.grade);
-    add(v.back, v.back, "back", v.school + " 복귀", v.grade);
-  });
+  // ⚠ 학교 내신 일정(내신 기간·수학시험·복귀)은 **여기 안 넣는다.**
+  //    학교가 서른 곳이면 달력이 시험 막대로 뒤덮여 정작 할 일이 안 보인다.
+  //    그건 «내신 참여표»가 날짜 띠로 훨씬 잘 보여준다 — 거기서 본다 (2026-09-05 결정).
   (S.tests || []).forEach(function (t) {
     if (!gradeHit(t.grade, want)) return;
     add(t.date, t.date, "test", TEST_KINDS[t.kind].short + " " + t.name, t.grade);
@@ -775,9 +774,9 @@ function renderCal() {
     }).join("") + '</div></div>' +
     '<div id="cal-add"></div>' +
     '<p class="muted" style="font-size:12px;margin:6px 0 0">월간 달력의 날을 누르면 그 주가 아래에 열린다. ' +
-    '날짜 옆 숫자는 그날 남은 할 일이다. <b>막대는 앱이 아는 일정</b> — 내신 기간은 시작부터 끝까지 이어지고, ' +
-    '주가 바뀌면 <span class="muted">◂</span> 로 이어진다. 수학시험·복귀·모의고사·종강은 하루짜리 막대다. ' +
-    '<b>기간이 겹치는 것은 한 막대로 묶는다</b> — 앞의 숫자가 묶인 개수이고, 막대에 손을 올리면 전부 보인다. ' +
+    '날짜 옆 숫자는 그날 남은 할 일이다. 막대는 <b>시험 성적에 만든 시험</b>과 <b>반 종강</b>이고, ' +
+    '겹치면 한 막대로 묶여 앞에 개수가 붙는다(손을 올리면 전부 보인다). ' +
+    '<b>학교 내신 일정은 여기 안 나온다</b> — 달력이 시험 막대로 뒤덮이므로 <b>내신 참여표</b>의 날짜 띠에서 본다. ' +
     '손으로 넣은 할 일만 체크가 붙고, <b>매주</b>가 붙은 것은 날짜마다 따로 체크한다.</p>';
 
   $$("[data-cw]", el).forEach(function (b) {

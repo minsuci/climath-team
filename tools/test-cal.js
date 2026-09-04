@@ -116,93 +116,54 @@ vm.runInContext(`globalThis.__t = (async function(){
   return JSON.stringify(t.doneOn) + " | " + after;
 })();`, ctx);
 
-// ---- 앱이 아는 일정 — 시험은 **기간**이다 ----
-// 날마다 칩을 찍으면 사흘짜리 시험이 끊긴 조각 셋으로 보인다. 시작~끝을 쥔 채로 다닌다.
+// ---- 앱이 아는 일정 ----
+// ⚠ 학교 내신 일정은 **여기 안 나온다.** 학교가 서른 곳이면 달력이 시험 막대로 뒤덮인다.
+//    그건 내신 참여표의 날짜 띠에서 본다 (2026-09-05 결정).
 run(`
   S.term="2026 2학기 중간";
   S.schoolTerms={};
   S.schoolTerms["k1"]={term:"2026 2학기 중간",school:"중대부고",grade:"고1",
                        start:"2026-09-02",end:"2026-09-05",math:"2026-09-04",back:"2026-09-14",label:"중간고사"};
-  S.schoolTerms["k2"]={term:"2026 2학기 중간",school:"봉은중",grade:"중3",start:"2026-08-28",end:"2026-09-02"};
-  S.schoolTerms["k3"]={term:"옛 회차",school:"딴학교",grade:"고1",start:"2026-09-01",end:"2026-09-01"};
-  S.schoolTerms["k4"]={term:"2026 2학기 중간",school:"거꾸로고",grade:"고2",start:"2026-09-03",end:"2026-09-01"};
-  S.tests=[{tid:"t1",kind:"mock",name:"9월 학평",grade:"고1",date:"2026-09-02"}];
+  S.tests=[{tid:"t1",kind:"mock",name:"9월 학평",grade:"고1",date:"2026-09-02"},
+           {tid:"t2",kind:"midterm",name:"2학기 중간",grade:"중3",date:"2026-09-04"}];
   S.classes=[{id:"c1",name:"고1S",endDate:"2026-09-05",roster:[]}];
 `);
 const R = (want) => JSON.parse(run(`return JSON.stringify(calRanges("${want}"))`));
 const all = R("전체");
-const find = (t) => all.filter((x) => x.text.indexOf(t) >= 0)[0];
-ok("내신은 시작~끝을 가진 한 덩어리",
-  find("중대부고 중간고사") && find("중대부고 중간고사").s === "2026-09-02" && find("중대부고 중간고사").e === "2026-09-05",
-  JSON.stringify(find("중대부고 중간고사")));
-ok("수학시험은 하루짜리", find("수학시험").s === find("수학시험").e && find("수학시험").s === "2026-09-04");
-ok("복귀·모의고사·종강도 하루짜리",
-  find("복귀").s === find("복귀").e && find("9월 학평").s === find("9월 학평").e && find("종강").s === find("종강").e);
-ok("다른 회차는 안 들어온다", !find("딴학교"), JSON.stringify(all.map((x) => x.text)));
-ok("끝이 시작보다 앞서면 하루짜리로 붙든다",
-  find("거꾸로고") && find("거꾸로고").s === "2026-09-03" && find("거꾸로고").e === "2026-09-03",
-  JSON.stringify(find("거꾸로고")));
-ok("학년으로 거른다", !R("고1").some((x) => x.text.indexOf("봉은중") >= 0) && R("고1").some((x) => x.text.indexOf("중대부고") >= 0),
+const names = all.map((x) => x.text);
+ok("학교 내신 기간은 안 나온다", !names.some((n) => n.indexOf("중간고사") >= 0 && n.indexOf("중대부고") >= 0), names.join(" | "));
+ok("수학시험·복귀도 안 나온다", !names.some((n) => /수학시험|복귀/.test(n)), names.join(" | "));
+ok("시험 성적에 만든 시험은 나온다", names.some((n) => n.indexOf("9월 학평") >= 0), names.join(" | "));
+ok("반 종강도 나온다", names.some((n) => n.indexOf("종강") >= 0), names.join(" | "));
+ok("만든 시험은 하루짜리", all.filter((x) => x.kind === "test").every((x) => x.s === x.e));
+ok("학년으로 거른다", R("고1").every((x) => x.text.indexOf("2학기 중간") < 0),
   R("고1").map((x) => x.text).join(" | "));
-
-// ---- 겹치는 것은 한 막대로 ----
-// 학교가 스무 곳이면 시험철에 층이 스무 줄이 된다. 겹치는 것끼리 묶어 줄을 줄인다.
-const M = (rs) => JSON.parse(run(`return JSON.stringify(mergeRanges(${JSON.stringify(rs)}))`));
-const EX = (s0, e0, t) => ({ s: s0, e: e0, kind: "exam", text: t, grade: "" });
-
-const m1 = M([EX("2026-09-01", "2026-09-03", "가고"), EX("2026-09-02", "2026-09-05", "나고")]);
-ok("겹치면 한 막대로", m1.length === 1 && m1[0].s === "2026-09-01" && m1[0].e === "2026-09-05",
-  JSON.stringify(m1.map((x) => x.s + "~" + x.e)));
-ok("묶인 개수를 센다", m1[0].n === 2);
-ok("이름은 「첫째 외 N」", m1[0].text === "가고 외 1", m1[0].text);
-ok("손 올리면 전부 보인다", m1[0].full === "가고 · 나고", m1[0].full);
-
-const m2 = M([EX("2026-09-01", "2026-09-03", "가고"), EX("2026-09-04", "2026-09-06", "나고")]);
-ok("맞닿기만 하면 안 합친다 (다른 시험 창이다)", m2.length === 2, JSON.stringify(m2.map((x) => x.s + "~" + x.e)));
-
-const m3 = M([EX("2026-09-01", "2026-09-03", "가고"), EX("2026-09-03", "2026-09-06", "나고")]);
-ok("하루라도 겹치면 합친다", m3.length === 1 && m3[0].e === "2026-09-06", JSON.stringify(m3));
-
-// 사슬로 이어지는 것 — A와 C는 안 겹치지만 B가 둘을 잇는다
-const m4 = M([EX("2026-09-01", "2026-09-03", "가고"), EX("2026-09-03", "2026-09-08", "나고"), EX("2026-09-07", "2026-09-10", "다고")]);
-ok("사슬로 이어지면 다 합친다", m4.length === 1 && m4[0].s === "2026-09-01" && m4[0].e === "2026-09-10" && m4[0].n === 3,
-  JSON.stringify(m4.map((x) => x.s + "~" + x.e + "×" + x.n)));
-
-// ⚠ 종류가 다르면 절대 안 합친다. 내신 기간과 수학시험을 한 막대에 넣으면 무슨 날인지 알 수 없다.
-const m5 = M([EX("2026-09-01", "2026-09-05", "가고 내신"),
-              { s: "2026-09-03", e: "2026-09-03", kind: "math", text: "가고 수학시험", grade: "" }]);
-ok("종류가 다르면 안 합친다", m5.length === 2 && m5.map((x) => x.kind).sort().join(",") === "exam,math",
-  JSON.stringify(m5.map((x) => x.kind + ":" + x.text)));
-
-// 같은 날 하루짜리들도 묶인다
-const m6 = M([{ s: "2026-09-04", e: "2026-09-04", kind: "math", text: "가고 수학시험", grade: "" },
-              { s: "2026-09-04", e: "2026-09-04", kind: "math", text: "나고 수학시험", grade: "" }]);
-ok("같은 날 하루짜리도 묶인다", m6.length === 1 && m6[0].n === 2, JSON.stringify(m6));
-
-ok("하나뿐이면 이름을 그대로 둔다", M([EX("2026-09-01", "2026-09-02", "가고")])[0].text === "가고");
-
-// 묶고 나면 층이 줄어든다 — 이게 하려던 일이다
-const many = ["가", "나", "다", "라", "마"].map((n) => EX("2026-09-01", "2026-09-04", n + "고"));
-ok("다섯이 겹쳐도 막대는 하나", M(many).length === 1 && M(many)[0].n === 5, String(M(many).length));
+ok("학년 없는 종강은 어느 학년에서나 보인다", R("고2").some((x) => x.kind === "class"),
+  R("고2").map((x) => x.text).join(" | "));
 
 // ---- 이레에 눕히기 ----
+// 막대 눕히는 규칙은 자료가 어디서 오든 같아야 한다. 손으로 만든 기간으로 시험한다.
 // 그 주는 8/31(월) ~ 9/6(일). 칸 번호는 0부터 여섯까지.
-// 앞의 자료에서 봉은중(8/28~9/2) · 중대부고(9/2~9/5) · 거꾸로고(9/3)는 사슬로 이어져 **한 막대**가 된다.
-const LAY = JSON.parse(run(`return JSON.stringify(weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-04")))`));
+const RNG = [
+  { s: "2026-08-28", e: "2026-09-02", kind: "exam", text: "지난주부터" },   // 왼쪽이 잘린다
+  { s: "2026-09-02", e: "2026-09-05", kind: "exam", text: "이 주 안" },     // 위와 겹쳐 묶인다
+  { s: "2026-09-04", e: "2026-09-04", kind: "test", text: "모의" },
+  { s: "2026-09-05", e: "2026-09-05", kind: "class", text: "종강" },
+  { s: "2026-09-20", e: "2026-09-22", kind: "exam", text: "딴 주" },
+];
+const LAY = JSON.parse(run(`return JSON.stringify(weekSegments(mergeRanges(${JSON.stringify(RNG)}), weekDays("2026-09-04")))`));
 const byKind = (k) => LAY.segs.filter((x) => x.kind === k)[0];
 const EXBAR = byKind("exam");
-ok("겹친 내신 셋이 한 막대로 눕는다", EXBAR && EXBAR.n === 3, JSON.stringify(EXBAR));
+ok("겹친 둘이 한 막대로 눕는다", EXBAR && EXBAR.n === 2, JSON.stringify(EXBAR));
 ok("이 주 첫 칸부터 9/5 칸까지 덮는다", EXBAR.a === 0 && EXBAR.b === 5, JSON.stringify(EXBAR));
-// ⚠ 주 경계. 지난주에 시작한 시험은 왼쪽이 열려 있어야 "이어진다"가 보인다.
+// ⚠ 주 경계. 지난주에 시작한 것은 왼쪽이 열려 있어야 "이어진다"가 보인다.
 ok("지난주에 시작했으니 왼쪽이 열린다", EXBAR.head === false && EXBAR.tail === true, JSON.stringify(EXBAR));
-ok("이 주 밖(복귀 9/14)은 아예 안 눕는다", !byKind("back"),
-  LAY.segs.map((x) => x.kind + ":" + x.text).join(" | "));
-ok("종류가 다르면 따로 눕는다", ["exam", "math", "test", "class"].every(byKind),
-  LAY.segs.map((x) => x.kind).join(","));
+ok("딴 주 것은 아예 안 눕는다", LAY.segs.every((x) => x.text.indexOf("딴 주") < 0),
+  LAY.segs.map((x) => x.text).join(" | "));
+ok("종류가 다르면 따로 눕는다", ["exam", "test", "class"].every(byKind), LAY.segs.map((x) => x.kind).join(","));
 ok("겹치면 층을 달리한다", byKind("test").lane !== EXBAR.lane,
   LAY.segs.map((x) => x.text + "=" + x.lane).join(" | "));
-ok("안 겹치는 것은 아래층으로 내려온다 (빈 자리를 메운다)",
-  byKind("math").lane === byKind("test").lane && byKind("class").lane === byKind("test").lane,
+ok("안 겹치는 것은 같은 층에 올라탄다", byKind("class").lane === byKind("test").lane,
   LAY.segs.map((x) => x.text + "=" + x.lane).join(" | "));
 // 숫자를 못 박는 것보다 **규칙**을 보는 게 낫다 — 자료가 늘어도 시험이 안 깨진다.
 ok("겹치는 막대가 같은 층에 놓이는 일은 없다", (function () {
@@ -214,20 +175,20 @@ ok("겹치는 막대가 같은 층에 놓이는 일은 없다", (function () {
   }
   return true;
 })(), LAY.segs.map((x) => x.text + "=" + x.lane).join(" | "));
-ok("합쳤더니 층이 둘로 줄었다", LAY.lanes === 2, String(LAY.lanes));
+ok("층 수는 가장 높은 층 + 1", LAY.lanes === Math.max.apply(null, LAY.segs.map((x) => x.lane)) + 1, String(LAY.lanes));
 
 // ---- 그리는 자리 ----
 const H = run(`
-  var lay = weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-04"));
+  var lay = weekSegments(mergeRanges(${JSON.stringify(RNG)}), weekDays("2026-09-04"));
   var g = lay.segs.filter(function(x){return x.kind==="exam";})[0];
   return barHtml(g, 2);
 `);
 ok("막대가 첫 칸부터 여섯 칸을 차지한다", H.indexOf("grid-column:1/span 6") >= 0, H.slice(0, 150));
 ok("층에 맞는 줄에 놓인다 (밑줄 2 + 층 0)", H.indexOf("grid-row:2") >= 0, H.slice(0, 150));
-ok("묶인 개수를 앞에 단다", H.indexOf('<b class="n">3</b>') >= 0, H.slice(0, 150));
+ok("묶인 개수를 앞에 단다", H.indexOf('<b class="n">2</b>') >= 0, H.slice(0, 150));
 ok("이어지는 막대는 ◂ 를 달고 왼쪽 모서리를 안 둥글린다",
   H.indexOf("◂") >= 0 && H.indexOf('class="bar exam e"') >= 0, H.slice(0, 150));
-ok("손 올리면 묶인 것이 전부 보인다", H.indexOf("봉은중 내신 · 중대부고 중간고사 · 거꾸로고 내신") >= 0, H.slice(0, 200));
+ok("손 올리면 묶인 것이 전부 보인다", H.indexOf("지난주부터 · 이 주 안") >= 0, H.slice(0, 200));
 
 ctx.__t.then((r) => {
   const [doneOn, after] = r.split(" | ");
