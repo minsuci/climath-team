@@ -111,6 +111,7 @@
   table.sheet-t .cls-btn { max-width: 180px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
   table.sheet-t tr.clsrow td { background: #f7f8fb; white-space: normal; }
   table.sheet-t tr.newrow input { border: 1px dashed var(--line); background: #fff; }
+  table.sheet-t tr.jump td { box-shadow: inset 0 0 0 2px var(--orange); }
   table.cgrid .nm[data-open] { cursor: pointer; }
   table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
 
@@ -227,7 +228,7 @@ var S = {
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
-  filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", byPid: {}, notes: {},
+  filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
@@ -596,7 +597,7 @@ function renderStudents() {
     '<input type="text" id="st-q" class="mini" placeholder="이름·학교·담임 찾기" value="' + esc(S.stQuery || "") + '" style="min-width:170px">' +
     (unassigned.length ? '<button class="mini warn" data-gf="un">반 미배정 ' + unassigned.length + '</button>' : "") + '</div>' +
     '<div id="st-body">' + studentBodyHtml(view, assigned) + '</div>';
-  $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); renderStudents(); }; });
+  $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); keepScroll(renderStudents); }; });
   $$("[data-view]", el).forEach(function (b) { b.onclick = function () { S.stView = b.getAttribute("data-view"); renderStudents(); }; });
   // 찾기 칸은 아래만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
   $("#st-q").oninput = function () {
@@ -607,9 +608,21 @@ function renderStudents() {
   afterStudentBody(el, assigned);
 }
 function afterStudentBody(el, assigned) {
-  if ((S.stView || "grid") === "edit") bindEdit(el, assigned);
+  if ((S.stView || "grid") === "edit") {
+    bindEdit(el, assigned);
+    if (S.stJump) {
+      var tr = $('#st-rows tr[data-pid="' + S.stJump + '"]', el);
+      S.stJump = "";
+      if (tr) {
+        try { tr.scrollIntoView({ block: "center" }); } catch (e) { tr.scrollIntoView(); }
+        tr.classList.add("jump");
+        setTimeout(function () { tr.classList.remove("jump"); }, 1600);
+        var nm = $("input[data-f=name]", tr); if (nm) nm.focus();
+      }
+    }
+  }
   else $$("[data-open]", el).forEach(function (n) {
-    n.onclick = function () { S.stView = "edit"; S.stOpen = n.getAttribute("data-open"); renderStudents(); };
+    n.onclick = function () { S.stView = "edit"; S.stJump = n.getAttribute("data-open"); renderStudents(); };
   });
 }
 // 고른 학년·찾는 글자에 걸리는가. 배치표에서는 지우지 않고 **흐리게** 한다 —
@@ -727,13 +740,64 @@ function editRowHtml(x, i) {
     '<td class="wrapc"><button class="mini cls-btn">' + (cls.length ? cls.map(function (c) { return esc(c.name); }).join(", ") : '<span class="red">미배정</span>') + '</button></td>' +
     '<td><input type="text" data-f="memo" value="' + esc(memo) + '" placeholder="이 앱에만 남는 메모"></td>' +
     '<td><button class="x del" title="지우기">×</button></td></tr>' +
-    (S.stOpen === x.pid ? '<tr class="clsrow"><td></td><td colspan="7">' +
-      activeClasses().map(function (c) {
-        var on = cls.some(function (y) { return y.id === c.id; });
-        return '<button class="mini ' + (on ? "on" : "") + '" data-cls="' + esc(c.id) + '">' + esc(c.name) + '</button>';
-      }).join("") + '<div class="muted" style="font-size:12px;margin-top:4px">누르면 그 반에 넣고 뺀다. 빼도 출결·과제 기록은 남는다.</div></td></tr>' : "");
+    (S.stOpen === x.pid ? clsRowHtml(x.pid) : "");
+}
+function clsRowHtml(pid) {
+  var cls = classesOfPid(pid);
+  return '<tr class="clsrow" data-for="' + esc(pid) + '"><td></td><td colspan="7">' +
+    activeClasses().map(function (c) {
+      var on = cls.some(function (y) { return y.id === c.id; });
+      return '<button class="mini ' + (on ? "on" : "") + '" data-cls="' + esc(c.id) + '">' + esc(c.name) + '</button>';
+    }).join("") +
+    '<div class="muted" style="font-size:12px;margin-top:4px">누르면 그 반에 넣고 뺀다. 빼도 출결·과제 기록은 남는다.</div></td></tr>';
 }
 function classesOfPid(pid) { return activeClasses().filter(function (c) { return (c.roster || []).some(function (r) { return r.pid === pid; }); }); }
+
+// 화면을 통째로 다시 그리면 표의 스크롤 상자가 새로 만들어져 **맨 위로 돌아간다.**
+// 창 스크롤도 짧아진 순간 잘린다. 자리를 재놓았다가 되돌린다.
+function keepScroll(fn) {
+  var box = $("#sec-students .tbl"), top = box ? box.scrollTop : 0;
+  var wy = window.scrollY || window.pageYOffset || 0;
+  fn();
+  var box2 = $("#sec-students .tbl");
+  if (box2 && top) box2.scrollTop = top;
+  if (wy) window.scrollTo(0, wy);
+}
+// 반 배정이 바뀌면 그 줄의 반 칸과 메뉴 숫자만 고친다 (다시 그리지 않는다)
+function refreshClsCell(el, pid) {
+  var tr = $('#st-rows tr[data-pid="' + pid + '"]', el);
+  if (tr) {
+    var cls = classesOfPid(pid);
+    $(".cls-btn", tr).innerHTML = cls.length ? cls.map(function (c) { return esc(c.name); }).join(", ") : '<span class="red">미배정</span>';
+  }
+  studentBadge();
+}
+function studentBadge() {
+  var has = {};
+  activeClasses().forEach(function (c) { rosterStudents(c).forEach(function (r) { if (r.pid) has[r.pid] = 1; }); });
+  var n = 0;
+  S.students.forEach(function (x) {
+    if (!has[x.pid]) n++;
+    if (!x.homeroom) n++;
+    if (GRADES.indexOf(x.grade) < 0) n++;
+  });
+  navBadge("students", n, true);
+}
+function bindClsRow(el, assigned) {
+  $$("#st-rows [data-cls]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var pid = b.closest("tr").getAttribute("data-for"), cid = b.getAttribute("data-cls"), person = S.byPid[pid];
+      var on = b.classList.contains("on");
+      b.disabled = true;
+      try {
+        if (on) await stUnassign(cid, pid); else await stAssign(cid, person);
+        b.classList.toggle("on", !on);
+        refreshClsCell(el, pid);
+      } catch (e) { alert("바꾸지 못했다: " + e.message); }
+      b.disabled = false;
+    };
+  });
+}
 
 function bindEdit(el, assigned) {
   var flash = function (node) { node.classList.add("ok"); setTimeout(function () { node.classList.remove("ok"); }, 900); };
@@ -746,23 +810,21 @@ function bindEdit(el, assigned) {
         if (f === "memo") await stMemoSave(pid, v);
         else { var patch = {}; patch[f] = v; await stSave(pid, patch); }
         flash(inp);
-        if (f === "grade" || f === "homeroom") { renderStudents(); }
+        if (f === "grade" || f === "homeroom") keepScroll(renderStudents);
       } catch (e) { fail(inp, e); }
     };
   });
+  // 반 고르는 줄은 **끼워 넣고 빼기만** 한다. 다시 그리면 그 자리에서 스크롤이 튄다.
   $$("#st-rows .cls-btn", el).forEach(function (b) {
-    b.onclick = function () { var pid = b.closest("tr").getAttribute("data-pid"); S.stOpen = S.stOpen === pid ? "" : pid; renderStudents(); };
-  });
-  $$("#st-rows [data-cls]", el).forEach(function (b) {
-    b.onclick = async function () {
-      var pid = S.stOpen, cid = b.getAttribute("data-cls"), person = S.byPid[pid];
-      b.disabled = true;
-      try {
-        if (b.classList.contains("on")) await stUnassign(cid, pid); else await stAssign(cid, person);
-        renderStudents();
-      } catch (e) { b.disabled = false; alert("바꾸지 못했다: " + e.message); }
+    b.onclick = function () {
+      var tr = b.closest("tr"), pid = tr.getAttribute("data-pid");
+      var wasOpen = S.stOpen === pid;
+      $$("#st-rows tr.clsrow", el).forEach(function (n) { n.parentNode.removeChild(n); });
+      S.stOpen = wasOpen ? "" : pid;
+      if (!wasOpen) { tr.insertAdjacentHTML("afterend", clsRowHtml(pid)); bindClsRow(el, assigned); }
     };
   });
+  bindClsRow(el, assigned);
   $$("#st-rows .del", el).forEach(function (b) {
     b.onclick = async function () {
       var pid = b.closest("tr").getAttribute("data-pid"), person = S.byPid[pid];
@@ -770,7 +832,7 @@ function bindEdit(el, assigned) {
       if (!confirm("「" + person.name + "」의 사람 정보를 지운다.\n\n" +
         (inCls.length ? "반 명단(" + inCls.map(function (c) { return c.name; }).join(", ") + ")의 항목과 출결·과제 기록은 그대로 남는다.\n" : "") +
         "학교·학년·담임만 사라진다. 앱과 같은 방식이다.")) return;
-      try { await stDelete(pid); renderStudents(); } catch (e) { alert("지우지 못했다: " + e.message); }
+      try { await stDelete(pid); keepScroll(renderStudents); } catch (e) { alert("지우지 못했다: " + e.message); }
     };
   });
   var nw = $("#st-new", el);
@@ -778,7 +840,13 @@ function bindEdit(el, assigned) {
     if (e.key !== "Enter") return;
     var name = nw.value.trim(); if (!name) return;
     nw.disabled = true;
-    try { await stCreate({ name: name, school: "", grade: "", homeroom: "" }); nw.value = ""; renderStudents(); }
+    try {
+      await stCreate({ name: name, school: "", grade: "", homeroom: "" });
+      nw.value = "";
+      keepScroll(renderStudents);
+      // 새로 만든 줄에 이어서 칠 수 있게 다시 그 칸으로
+      var again = $("#st-new"); if (again) { again.focus(); }
+    }
     catch (err) { nw.disabled = false; alert("만들지 못했다: " + err.message); }
   };
   var bg = $("#st-bulk-go", el);
@@ -796,20 +864,20 @@ function bindEdit(el, assigned) {
       }
       msg.textContent = made + "명 만들었다" + (skipped.length ? " · 이미 있어 건너뜀: " + skipped.join(", ") : "");
       $("#st-bulk").value = "";
-      renderStudents();
+      keepScroll(renderStudents);
     } catch (e) { msg.textContent = "실패: " + e.message; }
     bg.disabled = false;
   };
   var fx = $("#st-fix", el);
   if (fx) fx.onclick = async function () {
     fx.disabled = true; fx.textContent = "반영하는 중...";
-    try { var n = await fixDrift(); alert(n + "건을 반 명단에 반영했다."); renderStudents(); }
+    try { var n = await fixDrift(); alert(n + "건을 반 명단에 반영했다."); keepScroll(renderStudents); }
     catch (e) { fx.disabled = false; alert("반영하지 못했다: " + e.message); }
   };
   var lk = $("#st-link", el);
   if (lk) lk.onclick = async function () {
     lk.disabled = true; lk.textContent = "잇는 중...";
-    try { var r = await linkLoose(); alert(r.made + "명을 만들어 이었다." + (r.skip ? "\n이름이 겹쳐 건너뛴 것 " + r.skip + "건은 앱에서 골라야 한다." : "")); renderStudents(); }
+    try { var r = await linkLoose(); alert(r.made + "명을 만들어 이었다." + (r.skip ? "\n이름이 겹쳐 건너뛴 것 " + r.skip + "건은 앱에서 골라야 한다." : "")); keepScroll(renderStudents); }
     catch (e) { lk.disabled = false; alert("잇지 못했다: " + e.message); }
   };
 }
