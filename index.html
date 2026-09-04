@@ -1290,6 +1290,8 @@ async function runPull(term, targets, from, to, kind) {
     if (r.via === "doc") fromDoc.push(school + (r.docTitle ? " (" + r.docTitle + ")" : ""));
     // 그림에서 읽은 것은 대조할 원문이 없다. 요일로 걸렀어도 사람이 한 번 봐야 한다.
     else if (r.via === "image") fromDoc.push(school + " (그림)");
+    // 왜 못 찾았는지를 화면에 그대로 보여준다. 안 그러면 "그냥 안 된다"밖에 알 수 없다.
+    else if (r.docReason) noExam.push(school + " — " + r.docReason);
     var note = planNote(r.plan);
     var srcU = (r.src && r.src.url) || "", srcN = (r.src && r.src.name) || "";
     var mine = targets.filter(function (x) { return x.school === school; });
