@@ -110,6 +110,8 @@
   .bar.s { border-top-left-radius: 8px; border-bottom-left-radius: 8px; margin-left: 3px; }
   .bar.e { border-top-right-radius: 8px; border-bottom-right-radius: 8px; margin-right: 3px; }
   .bar .cont { opacity: .75; }
+  .bar .n { display: inline-block; min-width: 13px; text-align: center; border-radius: 7px;
+    background: rgba(0,0,0,.14); font-size: 9px; padding: 0 3px; margin-right: 1px; }
   .bar.exam { background: #f0ece5; color: #7c6f5f; }
   .bar.math { background: #fae3e2; color: #d6453f; font-weight: 700; }
   .bar.back { background: #e3edf5; color: #2b5f8a; }
@@ -606,6 +608,40 @@ function calRanges(want) {
   });
   return out;
 }
+// 겹치는 것을 한 막대로 합친다.
+//
+// 학교가 스무 곳이면 시험철에 층이 스무 줄로 늘어난다 — 달력이 아니라 줄무늬가 된다.
+// **같은 종류끼리만** 합친다. 내신 기간과 수학시험을 한 막대에 넣으면 무슨 날인지 알 수 없다.
+// 맞닿기만 한 것(3일 끝 · 4일 시작)은 안 합친다 — 다른 시험 창이다.
+var KIND_WORD = { exam: "내신", math: "수학시험", back: "복귀", test: "시험", class: "종강" };
+function mergeRanges(ranges) {
+  var byKind = {};
+  ranges.forEach(function (r) { (byKind[r.kind] = byKind[r.kind] || []).push(r); });
+  var out = [];
+  Object.keys(byKind).forEach(function (k) {
+    var list = byKind[k].slice().sort(function (a, b) { return a.s < b.s ? -1 : a.s > b.s ? 1 : 0; });
+    var cur = null;
+    list.forEach(function (r) {
+      if (cur && r.s <= cur.e) {                 // 하루라도 겹치면 한 막대
+        if (r.e > cur.e) cur.e = r.e;
+        cur.items.push(r);
+        return;
+      }
+      cur = { s: r.s, e: r.e, kind: k, items: [r] };
+      out.push(cur);
+    });
+  });
+  out.forEach(function (m) {
+    var names = m.items.map(function (x) { return x.text; });
+    m.full = names.join(" · ");
+    m.n = m.items.length;
+    m.text = m.n === 1 ? names[0] : names[0] + " 외 " + (m.n - 1);
+  });
+  out.sort(function (a, b) {
+    return a.s < b.s ? -1 : a.s > b.s ? 1 : (b.e < a.e ? -1 : b.e > a.e ? 1 : 0);
+  });
+  return out;
+}
 // 이레치 날짜 배열에 막대를 눕힌다. 겹치는 것은 층(lane)을 달리한다.
 // 주 경계에서 잘린 쪽은 모서리를 안 둥글게 해서 **이어진다는 것**을 보인다.
 function weekSegments(ranges, days) {
@@ -615,7 +651,8 @@ function weekSegments(ranges, days) {
     var a = days.indexOf(r.s < from ? from : r.s);
     var b = days.indexOf(r.e > to ? to : r.e);
     if (a < 0 || b < 0) return;
-    var seg = { a: a, b: b, kind: r.kind, text: r.text, head: r.s >= from, tail: r.e <= to };
+    var seg = { a: a, b: b, kind: r.kind, text: r.text, full: r.full || r.text, n: r.n || 1,
+                head: r.s >= from, tail: r.e <= to };
     var i = 0;
     while (lanes[i] && lanes[i].some(function (x) { return !(seg.b < x.a || seg.a > x.b); })) i++;
     lanes[i] = lanes[i] || [];
@@ -628,7 +665,9 @@ function weekSegments(ranges, days) {
 function barHtml(g, rowBase) {
   return '<div class="bar ' + g.kind + (g.head ? " s" : "") + (g.tail ? " e" : "") + '"' +
     ' style="grid-column:' + (g.a + 1) + '/span ' + (g.b - g.a + 1) + ';grid-row:' + (rowBase + g.lane) + '"' +
-    ' title="' + esc(g.text) + '">' + (g.head ? esc(g.text) : '<span class="cont">◂ ' + esc(g.text) + '</span>') + '</div>';
+    ' title="' + esc(g.full) + '">' +
+    (g.n > 1 ? '<b class="n">' + g.n + '</b> ' : "") +
+    (g.head ? esc(g.text) : '<span class="cont">◂ ' + esc(g.text) + '</span>') + '</div>';
 }
 
 // 이번 주까지 해야 할 일 — 기한 지난 것과 이 주 안의 것. 반복은 그 주의 각 요일마다 한 건.
@@ -663,7 +702,7 @@ function renderCal() {
   var thisWeek = weekStart(TODAY) === from;
 
   var ym = monthOf(S.calAnchor), grid = monthGrid(ym);
-  var ranges = calRanges(want);
+  var ranges = mergeRanges(calRanges(want));
   var thisMonth = ym === monthOf(TODAY);
 
   el.innerHTML = '<h2>업무 달력 <span class="n">' + esc(S.calGrade || "전체") + '</span><span class="sp"></span>' +
@@ -738,6 +777,7 @@ function renderCal() {
     '<p class="muted" style="font-size:12px;margin:6px 0 0">월간 달력의 날을 누르면 그 주가 아래에 열린다. ' +
     '날짜 옆 숫자는 그날 남은 할 일이다. <b>막대는 앱이 아는 일정</b> — 내신 기간은 시작부터 끝까지 이어지고, ' +
     '주가 바뀌면 <span class="muted">◂</span> 로 이어진다. 수학시험·복귀·모의고사·종강은 하루짜리 막대다. ' +
+    '<b>기간이 겹치는 것은 한 막대로 묶는다</b> — 앞의 숫자가 묶인 개수이고, 막대에 손을 올리면 전부 보인다. ' +
     '손으로 넣은 할 일만 체크가 붙고, <b>매주</b>가 붙은 것은 날짜마다 따로 체크한다.</p>';
 
   $$("[data-cw]", el).forEach(function (b) {
