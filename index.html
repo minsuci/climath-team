@@ -112,6 +112,8 @@
   table.sheet-t tr.clsrow td { background: #f7f8fb; white-space: normal; }
   table.sheet-t tr.newrow input { border: 1px dashed var(--line); background: #fff; }
   table.sheet-t tr.jump td { box-shadow: inset 0 0 0 2px var(--orange); }
+  table.cgrid .nm.ghost { background: #fde8e8; color: #b42318; text-decoration: line-through;
+    outline: 1px dashed #d94848; }
   table.cgrid .nm[data-open] { cursor: pointer; }
   table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
 
@@ -668,8 +670,12 @@ function classGridHtml() {
       if (!r) return '<td></td>';
       var g = gradeOf(r), sch = schoolOf(r);
       var hit = stHit(r.name, g, sch, x.t, x.loose ? "" : x.c.name);
-      return '<td class="' + (hit ? "" : "dim") + '" title="' + esc([r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ")) + ' — 눌러서 고치기">' +
-        '<span class="nm ' + gradeCls(g) + '"' + (r.pid ? ' data-open="' + esc(r.pid) + '"' : "") + '>' + esc(r.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span></td>';
+      var ghost = !!(r.pid && !S.byPid[r.pid]);   // 사람이 지워졌는데 반에 남은 것
+      return '<td class="' + (hit ? "" : "dim") + '" title="' +
+        esc(ghost ? r.name + " — 사람 정보가 지워졌다. 명단 편집에서 반 명단에서 빼면 된다"
+                  : [r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ") + " — 눌러서 고치기") + '">' +
+        '<span class="nm ' + (ghost ? "ghost" : gradeCls(g)) + '"' + (r.pid && !ghost ? ' data-open="' + esc(r.pid) + '"' : "") + '>' +
+        esc(r.name) + (ghost ? "" : (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "")) + '</span></td>';
     }).join("") + '</tr>';
   }
   return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
@@ -699,11 +705,14 @@ function studentEditHtml(assigned) {
     return stHit(x.name, x.grade, x.school, teacherName(x.homeroom), (assigned[x.pid] || []).join(" "));
   });
   rows.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
-  var drift = rosterDrift(), loose = looseRosterRows();
+  var drift = rosterDrift(), loose = looseRosterRows(), orph = orphanRosterRows();
   return '<p class="muted" style="font-size:12px;margin:0 0 8px">' +
       '<b>이 명단이 곧 수업관리 앱의 명단이다.</b> 사본이 아니라 같은 것 하나를 고치는 것이라, ' +
       '여기서 고치면 앱의 출석부·참여표·보고서에 바로 나타난다. 메모 칸만 이 앱에 남는다.</p>' +
-    (drift.length || loose.length ? '<div class="banner" style="margin:0 0 10px">' +
+    (drift.length || loose.length || orph.length ? '<div class="banner" style="margin:0 0 10px">' +
+      (orph.length ? '<div style="margin-bottom:6px"><b>지워진 사람이 반에 남아 있는 것 ' + orph.length + '건</b> — ' +
+        esc(orph.map(function (x) { return x.r.name + "(" + x.cname + ")"; }).join(", ")) +
+        '. 배치표에만 뜨고 명단에는 없다. <button class="mini" id="st-orph">반 명단에서 빼기</button></div>' : "") +
       (drift.length ? '<div><b>반 명단 사본에 안 닿은 것 ' + drift.length + '건</b> — 반 명단은 속도 때문에 이름·학교·학년을 따로 한 벌 더 적어 둔다. ' +
         '그게 어긋났다. <button class="mini" id="st-fix">반 명단에 반영</button></div>' : "") +
       (loose.length ? '<div style="margin-top:' + (drift.length ? "6px" : "0") + '"><b>반에만 있는 항목 ' + loose.length + '건</b> — 사람 정보가 없어 명단에 안 뜬다. ' +
@@ -829,9 +838,10 @@ function bindEdit(el, assigned) {
     b.onclick = async function () {
       var pid = b.closest("tr").getAttribute("data-pid"), person = S.byPid[pid];
       var inCls = classesOfPid(pid);
-      if (!confirm("「" + person.name + "」의 사람 정보를 지운다.\n\n" +
-        (inCls.length ? "반 명단(" + inCls.map(function (c) { return c.name; }).join(", ") + ")의 항목과 출결·과제 기록은 그대로 남는다.\n" : "") +
-        "학교·학년·담임만 사라진다. 앱과 같은 방식이다.")) return;
+      if (!confirm("「" + person.name + "」를 명단에서 지운다.\n\n" +
+        (inCls.length ? "반 " + inCls.map(function (c) { return c.name; }).join(", ") + " 에서도 빠진다.\n" +
+          "지난 출결·과제 기록은 지워지지 않지만 화면에서는 안 보이게 된다.\n" : "") +
+        "되돌리려면 다시 만들어 반에 넣어야 한다.")) return;
       try { await stDelete(pid); keepScroll(renderStudents); } catch (e) { alert("지우지 못했다: " + e.message); }
     };
   });
@@ -874,6 +884,15 @@ function bindEdit(el, assigned) {
     try { var n = await fixDrift(); alert(n + "건을 반 명단에 반영했다."); keepScroll(renderStudents); }
     catch (e) { fx.disabled = false; alert("반영하지 못했다: " + e.message); }
   };
+  var op = $("#st-orph", el);
+  if (op) op.onclick = async function () {
+    var rows = orphanRosterRows();
+    if (!confirm("반 명단에서 뺀다.\n\n" + rows.map(function (x) { return x.r.name + " — " + x.cname; }).join("\n") +
+      "\n\n지난 출결·과제 기록은 지워지지 않는다.")) return;
+    op.disabled = true; op.textContent = "빼는 중...";
+    try { var n = await removeOrphans(); alert(n + "건을 반 명단에서 뺐다."); keepScroll(renderStudents); }
+    catch (e) { op.disabled = false; alert("빼지 못했다: " + e.message); }
+  };
   var lk = $("#st-link", el);
   if (lk) lk.onclick = async function () {
     lk.disabled = true; lk.textContent = "잇는 중...";
@@ -906,8 +925,13 @@ async function stCreate(data) {
   S.students.push(p); S.byPid[ref.id] = p;
   return p;
 }
-// 앱과 같은 방식 — 사람 문서만 지운다. 반 명단 항목과 출결·과제는 남는다.
+// **반 명단에서 먼저 빼고** 사람 문서를 지운다.
+// 사람만 지우면 그 사람을 가리키는 반 명단 항목이 유령으로 남는다 — 배치표에는 뜨는데
+// 명단에는 없고, rosterDrift·looseRosterRows 둘 다 못 잡는다(하나는 사람이 없어서,
+// 하나는 pid 가 있어서). 빼는 것은 "반에서 빼기"와 같은 일이라 기록은 그대로 남는다.
 async function stDelete(pid) {
+  var inCls = classesOfPid(pid);
+  for (var i = 0; i < inCls.length; i++) await stUnassign(inCls[i].id, pid);
   await db.collection("students").doc(pid).delete();
   S.students = S.students.filter(function (x) { return x.pid !== pid; });
   delete S.byPid[pid];
@@ -961,6 +985,28 @@ async function fixDrift() {
     await stSyncRosters(p); n++;
   }
   return d.length;
+}
+// 지워진 사람을 가리키는 반 명단 항목. 배치표에만 뜨고 명단에는 없다.
+// 옛 판(2026-09-04)이 사람만 지워서 생긴 것들이 남아 있을 수 있다.
+function orphanRosterRows() {
+  var out = [];
+  activeClasses().forEach(function (c) {
+    (c.roster || []).forEach(function (r) {
+      if (!r.teacher && r.pid && !S.byPid[r.pid] && !isEnded(r)) out.push({ cid: c.id, cname: c.name, r: r });
+    });
+  });
+  return out;
+}
+async function removeOrphans() {
+  var rows = orphanRosterRows(), byCid = {};
+  rows.forEach(function (x) { (byCid[x.cid] = byCid[x.cid] || []).push(x.r.id); });
+  for (var cid in byCid) {
+    var ids = byCid[cid];
+    await withFreshRoster(cid, function (roster) {
+      return roster.filter(function (r) { return ids.indexOf(r.id) < 0; });
+    });
+  }
+  return rows.length;
 }
 // 반에는 있는데 사람 정보가 없는 항목(pid 없음). 명단에 안 떠서 통째로 안 보인다.
 function looseRosterRows() {

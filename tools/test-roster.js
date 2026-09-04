@@ -16,14 +16,17 @@ const SERVER = {
   dash: {},
 };
 const WRITES = [];
+const cp = (x) => JSON.parse(JSON.stringify(x));
 let nextId = 100;
 function docApi(col, id) {
   return {
     get: () => Promise.resolve({ exists: !!SERVER[col][id], data: () => JSON.parse(JSON.stringify(SERVER[col][id] || {})) }),
-    set: (d, o) => { WRITES.push(["set", col, id, Object.keys(d).join(",")]);
+    // 진짜 Firestore 는 보낸 값을 직렬화해 저장한다. 참조를 그대로 두면 화면 쪽 배열과
+    // 서버 쪽 배열이 같은 것이 되어, 있지도 않은 버그가 보이거나 진짜 버그가 가려진다.
+    set: (d, o) => { WRITES.push(["set", col, id, Object.keys(d).join(",")]); d = cp(d);
       SERVER[col][id] = (o && o.merge) ? Object.assign({}, SERVER[col][id], d) : d; return Promise.resolve(); },
     update: (d) => { WRITES.push(["update", col, id, Object.keys(d).join(",")]);
-      SERVER[col][id] = Object.assign({}, SERVER[col][id], d); return Promise.resolve(); },
+      SERVER[col][id] = Object.assign({}, SERVER[col][id], cp(d)); return Promise.resolve(); },
     delete: () => { WRITES.push(["delete", col, id]); delete SERVER[col][id]; return Promise.resolve(); },
   };
 }
@@ -37,7 +40,7 @@ var alert=function(){},confirm=()=>true;
 const ctx = vm.createContext({
   console, setTimeout, clearTimeout, Date, Math, JSON, Object, Array, String, Number, Promise, RegExp, isNaN, parseInt,
   DB: { collection: (c) => ({ doc: (id) => docApi(c, id || ("gen" + (nextId++))),
-        add: (d) => { const id = "gen" + (nextId++); WRITES.push(["add", c, id]); SERVER[c][id] = d; return Promise.resolve({ id }); },
+        add: (d) => { const id = "gen" + (nextId++); WRITES.push(["add", c, id]); SERVER[c][id] = cp(d); return Promise.resolve({ id }); },
         get: () => Promise.resolve({ forEach() {} }), orderBy: () => ({ get: () => Promise.resolve({ forEach() {} }) }) }) },
 });
 vm.runInContext(stub + "\n" + src, ctx);
@@ -69,6 +72,10 @@ globalThis.__run = async function () {
   out.teacherKept = SRV.classes.c1.roster[2].teacher;   // 선생님 항목도 남아야
 
   // 2. 다른 사람이 그 사이 반에 학생을 넣어도 안 지워진다 (fresh read)
+  // 남이 넣은 학생은 사람 문서도 함께 있다 (없으면 그건 유령이고, 8번에서 따로 본다)
+  SRV.students.p9 = { name:"남이넣은학생", school:"", grade:"", homeroom:"" };
+  S.students.push({ pid:"p9", name:"남이넣은학생", school:"", grade:"", homeroom:"" });
+  S.byPid.p9 = S.students[S.students.length-1];
   SRV.classes.c2.roster.push({ id:"rZ", pid:"p9", name:"남이넣은학생" });
   await stSave("p1", { grade: "고2" });
   out.strangerKept = SRV.classes.c2.roster.some(function(r){return r.pid==="p9";});
@@ -103,10 +110,23 @@ globalThis.__run = async function () {
   out.bulk3 = JSON.stringify(parseBulkLine("이름만"));
   out.bulkEmpty = parseBulkLine("   ");
 
-  // 7. 지우기 — 사람만 지우고 반 항목은 남는다 (앱과 같은 방식)
+  // 7. 지우기 — 반 명단에서도 빠진다 (유령을 안 남긴다)
   await stDelete("p1");
   out.personGone = !SRV.students.p1;
-  out.rosterKept = SRV.classes.c1.roster.filter(function(r){return r.pid==="p1";}).length;
+  out.rosterGone = SRV.classes.c1.roster.filter(function(r){return r.pid==="p1";}).length
+                 + SRV.classes.c2.roster.filter(function(r){return r.pid==="p1";}).length;
+  out.strangerStillThere = SRV.classes.c2.roster.some(function(r){return r.pid==="p9";});
+  out.noOrphan = orphanRosterRows().length;
+
+  // 8. 옛 판이 남긴 유령을 치운다
+  SRV.classes.c1.roster.push({ id:"rGhost", pid:"pDead", name:"한성수", grade:"고2" });
+  S.classes.filter(function(c){return c.id==="c1";})[0].roster.push({ id:"rGhost", pid:"pDead", name:"한성수", grade:"고2" });
+  out.orphanFound = orphanRosterRows().length;
+  out.orphanDump = orphanRosterRows().map(function(x){return x.r.name+"/"+x.cname+"/"+x.r.pid;}).join(" | ");
+  out.orphanName = (orphanRosterRows()[0]||{}).r ? orphanRosterRows()[0].r.name : "";
+  await removeOrphans();
+  out.orphanCleared = orphanRosterRows().length;
+  out.ghostGone = !SRV.classes.c1.roster.some(function(r){return r.id==="rGhost";});
   return out;
 };
 `, ctx);
@@ -131,8 +151,12 @@ ctx.__p.then((o) => {
   ok("붙여넣기 — 탭·숫자 학년", o.bulk2 === '{"name":"설민준","grade":"중3","school":"봉은중","homeroom":""}', o.bulk2);
   ok("붙여넣기 — 이름만", o.bulk3 === '{"name":"이름만","grade":"","school":"","homeroom":""}', o.bulk3);
   ok("붙여넣기 — 빈 줄 무시", o.bulkEmpty === null);
-  ok("지우기 — 사람만 사라짐", o.personGone === true);
-  ok("지우기 — 반 항목은 남음 (앱과 같음)", o.rosterKept === 1);
+  ok("지우기 — 사람 사라짐", o.personGone === true);
+  ok("지우기 — 반 명단에서도 빠짐 (유령 안 남김)", o.rosterGone === 0);
+  ok("지우기 — 남의 학생은 그대로", o.strangerStillThere === true);
+  ok("지우기 뒤 유령 없음", o.noOrphan === 0);
+  ok("옛 유령을 찾음", o.orphanFound === 1 && o.orphanName === "한성수", o.orphanDump);
+  ok("유령을 반 명단에서 뺌", o.orphanCleared === 0 && o.ghostGone === true);
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
