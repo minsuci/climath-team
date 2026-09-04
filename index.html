@@ -80,6 +80,13 @@
   .pill.green { background: #e3f5ea; color: #1f7a45; }
   .pill.yellow { background: #fff4d6; color: #8a5a00; }
   .pill.blue { background: #e4ecfb; color: #234e9e; }
+  /* 학년 색 — 표 줄과 알약이 같은 색 */
+  tr.g0 td { background: #eaf3ff; }  .pill.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
+  tr.g1 td { background: #eaf8ee; }  .pill.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
+  tr.g2 td { background: #fff7e3; }  .pill.g2 { background: #ffe7a8; color: #7a5200; }   /* 고2 노랑 */
+  tr.g3 td { background: #fdecf1; }  .pill.g3 { background: #f9cfdb; color: #9b2246; }   /* 고3 분홍 */
+  tr.g9 td { background: #f3f4f6; }  .pill.g9 { background: #e5e7eb; color: #4b5563; }   /* 학년 없음 */
+  .chips input.mini { padding: 3px 8px; }
   .bar { height: 8px; background: #eef1f6; border-radius: 4px; overflow: hidden; min-width: 80px; }
   .bar i { display: block; height: 100%; background: var(--green); }
   .bar.low i { background: var(--red); } .bar.mid i { background: var(--orange); }
@@ -186,7 +193,7 @@ var S = {
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
-  filterWho: "", showAllStudents: false, showDone: false, saEmail: "",
+  filterWho: "", stFilter: "", stQuery: "", showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
 };
@@ -490,6 +497,9 @@ function renderWeek() {
 }
 
 // ---------- 학생 명단 ----------
+// 학년별 색. 표의 줄과 학년 알약이 같은 색을 쓴다.
+var GRADE_CLS = { "중3": "g0", "고1": "g1", "고2": "g2", "고3": "g3" };
+function gradeCls(g) { return GRADE_CLS[g] || "g9"; }
 function renderStudents() {
   var el = $("#sec-students");
   var st = S.students;
@@ -500,34 +510,65 @@ function renderStudents() {
   activeClasses().forEach(function (c) { rosterStudents(c).forEach(function (r) { if (r.pid) (assigned[r.pid] = assigned[r.pid] || []).push(c.name); }); });
   var unassigned = st.filter(function (s) { return !assigned[s.pid]; });
   var noTeacher = st.filter(function (s) { return !s.homeroom; });
-  // 담임별
+  navBadge("students", unassigned.length + noGrade + noTeacher.length, true);
+
+  var f = S.stFilter || "";   // "" 전체 · 학년 · "none"
+  var q = (S.stQuery || "").trim();
+  var rows = st.filter(function (s) {
+    if (f === "none") { if (s.grade && GRADES.indexOf(s.grade) >= 0) return false; }
+    else if (f && s.grade !== f) return false;
+    if (q) { var hay = [s.name, s.school, s.grade, teacherName(s.homeroom), (assigned[s.pid] || []).join(" ")].join(" "); if (hay.indexOf(q) < 0) return false; }
+    return true;
+  });
+  rows.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
+
+  var chip = function (key, label, n) { return '<button class="mini ' + (f === key ? "on" : "") + '" data-gf="' + key + '">' + label + ' <span class="muted">' + n + '</span></button>'; };
+  el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 고치기</a></h2>' +
+    '<div class="stat">' +
+    '<div class="' + (unassigned.length ? "bad" : "") + '"><b>' + unassigned.length + '</b><span>반 미배정</span></div>' +
+    '<div class="' + (noTeacher.length ? "bad" : "") + '"><b>' + noTeacher.length + '</b><span>담임 없음</span></div>' +
+    '<div class="' + (noGrade ? "bad" : "") + '"><b>' + noGrade + '</b><span>학년 없음</span></div></div>' +
+    '<div class="chips">' + chip("", "전체", st.length) + GRADES.map(function (g) { return chip(g, '<span class="pill ' + gradeCls(g) + '">' + g + '</span>', byGrade[g]); }).join("") + chip("none", "학년 없음", noGrade) +
+    '<input type="text" id="st-q" class="mini" placeholder="이름·학교·담임·반 찾기" value="' + esc(q) + '" style="min-width:180px"></div>' +
+    '<div class="tbl tall" id="st-tbl">' + studentTableHtml(rows, assigned) + '</div>' +
+    '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(st) + '</details>';
+  $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); renderStudents(); }; });
+  // 찾기 칸은 표만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
+  $("#st-q").oninput = function () {
+    S.stQuery = this.value;
+    var q2 = S.stQuery.trim();
+    var rows2 = st.filter(function (s) {
+      if (f === "none") { if (s.grade && GRADES.indexOf(s.grade) >= 0) return false; }
+      else if (f && s.grade !== f) return false;
+      if (q2) { var hay = [s.name, s.school, s.grade, teacherName(s.homeroom), (assigned[s.pid] || []).join(" ")].join(" "); if (hay.indexOf(q2) < 0) return false; }
+      return true;
+    });
+    rows2.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
+    $("#st-tbl").innerHTML = studentTableHtml(rows2, assigned);
+  };
+}
+function studentTableHtml(rows, assigned) {
+  if (!rows.length) return '<div class="empty">해당하는 학생이 없다.</div>';
+  return '<table><thead><tr><th>#</th><th>이름</th><th>학년</th><th>학교</th><th>담임</th><th>반</th></tr></thead><tbody>' +
+    rows.map(function (s, i) {
+      var g = s.grade && GRADES.indexOf(s.grade) >= 0 ? s.grade : "";
+      var cls = (assigned[s.pid] || []);
+      return '<tr class="' + gradeCls(g) + '"><td class="muted">' + (i + 1) + '</td><td><b>' + esc(s.name) + '</b></td>' +
+        '<td>' + (g ? '<span class="pill ' + gradeCls(g) + '">' + esc(g) + '</span>' : '<span class="pill red">없음</span>') + '</td>' +
+        '<td>' + esc(s.school || "") + '</td>' +
+        '<td>' + (s.homeroom ? esc(teacherName(s.homeroom)) : '<span class="red">없음</span>') + '</td>' +
+        '<td class="wrapc">' + (cls.length ? cls.map(esc).join(", ") : '<span class="red">미배정</span>') + '</td></tr>';
+    }).join("") + '</tbody></table>';
+}
+function homeroomTableHtml(st) {
   var byT = {};
   st.forEach(function (s) { var k = s.homeroom || "_"; (byT[k] = byT[k] || { n: 0, g: {} }); byT[k].n++; byT[k].g[s.grade || "없음"] = (byT[k].g[s.grade || "없음"] || 0) + 1; });
-  var tRows = Object.keys(byT).sort(function (a, b) { return byT[b].n - byT[a].n; }).map(function (k) {
-    var v = byT[k];
-    return '<tr><td>' + (k === "_" ? '<span class="red">담임 없음</span>' : esc(teacherName(k))) + '</td><td><b>' + v.n + '</b></td><td class="wrapc">' +
-      Object.keys(v.g).sort(function (a, b) { return gradeRank(a) - gradeRank(b); }).map(function (g) { return '<span class="pill">' + esc(g) + ' ' + v.g[g] + '</span>'; }).join("") + '</td></tr>';
-  }).join("");
-  // 학교별
-  var bySchool = {};
-  st.forEach(function (s) { var k = s.school || "(학교 없음)"; bySchool[k] = (bySchool[k] || 0) + 1; });
-  var schools = Object.keys(bySchool).sort(function (a, b) { return bySchool[b] - bySchool[a]; });
-
-  navBadge("students", unassigned.length + noGrade + noTeacher.length, true);
-  el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span>' +
-    '<button id="st-all">' + (S.showAllStudents ? "요약만" : "전체 표") + '</button><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 열기</a></h2>' +
-    '<div class="stat">' + GRADES.map(function (g) { return '<div><b>' + byGrade[g] + '</b><span>' + g + '</span></div>'; }).join("") +
-    '<div class="' + (noGrade ? "bad" : "") + '"><b>' + noGrade + '</b><span>학년 없음</span></div>' +
-    '<div class="' + (unassigned.length ? "bad" : "") + '"><b>' + unassigned.length + '</b><span>반 미배정</span></div>' +
-    '<div class="' + (noTeacher.length ? "bad" : "") + '"><b>' + noTeacher.length + '</b><span>담임 없음</span></div></div>' +
-    '<div class="tbl" style="max-height:220px"><table><thead><tr><th>담임</th><th>학생</th><th>학년</th></tr></thead><tbody>' + tRows + '</tbody></table></div>' +
-    '<details><summary>학교별 ' + schools.length + '곳</summary><div class="wrapc">' + schools.map(function (k) { return '<span class="pill">' + esc(k) + ' ' + bySchool[k] + '</span>'; }).join(" ") + '</div></details>' +
-    (unassigned.length ? '<details><summary>반 미배정 ' + unassigned.length + '명</summary><div class="wrapc">' + unassigned.map(function (s) { return '<span class="pill red">' + esc(s.name) + (s.grade ? " " + esc(s.grade) : "") + '</span>'; }).join(" ") + '</div></details>' : "") +
-    (S.showAllStudents ? '<div class="tbl tall" style="margin-top:8px"><table><thead><tr><th>이름</th><th>학년</th><th>학교</th><th>담임</th><th>반</th></tr></thead><tbody>' +
-      st.slice().sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.name || "").localeCompare(b.name || ""); }).map(function (s) {
-        return '<tr><td>' + esc(s.name) + '</td><td>' + esc(s.grade || "") + '</td><td>' + esc(s.school || "") + '</td><td>' + esc(teacherName(s.homeroom)) + '</td><td class="wrapc">' + (assigned[s.pid] || []).map(esc).join(", ") + '</td></tr>';
-      }).join("") + '</tbody></table></div>' : "");
-  $("#st-all").onclick = function () { S.showAllStudents = !S.showAllStudents; renderStudents(); };
+  return '<div class="tbl" style="max-height:260px"><table><thead><tr><th>담임</th><th>학생</th><th>학년</th></tr></thead><tbody>' +
+    Object.keys(byT).sort(function (a, b) { return byT[b].n - byT[a].n; }).map(function (k) {
+      var v = byT[k];
+      return '<tr><td>' + (k === "_" ? '<span class="red">담임 없음</span>' : esc(teacherName(k))) + '</td><td><b>' + v.n + '</b></td><td class="wrapc">' +
+        Object.keys(v.g).sort(function (a, b) { return gradeRank(a) - gradeRank(b); }).map(function (g) { return '<span class="pill ' + gradeCls(g) + '">' + esc(g) + ' ' + v.g[g] + '</span>'; }).join("") + '</td></tr>';
+    }).join("") + '</tbody></table></div>';
 }
 
 // ---------- 학교 일정 ----------
