@@ -259,6 +259,7 @@ var S = {
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
+  stLog: [],      // 명단 변경 기록 (앱·대시보드 양쪽)
 };
 
 async function authApi(body) {
@@ -421,6 +422,8 @@ async function loadCore() {
     dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
     dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
+    db.collection("appConfig").doc("studentLog").get()
+      .then(function (d) { S.stLog = (d.exists && d.data().items) || []; }).catch(function () { S.stLog = []; }),
     dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sheets: [] }, d.data()) : { sheets: [] }; })
       .catch(function () {}),
   ];
@@ -755,7 +758,38 @@ function studentEditHtml(assigned) {
     '<button class="btn o" id="st-bulk-go">만들기</button><span class="muted" id="st-bulk-msg"></span></div>' +
     '<p class="muted" style="font-size:12px">학년은 <b>중3·고1·고2·고3</b> 또는 <b>9·10·11·12</b>. 이미 있는 이름은 건너뛴다.</p></details>' +
     '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(S.students) + '</details>' +
+    stLogHtml() +
     '<datalist id="st-schools">' + schoolOpts().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + '</datalist>';
+}
+// 앱에서 고친 것도 여기 같이 뜬다. 그래야 «앱에서 누가 뭘 바꿨는지» 를
+// 대시보드만 봐도 알 수 있다 — 그것이 근거지라는 말의 실제 내용이다.
+function stLogAgo(t) {
+  var m = Math.floor((Date.now() - t) / 60000);
+  if (m < 1) return "방금";
+  if (m < 60) return m + "분 전";
+  if (m < 60 * 24) return Math.floor(m / 60) + "시간 전";
+  var d = new Date(t);
+  return (d.getMonth() + 1) + "/" + d.getDate();
+}
+function stLogHtml() {
+  var items = (S.stLog || []).slice().reverse();
+  if (!items.length) return "";
+  var fromApp = items.filter(function (x) { return x.from === "앱"; }).length;
+  return '<details><summary>최근 바뀐 것 ' + items.length + '건' +
+      (fromApp ? ' <span class="muted">(앱에서 ' + fromApp + '건)</span>' : "") + '</summary>' +
+    '<p class="muted" style="font-size:12px;margin:6px 0">앱에서 고친 것도 여기 함께 쌓인다. ' +
+      '최근 ' + STUDENT_LOG_KEEP + '건까지 남는다.</p>' +
+    '<div class="tbl"><table class="sheet-t"><thead><tr>' +
+    '<th style="width:70px">언제</th><th style="width:110px">학생</th><th style="width:90px">무엇</th>' +
+    '<th>자세히</th><th style="width:150px">누가 · 어디서</th></tr></thead><tbody>' +
+    items.slice(0, 80).map(function (x) {
+      return '<tr><td class="muted">' + esc(stLogAgo(x.t)) + '</td>' +
+        '<td><b>' + esc(x.name || "(이름 없음)") + '</b></td>' +
+        '<td>' + esc(x.act || "") + '</td>' +
+        '<td class="muted">' + esc(x.detail || "") + '</td>' +
+        '<td class="muted">' + esc(x.by || "?") + ' · ' +
+          '<span style="color:' + (x.from === "앱" ? "#8a7f72" : "#2b5f8a") + '">' + esc(x.from || "") + '</span></td></tr>';
+    }).join("") + '</tbody></table></div></details>';
 }
 function schoolOpts() {
   var m = {}; S.students.forEach(function (x) { if (x.school) m[x.school] = 1; });
@@ -926,6 +960,39 @@ function bindEdit(el, assigned) {
   };
 }
 
+// ---- 변경 기록 ----
+//
+// 명단은 여기와 수업관리 앱 **두 곳에서** 고친다. 저장소는 하나지만(앱 students),
+// 그래서 «누가 어디서 무엇을 바꿨나» 를 아무도 모른다. 그 앎을 한 곳에 모아
+// **여기서** 볼 수 있게 한다 — 그것이 이 앱이 명단의 근거지라는 뜻이다.
+//
+// 앱과 같은 자리(appConfig/studentLog)에 쓴다. 새 컬렉션을 만들면 앱 보안 규칙을
+// 콘솔에 다시 붙여넣어야 하는데, 안 붙여넣으면 기록이 조용히 안 쌓인다.
+var STUDENT_LOG_KEEP = 300;
+// ⚠ 모아서 한 번에 쓴다. 여러 명 붙여넣기는 한 번에 수십 명을 만든다.
+//    한 명마다 읽고 쓰면 그만큼 느려진다.
+var LOG_Q = [], LOG_T = null;
+function logStudentChange(act, pid, name, detail) {
+  LOG_Q.push({ t: Date.now(), act: act, pid: pid || "", name: name || "",
+               by: teacherName(S.claims && S.claims.tid) || "", from: "대시보드",
+               detail: detail || "" });
+  if (LOG_T) clearTimeout(LOG_T);
+  LOG_T = setTimeout(flushStudentLog, 800);
+}
+async function flushStudentLog() {
+  LOG_T = null;
+  var q = LOG_Q; LOG_Q = [];
+  if (!q.length) return;
+  try {
+    var ref = db.collection("appConfig").doc("studentLog");
+    var d = await ref.get();
+    var items = ((d.exists && d.data().items) || []).concat(q);
+    items = items.slice(-STUDENT_LOG_KEEP);
+    await ref.set({ items: items, updated: Date.now() }, { merge: true });
+    S.stLog = items;
+  } catch (e) {}   // 기록 때문에 저장이 실패하면 안 된다
+}
+
 // ---- 쓰기 (climath-class) ----
 // 반 명단은 배열 하나라 통째로 다시 쓴다. **반드시 방금 읽은 것 위에 얹는다** —
 // 화면이 들고 있던 옛 사본으로 저장하면 그 사이 다른 선생님이 바꾼 것이 날아간다.
@@ -943,11 +1010,14 @@ async function stSave(pid, patch) {
   await db.collection("students").doc(pid).set(Object.assign({}, patch, { updated: Date.now() }), { merge: true });
   var p = S.byPid[pid]; if (p) Object.assign(p, patch);
   if ("name" in patch || "school" in patch || "grade" in patch) await stSyncRosters(p);
+  logStudentChange("고침", pid, (p && p.name) || patch.name || "",
+    Object.keys(patch).filter(function (k) { return k !== "name"; }).join(" · "));
 }
 async function stCreate(data) {
   var ref = await db.collection("students").add(Object.assign({}, data, { time: Date.now(), updated: Date.now() }));
   var p = Object.assign({ pid: ref.id }, data);
   S.students.push(p); S.byPid[ref.id] = p;
+  logStudentChange("만듦", ref.id, data.name || "", "");
   return p;
 }
 // **반 명단에서 먼저 빼고** 사람 문서를 지운다.
@@ -957,20 +1027,25 @@ async function stCreate(data) {
 async function stDelete(pid) {
   var inCls = classesOfPid(pid);
   for (var i = 0; i < inCls.length; i++) await stUnassign(inCls[i].id, pid);
+  var gone = S.byPid[pid];
   await db.collection("students").doc(pid).delete();
+  logStudentChange("지움", pid, (gone && gone.name) || "", "");
   S.students = S.students.filter(function (x) { return x.pid !== pid; });
   delete S.byPid[pid];
   if (S.notes[pid]) { delete S.notes[pid]; try { await saveNotes(); } catch (e) {} }
 }
 async function stAssign(cid, person) {
-  await withFreshRoster(cid, function (roster) {
+  var added = await withFreshRoster(cid, function (roster) {
     if (roster.some(function (r) { return r.pid === person.pid; })) return null;
     return roster.concat([{ id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       pid: person.pid, name: person.name, school: person.school || "", grade: person.grade || "" }]);
   });
+  if (added) logStudentChange("반에 넣음", person.pid, person.name || "", className(cid));
 }
 async function stUnassign(cid, pid) {
+  var p = S.byPid[pid];
   await withFreshRoster(cid, function (roster) { return roster.filter(function (r) { return r.pid !== pid; }); });
+  logStudentChange("반에서 뺌", pid, (p && p.name) || "", className(cid));
 }
 // 사람 정보 → 그 사람이 든 모든 반 명단의 미러. 이름도 함께 보낸다 —
 // 안 보내면 출석부·참여표가 옛 이름을 계속 쓴다.
