@@ -85,6 +85,27 @@
   .todo .task { border-bottom: 1px solid var(--line); }
   .todo .task:last-child { border-bottom: 0; }
   .calwrap { overflow-x: auto; }
+  /* 월간 */
+  .cal.mon { grid-template-columns: repeat(7, minmax(112px, 1fr)); min-width: 800px; margin-bottom: 12px; }
+  .cal.mon .mhead { text-align: center; font-size: 12px; color: var(--muted); padding: 2px 0; font-weight: 600; }
+  .cal.mon .mhead.wend { color: #b35d00; }
+  .mday { border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 3px 4px;
+    min-height: 74px; cursor: pointer; }
+  .mday:hover { border-color: var(--navy); }
+  .mday.wend { background: #fafbfc; }
+  .mday.out { opacity: .38; }
+  .mday.inweek { background: #eef3fb; border-color: #c7d6ee; }
+  .mday.today .mn { color: #fff; background: var(--navy); border-radius: 9px; padding: 0 6px; }
+  .mday .mn { font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; margin-bottom: 2px; }
+  .mday .mn .tn { background: var(--orange); color: #fff; border-radius: 8px; font-size: 10px;
+    padding: 0 5px; font-weight: 700; }
+  .mday .chip { font-size: 10px; padding: 1px 4px; border-radius: 3px; margin-bottom: 2px;
+    background: #eef1f6; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mday .chip.school { background: #fff4d6; color: #8a5a00; }
+  .mday .chip.test { background: #fde8e8; color: #b42318; }
+  .mday .chip.more { background: none; color: var(--muted); }
+  .wk-h { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: 14px;
+    border-top: 1px solid var(--line); padding-top: 10px; }
   .cal { display: grid; grid-template-columns: repeat(7, minmax(132px, 1fr)); gap: 6px; min-width: 940px; }
   .cday { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 5px 6px; min-height: 128px; }
   .cday.wend { background: #fafbfc; }
@@ -513,6 +534,21 @@ function weekDays(anchor) {
   for (var i = 0; i < 7; i++) out.push(addDays(s0, i));
   return out;
 }
+// 달을 옮길 때 날짜가 넘치지 않게 붙든다 (1/31 에서 한 달 뒤는 2/28)
+function shiftAnchorMonth(d, delta) {
+  var y = Number(d.slice(0, 4)), m = Number(d.slice(5, 7)), day = Number(d.slice(8));
+  var last = new Date(y, m + delta, 0).getDate();
+  return ymd(new Date(y, m - 1 + delta, Math.min(day, last)));
+}
+// 그 달을 **주 단위로 꽉 채운 격자**. 앞뒤로 지난달·다음달 며칠이 딸려 온다 —
+// 달력은 줄이 맞아야 읽히고, 월말 걸친 주를 잘라내면 그 주가 통째로 안 보인다.
+function monthGrid(ym) {
+  var days = daysOfMonth(ym);
+  var d = weekStart(days[0]), stop = addDays(weekStart(days[days.length - 1]), 6);
+  var out = [];
+  while (d <= stop && out.length < 42) { out.push(d); d = addDays(d, 1); }
+  return out;
+}
 function taskGrade(t) { return t.grade || "공통"; }
 function gradeHit(g, want) { return !want || want === "전체" || g === want; }
 // 이 할 일이 그날에 놓이는가
@@ -580,18 +616,42 @@ function renderCal() {
   navBadge("cal", todo.length, lateN > 0);
   var thisWeek = weekStart(TODAY) === from;
 
-  el.innerHTML = '<h2>업무 달력 <span class="n">' + esc(fmtMD(from)) + ' ~ ' + esc(fmtMD(to)) +
-    (thisWeek ? ' · 이번 주' : "") + '</span><span class="sp"></span>' +
-    '<button class="mini" data-cw="-1">‹ 지난 주</button>' +
-    (thisWeek ? "" : '<button class="mini" data-cw="0">이번 주</button>') +
-    '<button class="mini" data-cw="1">다음 주 ›</button></h2>' +
+  var ym = monthOf(S.calAnchor), grid = monthGrid(ym);
+  var mAuto = calAuto(want, grid[0], grid[grid.length - 1]);
+  var thisMonth = ym === monthOf(TODAY);
+
+  el.innerHTML = '<h2>업무 달력 <span class="n">' + esc(S.calGrade || "전체") + '</span><span class="sp"></span>' +
+    '<button class="mini" data-cm="-1">‹</button>' +
+    '<b style="font-size:14px">' + Number(ym.slice(0, 4)) + '. ' + Number(ym.slice(5)) + '월</b>' +
+    '<button class="mini" data-cm="1">›</button>' +
+    (thisMonth && thisWeek ? "" : '<button class="mini" data-cw="0">오늘로</button>') + '</h2>' +
     '<div class="chips">' + GRADE_TABS.map(function (g) {
       var n = g === "전체" ? todo.length : dueThrough(g, days).length;
       return '<button class="mini ' + (g === want ? "on" : "") + '" data-cg="' + esc(g) + '">' +
         (GRADES.indexOf(g) >= 0 ? '<span class="pill ' + gradeCls(g) + '">' + g + '</span>' : esc(g)) +
         (n ? ' ' + n : "") + '</button>';
     }).join("") + '</div>' +
-    // ⚠ 본체는 이쪽이다. 달력보다 먼저 놓는다.
+    // ---- 월간 달력 ----
+    '<div class="calwrap"><div class="cal mon">' +
+    DOW_KO.slice(1).concat([DOW_KO[0]]).map(function (w, i) {
+      return '<div class="mhead' + (i >= 5 ? " wend" : "") + '">' + w + '</div>';
+    }).join("") +
+    grid.map(function (d) {
+      var out = monthOf(d) !== ym, dow = parseYmd(d).getDay();
+      var inWeek = d >= from && d <= to;
+      var tn = S.tasks.filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d) && !taskDoneOn(t, d); }).length;
+      var aa = mAuto.filter(function (a) { return a.date === d; });
+      return '<div class="mday' + (out ? " out" : "") + (d === TODAY ? " today" : "") +
+        (inWeek ? " inweek" : "") + (dow === 0 || dow === 6 ? " wend" : "") + '" data-cjump="' + d + '">' +
+        '<div class="mn">' + Number(d.slice(8)) + (tn ? '<span class="tn">' + tn + '</span>' : "") + '</div>' +
+        aa.slice(0, 2).map(function (a) { return '<div class="chip ' + a.kind + '">' + esc(a.text) + '</div>'; }).join("") +
+        (aa.length > 2 ? '<div class="chip more">+' + (aa.length - 2) + '</div>' : "") + '</div>';
+    }).join("") + '</div></div>' +
+    '<div class="wk-h"><b>주간 업무 달력</b> <span class="muted">' + esc(fmtMD(from)) + ' ~ ' + esc(fmtMD(to)) +
+    (thisWeek ? ' · 이번 주' : "") + '</span><span class="sp" style="flex:1"></span>' +
+    '<button class="mini" data-cw="-1">‹ 지난 주</button>' +
+    '<button class="mini" data-cw="1">다음 주 ›</button></div>' +
+    // ⚠ 본체는 이쪽이다. 요일 칸보다 먼저 놓는다.
     '<div class="todo"><b style="font-size:13px">이번 주까지 해야 할 일 ' +
     (lateN ? '<span class="red">· 기한 지남 ' + lateN + '</span>' : "") + '</b>' +
     (todo.length ? todo.map(todoRowHtml).join("") : '<div class="empty">이 주에 걸린 일이 없다.</div>') + '</div>' +
@@ -614,8 +674,9 @@ function renderCal() {
         '</div>';
     }).join("") + '</div></div>' +
     '<div id="cal-add"></div>' +
-    '<p class="muted" style="font-size:12px;margin:6px 0 0">회색 칸은 앱이 아는 일정이다 — 학교 시험·시험 날짜·반 종강. ' +
-    '손으로 넣은 할 일만 체크가 붙는다. <b>매주</b>가 붙은 것은 날짜마다 따로 체크한다.</p>';
+    '<p class="muted" style="font-size:12px;margin:6px 0 0">월간 달력의 날을 누르면 그 주가 아래에 열린다. ' +
+    '날짜 옆 숫자는 그날 남은 할 일이다. 색 칸은 앱이 아는 일정 — 학교 시험·시험 날짜·반 종강. ' +
+    '손으로 넣은 할 일만 체크가 붙고, <b>매주</b>가 붙은 것은 날짜마다 따로 체크한다.</p>';
 
   $$("[data-cw]", el).forEach(function (b) {
     b.onclick = function () {
@@ -623,6 +684,16 @@ function renderCal() {
       S.calAnchor = n === 0 ? TODAY : addDays(S.calAnchor, n * 7);
       keepScrollIn("#sec-cal", renderCal);
     };
+  });
+  // 달과 주는 **날짜 하나**를 같이 본다. 따로 두면 위아래가 다른 때를 가리킨다.
+  $$("[data-cm]", el).forEach(function (b) {
+    b.onclick = function () {
+      S.calAnchor = shiftAnchorMonth(S.calAnchor, Number(b.getAttribute("data-cm")));
+      keepScrollIn("#sec-cal", renderCal);
+    };
+  });
+  $$("[data-cjump]", el).forEach(function (b) {
+    b.onclick = function () { S.calAnchor = b.getAttribute("data-cjump"); keepScrollIn("#sec-cal", renderCal); };
   });
   $$("[data-cg]", el).forEach(function (b) {
     b.onclick = function () { S.calGrade = b.getAttribute("data-cg"); keepScrollIn("#sec-cal", renderCal); };

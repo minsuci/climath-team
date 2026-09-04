@@ -34,6 +34,30 @@ ok("주는 월~일 이레", run(`return weekDays("2026-09-04").join(",")`) ===
   "2026-08-31,2026-09-01,2026-09-02,2026-09-03,2026-09-04,2026-09-05,2026-09-06",
   run(`return weekDays("2026-09-04").join(",")`));
 
+// ---- 월간 격자 ----
+// 그 달을 주 단위로 꽉 채운다. 월말 걸친 주를 잘라내면 그 주가 통째로 안 보인다.
+const G9 = run(`return monthGrid("2026-09")`);
+ok("월요일에서 시작한다", G9[0] === "2026-08-31", G9[0]);
+ok("일요일에서 끝난다", G9[G9.length - 1] === "2026-10-04", G9[G9.length - 1]);
+ok("주 단위로 딱 떨어진다", G9.length % 7 === 0, String(G9.length));
+ok("그 달을 하루도 안 빠뜨린다",
+  run(`return daysOfMonth("2026-09").every(function(d){ return monthGrid("2026-09").indexOf(d) >= 0; })`) === true);
+ok("앞뒤로 딸려온 날은 그 달이 아니다",
+  G9.filter((d) => d.slice(0, 7) !== "2026-09").join(",") === "2026-08-31,2026-10-01,2026-10-02,2026-10-03,2026-10-04",
+  G9.filter((d) => d.slice(0, 7) !== "2026-09").join(","));
+// 1일이 월요일인 달은 앞이 안 딸려온다
+ok("1일이 월요일이면 그 날부터", run(`return monthGrid("2026-06")[0]`) === "2026-06-01",
+  run(`return monthGrid("2026-06")[0] + " (1일 요일: " + DOW_KO[parseYmd("2026-06-01").getDay()] + ")"`));
+
+// ---- 달 옮기기 — 날짜가 넘치면 붙든다 ----
+ok("1/31 에서 한 달 뒤는 2/28", run(`return shiftAnchorMonth("2026-01-31",1)`) === "2026-02-28",
+  run(`return shiftAnchorMonth("2026-01-31",1)`));
+ok("3/31 에서 한 달 앞은 2/28", run(`return shiftAnchorMonth("2026-03-31",-1)`) === "2026-02-28",
+  run(`return shiftAnchorMonth("2026-03-31",-1)`));
+ok("12월 다음은 이듬해 1월", run(`return shiftAnchorMonth("2026-12-15",1)`) === "2027-01-15");
+ok("1월 이전은 지난해 12월", run(`return shiftAnchorMonth("2026-01-15",-1)`) === "2025-12-15");
+ok("넘치지 않으면 날짜를 지킨다", run(`return shiftAnchorMonth("2026-09-04",1)`) === "2026-10-04");
+
 // ---- 어느 날에 놓이는가 ----
 ok("기한이 그날이면 놓인다", run(`return taskOnDate({due:"2026-09-04"},"2026-09-04")`) === true);
 ok("기한이 다른 날이면 안 놓인다", run(`return taskOnDate({due:"2026-09-04"},"2026-09-05")`) === false);
