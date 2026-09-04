@@ -127,6 +127,18 @@
   table.cgrid .nm[data-open] { cursor: pointer; }
   table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
 
+  /* 내신 참여표 — 날짜 띠·칠하는 달력 */
+  table.cgrid.strip th, table.cgrid.strip td { min-width: 21px; max-width: 21px; padding: 3px 1px;
+    text-align: center; font-size: 11px; }
+  table.cgrid.strip th.rn, table.cgrid.strip thead th.rn { min-width: 78px; max-width: 78px; text-align: left;
+    padding: 3px 6px; font-size: 12px; font-weight: 600; color: var(--text); }
+  table.cgrid.strip th.wd { font-size: 9px; padding: 1px; font-weight: 400; }
+  table.cgrid.strip thead th { min-height: 0; }
+  table.cgrid.paint td:hover { outline: 2px solid var(--navy); }
+  .entry { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+  .entry .row { margin: 4px 0; }
+  .entry input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+
   /* 학년 색 — 표 줄과 알약이 같은 색 */
   tr.g0 td { background: #eaf3ff; }  .pill.g0, .nm.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
   tr.g1 td { background: #eaf8ee; }  .pill.g1, .nm.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
@@ -243,6 +255,7 @@ var S = {
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
+  exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "",
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
@@ -1108,6 +1121,107 @@ function renderTerms() {
 }
 
 // ---------- 내신 참여표 ----------
+//
+// 수업관리 앱의 ExamBoard/ExamEntry 와 **같은 자리에 같은 모양으로** 쓴다.
+//   classes/{cid}/exams/{회차키}__{sid}   회차키 = 회차의 / 와 공백을 _ 로 바꾼 것
+//   회차는 학원 전체로 하나 — appConfig/examTerm
+// 그래서 여기서 만든 것이 앱의 참여표에 그대로 뜨고, 학생이 낸 것도 여기 그대로 보인다.
+//
+// 이 표가 답하는 질문은 "누가 언제 안 오고 언제 돌아오나"다. 그래서 본체는 표가 아니라
+// **날짜 띠**다 (원본 구글시트가 그랬다).
+
+var EXAM_MARKS = {
+  prep: { t: "직", label: "직보 (수학시험 전날)", bg: "#f6e7df", fg: "#c2703f" },
+  math: { t: "수", label: "수학시험", bg: "#fae3e2", fg: "#d6453f" },
+  exam: { t: "시", label: "내신기간", bg: "#f0ece5", fg: "#7c6f5f" },
+  back: { t: "첫", label: "복귀 (정규 첫 등원)", bg: "#e3edf5", fg: "#2b5f8a" },
+};
+var PAINT_MODES = [
+  { key: "exam", label: "시험기간", bg: "#f0ece5", fg: "#7c6f5f" },
+  { key: "math", label: "수학시험", bg: "#fae3e2", fg: "#d6453f" },
+  { key: "prep", label: "직보", bg: "#f6e7df", fg: "#c2703f" },
+  { key: "back", label: "복귀", bg: "#e3edf5", fg: "#2b5f8a" },
+  { key: "erase", label: "지우개", bg: "#fff", fg: "#8a7f72" },
+];
+// 앱의 목록과 같아야 한다 — 자유 입력이면 중동고/중동고등학교/중동이 섞여 같은 학교인지
+// 판별 자체가 안 된다. 비교하려면 먼저 값이 같아야 한다.
+var KNOWN_SCHOOLS = ["개포고", "건대부고", "경기고", "경기여고", "경신고", "광남고", "단대부고", "대성고",
+  "덕수고", "반포고", "배명고", "배문고", "배재고", "보인고", "상문고", "서울고",
+  "서초고", "선덕고", "숙명여고", "언남고", "영동고", "은광여고", "잠신고", "정신여고",
+  "중대부고", "중동고", "중산고", "중흥고", "진선여고", "창문여고", "한대부고", "현대고",
+  "효성고", "휘문고"];
+var DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
+var examKey = function (term, sid) { return String(term).replace(/[\/\s]+/g, "_") + "__" + sid; };
+var examSig = function (v) { return [v.start || "", v.end || "", v.math || ""].join("~"); };
+var isIndividual = function (c) { return c && c.type === "individual"; };
+function isActiveOn(st, d) {
+  if (!st) return false;
+  if (st.startDate && d < st.startDate) return false;
+  if (st.endDate && d > st.endDate) return false;
+  return true;
+}
+function dayAfter(d) { return d && parseYmd(d) ? addDays(d, 1) : ""; }
+function dayBefore(d) { return d && parseYmd(d) ? addDays(d, -1) : ""; }
+function monthOf(d) { return String(d || "").slice(0, 7); }
+function shiftMonth(ym, delta) {
+  var y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
+  var d = new Date(y, m - 1 + delta, 1);
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1);
+}
+function daysOfMonth(ym) {
+  var out = [], y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
+  var last = new Date(y, m, 0).getDate();
+  for (var i = 1; i <= last; i++) out.push(y + "-" + pad2(m) + "-" + pad2(i));
+  return out;
+}
+// 안 오는 구간은 내신기간이 아니라 **직보 다음날 ~ 복귀 전날**이다.
+// 직보가 마지막 수업이고 그 다음 오는 날이 복귀라, 시험이 끝난 뒤라도 복귀 전이면 안 온다.
+function outRange(v) {
+  return { s: (v && v.prep) ? dayAfter(v.prep) : ((v && v.start) || ""),
+           e: (v && v.back) ? dayBefore(v.back) : ((v && v.end) || "") };
+}
+function isOutOn(v, d) { var r = outRange(v); return !!(r.s && r.e && d >= r.s && d <= r.e); }
+// 수업일 판정. **반 요일을 안 보는 함수를 쓰면 그 달 전체가 수업일이 되어 31회로 나온다.**
+// 제출에 요일이 적혀 있으면 그걸 먼저 쓴다 — 나중에 반 요일이 바뀌어도 그때 센 회차가 재현된다.
+function isClassDay(cls, st, d, v) {
+  if (!isActiveOn(st, d)) return false;
+  var dow = new Date(d + "T00:00:00").getDay();
+  var days = (v && v.days && v.days.length) ? v.days
+           : (isIndividual(cls) ? (st.days || []) : (cls.classDays || []));
+  return days.indexOf(dow) >= 0;
+}
+// 그 달의 등원 회차 — **수강료에 쓰는 숫자다.**
+// 띠는 복귀일에서 끝나지만 회차는 그 달 전체로 센다. 띠로 세면 그 뒤 수업일이 빠진다.
+function attendCount(cls, st, v, monthDays, examMonth) {
+  var come = {}, total = 0, skip = 0;
+  monthDays.forEach(function (d) {
+    if (!isClassDay(cls, st, d, v)) return;
+    total++;
+    if (isOutOn(v, d)) { skip++; return; }
+    come[d] = 1;
+  });
+  // 직보·복귀는 수업 요일이 아니어도 오는 날이다. 그 달 안에 있을 때만.
+  [(v && v.prep) || "", (v && v.back) || ""].forEach(function (d) {
+    if (!d || monthOf(d) !== examMonth || come[d]) return;
+    come[d] = 1;
+  });
+  return { total: total, skip: skip, come: Object.keys(come).length };
+}
+function markOf(v, d) {
+  if (v.math && d === v.math) return EXAM_MARKS.math;
+  if (v.prep && d === v.prep) return EXAM_MARKS.prep;
+  if (v.back && d === v.back) return EXAM_MARKS.back;
+  if (v.start && v.end && d >= v.start && d <= v.end) return EXAM_MARKS.exam;
+  return null;
+}
+function examSchoolOpts() {
+  var m = {};
+  KNOWN_SCHOOLS.forEach(function (x) { m[x] = 1; });
+  S.students.forEach(function (x) { if (x.school) m[x.school] = 1; });
+  Object.keys(S.schoolTerms).forEach(function (k) { var v = S.schoolTerms[k]; if (v && v.school) m[v.school] = 1; });
+  return Object.keys(m).sort();
+}
+
 async function loadExams() {
   if (!S.term) return;
   var cs = activeClasses();
@@ -1117,39 +1231,324 @@ async function loadExams() {
     }).catch(function () { S.exams[c.id] = {}; });
   }));
 }
+async function saveExamTerm(term) {
+  await db.collection("appConfig").doc("examTerm").set({ term: term, time: Date.now() }, { merge: true });
+  S.term = term;
+}
+async function saveExam(cid, sid, data) {
+  await db.collection("classes").doc(cid).collection("exams").doc(examKey(S.term, sid))
+    .set(Object.assign({}, data, { term: S.term, sid: sid, updated: Date.now() }), { merge: true });
+  S.exams[cid] = S.exams[cid] || {};
+  S.exams[cid][sid] = Object.assign({}, S.exams[cid][sid], data, { term: S.term, sid: sid });
+}
+async function deleteExam(cid, sid) {
+  await db.collection("classes").doc(cid).collection("exams").doc(examKey(S.term, sid)).delete();
+  if (S.exams[cid]) delete S.exams[cid][sid];
+}
+// 학교 일정(appConfig/schoolTerms)에 적어둔 값. 대신 입력을 열 때 빈 칸을 이걸로 채운다.
+function schedFor(school, grade) {
+  var key = String(S.term || "").replace(/[^0-9A-Za-z가-힣]+/g, "_") + "__" + school + "__" + grade;
+  return S.schoolTerms[key] || null;
+}
+
+// 표에 놓을 줄 — 담당 반을 가로질러 모은다. 반별로 보면 "이번 주에 누가 빠지나"를 못 본다.
+function examRows() {
+  var out = [];
+  activeClasses().forEach(function (c) {
+    rosterStudents(c).forEach(function (r) {
+      var v = (S.exams[c.id] || {})[r.id] || null;
+      var grade = (v && v.grade) || gradeOf(r) || "";
+      out.push({ cls: c, st: r, v: v, grade: grade, school: (v && v.school) || schoolOf(r) || "" });
+    });
+  });
+  return out;
+}
+
 function renderExams() {
   var el = $("#sec-exams");
-  if (!S.term) { el.innerHTML = '<h2>내신 참여표</h2><div class="empty">열린 회차가 없다. 앱에서 회차를 열면 여기 채워진다.</div>'; return; }
-  var rows = [], byT = {}, tot = 0, sub = 0;
-  activeClasses().forEach(function (c) {
-    var studs = rosterStudents(c); if (!studs.length) return;
-    var ex = S.exams[c.id] || {};
-    var done = studs.filter(function (r) { return ex[r.id]; });
-    var miss = studs.filter(function (r) { return !ex[r.id]; });
-    tot += studs.length; sub += done.length;
-    var ts = classTeachers(c.id); if (!ts.length) ts = ["담당 없음"];
-    ts.forEach(function (t) { (byT[t] = byT[t] || { n: 0, d: 0, c: 0 }); byT[t].n += studs.length; byT[t].d += done.length; byT[t].c++; });
-    rows.push({ c: c, t: ts.join("·"), n: studs.length, d: done.length, miss: miss.map(function (r) { return r.name; }), byTeacher: done.filter(function (r) { return ex[r.id].byTeacher; }).length });
+  if (!S.term) {
+    navBadge("exams", 0, false);
+    el.innerHTML = '<h2>내신 참여표</h2>' +
+      '<div class="row"><input type="text" id="ex-term" placeholder="예: 2026 2학기 중간" style="max-width:240px">' +
+      '<button class="btn" id="ex-open">회차 열기</button></div>' +
+      '<p class="muted" style="font-size:13px">회차를 열면 학생 화면에 <b>내신</b> 탭이 생기고, 여기와 수업관리 앱 양쪽에서 참여표를 만들 수 있다. ' +
+      '회차는 학원 전체로 하나다.</p>';
+    $("#ex-open").onclick = async function () {
+      var t = $("#ex-term").value.trim(); if (!t) return;
+      this.disabled = true;
+      try { await saveExamTerm(t); await loadExams(); renderExams(); } catch (e) { this.disabled = false; alert("열지 못했다: " + e.message); }
+    };
+    return;
+  }
+
+  var all = examRows();
+  var grades = {}; GRADES.forEach(function (g) { grades[g] = 0; });
+  all.forEach(function (x) { if (grades[x.grade] !== undefined) grades[x.grade]++; });
+  if (!S.exGrade || grades[S.exGrade] === undefined) {
+    S.exGrade = GRADES.filter(function (g) { return grades[g] > 0; })[0] || "고1";
+  }
+  var rows = all.filter(function (x) { return x.grade === S.exGrade; });
+  var done = rows.filter(function (x) { return x.v; }), miss = rows.filter(function (x) { return !x.v; });
+  navBadge("exams", all.filter(function (x) { return !x.v; }).length, true);
+
+  // 띠 = 시험 있는 달 1일 ~ 가장 늦은 복귀일. 회차 달 = 등원 회차를 세는 달.
+  var startsAll = [], endsAll = [];
+  done.forEach(function (x) {
+    if (x.v.start) startsAll.push(x.v.start);
+    if (x.v.back) endsAll.push(x.v.back); else if (x.v.end) endsAll.push(x.v.end);
   });
-  rows.sort(function (a, b) { return (a.d / a.n) - (b.d / b.n); });
-  var pct = tot ? Math.round(sub / tot * 100) : 0;
-  navBadge("exams", tot - sub, true);
-  var barCls = function (p) { return p < 50 ? "low" : p < 90 ? "mid" : ""; };
-  el.innerHTML = '<h2>내신 참여표 <span class="n">' + esc(S.term) + '</span><span class="sp"></span><button id="ex-re">다시 세기</button><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 열기</a></h2>' +
-    '<div class="stat"><div class="' + (pct < 90 ? "bad" : "good") + '"><b>' + pct + '%</b><span>제출 ' + sub + '/' + tot + '</span></div>' +
-    '<div><b>' + rows.length + '</b><span>반</span></div></div>' +
-    '<div class="tbl" style="max-height:170px"><table><thead><tr><th>선생님</th><th>반</th><th>제출</th><th style="width:120px"></th></tr></thead><tbody>' +
-    Object.keys(byT).sort(function (a, b) { return (byT[a].d / byT[a].n) - (byT[b].d / byT[b].n); }).map(function (t) {
-      var v = byT[t], p = v.n ? Math.round(v.d / v.n * 100) : 0;
-      return '<tr><td>' + esc(t) + '</td><td>' + v.c + '</td><td>' + v.d + '/' + v.n + '</td><td><div class="bar ' + barCls(p) + '"><i style="width:' + p + '%"></i></div></td></tr>';
-    }).join("") + '</tbody></table></div>' +
-    '<div class="tbl" style="margin-top:8px"><table><thead><tr><th>반</th><th>담당</th><th>제출</th><th>안 낸 학생</th></tr></thead><tbody>' +
-    rows.map(function (r) {
-      var p = Math.round(r.d / r.n * 100);
-      return '<tr><td>' + esc(r.c.name) + '</td><td>' + esc(r.t) + '</td><td>' + r.d + '/' + r.n + (r.byTeacher ? ' <span class="muted">(대신 ' + r.byTeacher + ')</span>' : "") + '</td><td class="wrapc">' +
-        (r.miss.length ? r.miss.map(function (n) { return '<span class="pill ' + (p < 50 ? "red" : "") + '">' + esc(n) + '</span>'; }).join("") : '<span class="green">전원 제출</span>') + '</td></tr>';
-    }).join("") + '</tbody></table></div>';
+  startsAll.sort(); endsAll.sort();
+  var examMonth = startsAll.length ? monthOf(startsAll[0]) : "";
+  var strip = [];
+  if (startsAll.length) {
+    var to = endsAll.length ? endsAll[endsAll.length - 1] : startsAll[startsAll.length - 1];
+    var d = examMonth + "-01";
+    while (d <= to && strip.length < 120) { strip.push(d); d = addDays(d, 1); }
+  }
+  var monthDays = examMonth ? daysOfMonth(examMonth) : [];
+
+  // 같은 학교·학년인데 기간이 갈린 것. 자동으로 고치지 않는다 — 분반마다 진짜 다를 수 있다.
+  var sigs = {};
+  done.forEach(function (x) {
+    var k = x.v.school + "__" + x.grade;
+    (sigs[k] = sigs[k] || {})[examSig(x.v)] = (sigs[k][examSig(x.v)] || 0) + 1;
+  });
+  var clash = Object.keys(sigs).filter(function (k) { return Object.keys(sigs[k]).length > 1; });
+
+  el.innerHTML = '<h2>내신 참여표 <span class="n">' + esc(S.term) + '</span><span class="sp"></span>' +
+    '<button class="mini" id="ex-edit-term">회차 바꾸기</button>' +
+    '<button class="mini" id="ex-re">다시 읽기</button>' +
+    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
+    '<div class="chips">' + GRADES.map(function (g) {
+      return '<button class="mini ' + (g === S.exGrade ? "on" : "") + '" data-eg="' + g + '">' +
+        '<span class="pill ' + gradeCls(g) + '">' + g + '</span> ' + grades[g] + '</button>';
+    }).join("") + '</div>' +
+    '<div class="stat"><div class="' + (miss.length ? "bad" : "good") + '"><b>' + done.length + '/' + rows.length + '</b><span>낸 사람</span></div>' +
+    '<div><b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "—") + '</b><span>회차 달</span></div>' +
+    (clash.length ? '<div class="bad"><b>' + clash.length + '</b><span>일정 갈림</span></div>' : "") + '</div>' +
+    (clash.length ? '<div class="banner" style="margin:0 0 10px"><b>같은 학교·학년인데 일정이 다르다</b> — ' +
+      esc(clash.map(function (k) { return k.split("__")[0] + " " + k.split("__")[1]; }).join(", ")) +
+      '. 분반마다 진짜 다를 수 있어 자동으로 고치지 않는다. 표에서 확인하고 고칠 것.</div>' : "") +
+    '<div id="ex-entry"></div>' +
+    (strip.length ? stripHtml(strip, done) : '<div class="empty">아직 낸 사람이 없다. 아래에서 학생을 눌러 넣는다.</div>') +
+    tableHtml(rows, monthDays, examMonth) +
+    (miss.length ? '<div style="margin-top:10px"><b style="font-size:13px">아직 안 낸 학생 ' + miss.length + '명</b> ' +
+      '<span class="muted" style="font-size:12px">— 이름을 누르면 대신 넣는다</span><div class="chips" style="margin-top:6px">' +
+      miss.map(function (x) { return '<button class="mini warn" data-ent="' + esc(x.cls.id + "|" + x.st.id) + '">' + esc(x.st.name) + ' <span class="muted">' + esc(x.cls.name) + '</span></button>'; }).join("") +
+      '</div></div>' : '<p class="green" style="font-size:13px;margin-top:10px">' + esc(S.exGrade) + ' 전원이 냈다.</p>') +
+    '<p class="muted" style="font-size:12px;margin-top:8px">' +
+    Object.keys(EXAM_MARKS).map(function (k) { var m = EXAM_MARKS[k];
+      return '<span class="pill" style="background:' + m.bg + ';color:' + m.fg + '">' + m.t + '</span> ' + esc(m.label); }).join(" · ") +
+    '</p>';
+
+  $$("[data-eg]", el).forEach(function (b) { b.onclick = function () { S.exGrade = b.getAttribute("data-eg"); S.exEntry = null; renderExams(); }; });
+  $$("[data-ent]", el).forEach(function (b) { b.onclick = function () { openEntry(b.getAttribute("data-ent")); }; });
+  $$("[data-fix]", el).forEach(function (b) { b.onclick = function () { openEntry(b.getAttribute("data-fix")); }; });
+  $$("[data-del]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var kk = b.getAttribute("data-del").split("|");
+      if (!confirm("이 제출을 지운다. 학생이 다시 낼 수 있다.")) return;
+      try { await deleteExam(kk[0], kk[1]); renderExams(); } catch (e) { alert("지우지 못했다: " + e.message); }
+    };
+  });
+  $$("[data-back]", el).forEach(function (inp) {
+    inp.onchange = async function () {
+      var kk = inp.getAttribute("data-back").split("|");
+      try { await saveExam(kk[0], kk[1], { back: inp.value }); renderExams(); }
+      catch (e) { alert("저장하지 못했다: " + e.message); }
+    };
+  });
   $("#ex-re").onclick = function () { S.exams = {}; loadExams().then(renderExams); };
+  $("#ex-edit-term").onclick = async function () {
+    var t = prompt("회차 이름 (학원 전체로 하나다)", S.term);
+    if (t === null || !t.trim() || t.trim() === S.term) return;
+    try { await saveExamTerm(t.trim()); S.exams = {}; await loadExams(); renderExams(); }
+    catch (e) { alert("바꾸지 못했다: " + e.message); }
+  };
+  if (S.exEntry) drawEntry();
+}
+
+function stripHtml(strip, done) {
+  var head = '<tr><th class="rn">이름</th>' + strip.map(function (d) {
+    var day = Number(d.slice(8));
+    return '<th>' + (day === 1 ? Number(d.slice(5, 7)) + "/1" : day) + '</th>';
+  }).join("") + '</tr><tr><th class="rn"></th>' + strip.map(function (d) {
+    var w = new Date(d + "T00:00:00").getDay();
+    return '<th class="wd" style="color:' + (w === 0 ? "#d6453f" : w === 6 ? "#2b5f8a" : "#8a7f72") + '">' + DAY_NAMES[w] + '</th>';
+  }).join("") + '</tr>';
+  var body = done.map(function (x) {
+    return '<tr><th class="rn">' + esc(x.st.name) + '</th>' + strip.map(function (d) {
+      var m = markOf(x.v, d);
+      return m ? '<td style="background:' + m.bg + ';color:' + m.fg + ';font-weight:700">' + m.t + '</td>' : '<td></td>';
+    }).join("") + '</tr>';
+  }).join("");
+  return '<div class="gridwrap" style="max-height:none"><table class="cgrid strip"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+}
+
+function tableHtml(rows, monthDays, examMonth) {
+  if (!rows.length) return '<div class="empty">이 학년에 학생이 없다.</div>';
+  return '<div class="tbl" style="margin-top:10px"><table><thead><tr>' +
+    '<th>이름</th><th>반</th><th>학교</th><th>내신기간</th><th>수학</th><th>직보</th><th>복귀</th><th>등원</th><th>비고</th><th></th></tr></thead><tbody>' +
+    rows.map(function (x) {
+      var k = x.cls.id + "|" + x.st.id;
+      if (!x.v) return '<tr><td><b>' + esc(x.st.name) + '</b></td><td>' + esc(x.cls.name) + '</td><td>' + esc(x.school) + '</td>' +
+        '<td colspan="6" class="muted">아직 안 냈다</td><td><button class="mini" data-ent="' + esc(k) + '">넣기</button></td></tr>';
+      var v = x.v, ac = attendCount(x.cls, x.st, v, monthDays, examMonth);
+      return '<tr><td><b>' + esc(x.st.name) + '</b>' + (v.byTeacher ? ' <span class="pill">대신</span>' : "") + '</td>' +
+        '<td>' + esc(x.cls.name) + '</td><td>' + esc(v.school || "") + '</td>' +
+        '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
+        '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>' +
+        '<td>' + (v.prep ? esc(fmtMD(v.prep)) : "—") + '</td>' +
+        '<td><input type="date" value="' + esc(v.back || "") + '" data-back="' + esc(k) + '" style="width:130px"></td>' +
+        '<td><b>' + ac.come + '</b><span class="muted">/' + ac.total + '</span></td>' +
+        '<td class="wrapc">' + esc(v.note || "") + '</td>' +
+        '<td><button class="mini" data-fix="' + esc(k) + '">고치기</button> <button class="x" data-del="' + esc(k) + '">×</button></td></tr>';
+    }).join("") + '</tbody></table></div>' +
+    '<p class="muted" style="font-size:12px;margin:4px 0 0">등원은 <b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "회차 달") +
+    '</b> 기준이다. 그 달 수업일에서 <b>직보 다음날 ~ 복귀 전날</b>을 빼고, 직보·복귀를 더한 값. 수강료에 쓰는 숫자다. 복귀일은 여기서 바로 넣는다.</p>';
+}
+
+// ---- 대신 입력 — 달력에 칠한다 ----
+function openEntry(key) {
+  var kk = key.split("|"), cid = kk[0], sid = kk[1];
+  var cls = S.classes.filter(function (c) { return c.id === cid; })[0];
+  var st = (cls.roster || []).filter(function (r) { return r.id === sid; })[0];
+  var cur = (S.exams[cid] || {})[sid] || null;
+  var school = (cur && cur.school) || schoolOf(st) || "";
+  var grade = (cur && cur.grade) || gradeOf(st) || S.exGrade;
+  var sch = (!cur && school && grade) ? schedFor(school, grade) : null;   // 학교 일정에서 빈 칸 채우기
+  S.exEntry = { cid: cid, sid: sid, cls: cls, st: st, fromSched: !!sch };
+  S.exForm = {
+    school: school, grade: grade,
+    start: (cur && cur.start) || (sch && sch.start) || "",
+    end: (cur && cur.end) || (sch && sch.end) || "",
+    math: (cur && cur.math) || (sch && sch.math) || "",
+    prep: (cur && cur.prep) || (sch && sch.math ? dayBefore(sch.math) : "") || "",
+    back: (cur && cur.back) || (sch && sch.back) || "",
+    note: (cur && cur.note) || "",
+  };
+  S.exDays = (cur && cur.days && cur.days.length) ? cur.days.slice()
+           : (isIndividual(cls) ? ((st.days || []).slice()) : ((cls.classDays || []).slice()));
+  S.exMonth = monthOf(S.exForm.start || S.exForm.math || TODAY);
+  S.exMode = "exam"; S.exAnchor = "";
+  renderExams();
+  var box = $("#ex-entry"); if (box) try { box.scrollIntoView({ block: "center" }); } catch (e) {}
+}
+function drawEntry() {
+  var box = $("#ex-entry"); if (!box) return;
+  box.innerHTML = entryHtml();
+  bindEntry();
+}
+function entryHtml() {
+  var e = S.exEntry, f = S.exForm;
+  var pd = daysOfMonth(S.exMonth);
+  // 이 달 등원 회차 — 칠하면서 바로 본다
+  var live = attendCount(e.cls, e.st, Object.assign({}, f, { days: S.exDays }), pd, S.exMonth).come;
+  return '<div class="entry"><div class="row" style="margin:0 0 8px"><b>' + esc(e.st.name) + '</b>' +
+    '<span class="muted">' + esc(e.cls.name) + ' — 대신 입력</span><span class="sp" style="flex:1"></span>' +
+    '<button class="mini" id="en-x">닫기</button></div>' +
+    (e.fromSched ? '<div class="muted" style="font-size:12px;margin-bottom:6px">학교 일정에 적어둔 날짜로 미리 채웠다. 확인하고 저장한다.</div>' : "") +
+    '<div class="row"><span class="muted" style="width:44px">학교</span>' +
+    '<input type="text" id="en-school" list="ex-schools" value="' + esc(f.school) + '" style="max-width:180px">' +
+    '<span class="muted">학년</span>' + GRADES.map(function (g) {
+      return '<button class="mini ' + (f.grade === g ? "on" : "") + '" data-eng="' + g + '">' + g + '</button>'; }).join("") +
+    '</div>' +
+    '<div class="row"><span class="muted" style="width:44px">요일</span>' + DAY_NAMES.map(function (d, i) {
+      return '<button class="mini ' + (S.exDays.indexOf(i) >= 0 ? "on" : "") + '" data-end="' + i + '">' + d + '</button>'; }).join("") +
+    '<span class="muted" style="font-size:12px">달력의 수업일과 등원 회차가 여기서 나온다</span></div>' +
+    '<div class="row"><span class="muted" style="width:44px">칠하기</span>' + PAINT_MODES.map(function (m) {
+      return '<button class="mini ' + (S.exMode === m.key ? "on" : "") + '" data-enm="' + m.key + '" style="' +
+        (S.exMode === m.key ? "" : "background:" + m.bg + ";color:" + m.fg + ";border-color:" + m.bg) + '">' + m.label + '</button>'; }).join("") +
+    '<span class="sp" style="flex:1"></span><button class="mini" data-enmo="-1">‹</button>' +
+    '<b>' + Number(S.exMonth.slice(5)) + '월</b><button class="mini" data-enmo="1">›</button></div>' +
+    '<div class="muted" style="font-size:12px;margin:2px 0 6px">' +
+    (S.exMode === "exam" ? (S.exAnchor ? "끝나는 날을 한 번 더 누른다" : "시험 시작일을 누르고, 끝나는 날을 누른다")
+      : S.exMode === "erase" ? "지울 칸을 누른다" : "해당 날짜를 누른다 (다시 누르면 지워진다)") + '</div>' +
+    '<div class="gridwrap" style="max-height:none"><table class="cgrid strip paint"><thead>' +
+    '<tr>' + pd.map(function (d) { var n = Number(d.slice(8)); return '<th>' + (n === 1 ? Number(d.slice(5, 7)) + "/1" : n) + '</th>'; }).join("") + '</tr>' +
+    '<tr>' + pd.map(function (d) { var w = new Date(d + "T00:00:00").getDay();
+      return '<th class="wd" style="color:' + (w === 0 ? "#d6453f" : w === 6 ? "#2b5f8a" : "#8a7f72") + '">' + DAY_NAMES[w] + '</th>'; }).join("") + '</tr>' +
+    '</thead><tbody><tr>' + pd.map(function (d) {
+      var m = paintMark(d), isDay = S.exDays.indexOf(new Date(d + "T00:00:00").getDay()) >= 0;
+      return '<td data-enp="' + d + '" style="cursor:pointer;' +
+        (m ? "background:" + m.bg + ";color:" + m.fg + ";font-weight:700" : (isDay ? "background:#f4f6f9" : "")) + '">' +
+        (m ? m.t : (isDay ? "·" : "")) + '</td>';
+    }).join("") + '</tr></tbody></table></div>' +
+    '<div class="row" style="font-size:13px">' +
+    (f.start ? '내신 <b>' + esc(fmtMD(f.start)) + ' ~ ' + esc(fmtMD(f.end || f.start)) + '</b>' : '<span class="muted">내신 기간 미정</span>') +
+    (f.math ? ' · 수학 <b>' + esc(fmtMD(f.math)) + '</b>' : "") +
+    (f.prep ? ' · 직보 <b>' + esc(fmtMD(f.prep)) + '</b>' : "") +
+    (f.back ? ' · 복귀 <b>' + esc(fmtMD(f.back)) + '</b>' : "") +
+    ' · <b style="color:var(--navy)">' + Number(S.exMonth.slice(5)) + '월 등원 ' + live + '회</b></div>' +
+    '<div class="row"><span class="muted" style="width:44px">비고</span><input type="text" id="en-note" value="' + esc(f.note) + '"></div>' +
+    '<div class="err" id="en-err"></div>' +
+    '<div class="row"><button class="btn" id="en-save">저장</button><button class="mini" id="en-cancel">취소</button></div>' +
+    '<datalist id="ex-schools">' + examSchoolOpts().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + '</datalist></div>';
+}
+function paintMark(d) {
+  var f = S.exForm;
+  if (f.math && d === f.math) return EXAM_MARKS.math;
+  if (f.prep && d === f.prep) return EXAM_MARKS.prep;
+  if (f.back && d === f.back) return EXAM_MARKS.back;
+  if (S.exAnchor && d === S.exAnchor) return EXAM_MARKS.exam;
+  if (f.start && f.end && d >= f.start && d <= f.end) return EXAM_MARKS.exam;
+  return null;
+}
+function paint(d) {
+  var f = S.exForm;
+  if (S.exMode === "erase") {
+    if (f.math === d) f.math = "";
+    if (f.prep === d) f.prep = "";
+    if (f.back === d) f.back = "";
+    if (f.start && f.end && d >= f.start && d <= f.end) { f.start = ""; f.end = ""; }
+    S.exAnchor = ""; return;
+  }
+  if (S.exMode === "exam") {
+    if (!S.exAnchor) { S.exAnchor = d; f.start = d; f.end = d; return; }
+    f.start = S.exAnchor < d ? S.exAnchor : d;
+    f.end = S.exAnchor < d ? d : S.exAnchor;
+    S.exAnchor = ""; return;
+  }
+  var k = S.exMode, was = f[k];
+  f[k] = (was === d) ? "" : d;
+  // 수학시험을 정하면 직보는 그 전날로 따라간다. 직접 고쳐둔 것은 놔둔다.
+  if (k === "math" && (!f.prep || f.prep === dayBefore(was))) f.prep = f.math ? dayBefore(f.math) : "";
+}
+function bindEntry() {
+  var box = $("#ex-entry");
+  $$("[data-enp]", box).forEach(function (td) { td.onclick = function () { paint(td.getAttribute("data-enp")); drawEntry(); }; });
+  $$("[data-enm]", box).forEach(function (b) { b.onclick = function () { S.exMode = b.getAttribute("data-enm"); S.exAnchor = ""; drawEntry(); }; });
+  $$("[data-enmo]", box).forEach(function (b) { b.onclick = function () { S.exMonth = shiftMonth(S.exMonth, Number(b.getAttribute("data-enmo"))); drawEntry(); }; });
+  $$("[data-eng]", box).forEach(function (b) { b.onclick = function () { S.exForm.grade = b.getAttribute("data-eng"); drawEntry(); }; });
+  $$("[data-end]", box).forEach(function (b) {
+    b.onclick = function () {
+      var i = Number(b.getAttribute("data-end"));
+      var at = S.exDays.indexOf(i);
+      if (at >= 0) S.exDays.splice(at, 1); else { S.exDays.push(i); S.exDays.sort(); }
+      drawEntry();
+    };
+  });
+  $("#en-school", box).onchange = function () { S.exForm.school = this.value.trim(); };
+  $("#en-note", box).onchange = function () { S.exForm.note = this.value; };
+  $("#en-x", box).onclick = $("#en-cancel", box).onclick = function () { S.exEntry = null; renderExams(); };
+  $("#en-save", box).onclick = async function () {
+    var f = S.exForm, err = $("#en-err", box);
+    S.exForm.school = $("#en-school", box).value.trim();
+    S.exForm.note = $("#en-note", box).value;
+    if (!f.school) { err.textContent = "학교를 넣어주세요"; return; }
+    if (!f.grade) { err.textContent = "학년을 골라주세요"; return; }
+    if (!f.start || !f.end) { err.textContent = "내신 기간을 칠해주세요"; return; }
+    if (f.end < f.start) { err.textContent = "종료일이 시작일보다 빠를 수 없어요"; return; }
+    this.disabled = true; this.textContent = "저장 중...";
+    try {
+      var e = S.exEntry;
+      await saveExam(e.cid, e.sid, { name: e.st.name, school: f.school, grade: f.grade,
+        start: f.start, end: f.end, math: f.math, prep: f.prep, back: f.back,
+        note: (f.note || "").trim(), days: S.exDays, byTeacher: true });
+      S.exEntry = null; S.exGrade = f.grade;
+      renderExams();
+    } catch (ex) { this.disabled = false; this.textContent = "저장"; err.textContent = "저장 실패: " + ex.message; }
+  };
 }
 
 // ---------- 성적 입력 ----------
