@@ -127,6 +127,7 @@
   table.cgrid .nm[data-open] { cursor: pointer; }
   table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
 
+  tr.skip td { opacity: .45; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
   @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
   table.sheet-t.ts { min-width: 780px; }
@@ -270,6 +271,7 @@ var S = {
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
+  sheetEdit: false, sheetScan: null, pullPick: null, pullOver: false,
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
@@ -1851,6 +1853,7 @@ function renderScores() {
         ' <span class="muted">' + esc(x.grade || "") + (x.date ? " · " + esc(fmtMD(x.date)) : "") + '</span></button>';
     }).join("") : '<span class="muted">아직 만든 시험이 없다. "새 시험"으로 만든다.</span>') + '</div>' +
     '<div id="ts-form"></div>' +
+    sheetLineHtml() +
     (t ? testPanelHtml(t) : '') +
     dailyDetailsHtml();
 
@@ -1863,6 +1866,7 @@ function renderScores() {
   $("#ts-new").onclick = function () { S.tsForm = !S.tsForm; renderScores(); if (S.tsForm) bindTestForm(); };
   if (S.tsForm) bindTestForm();
   if (t) bindTestPanel(t);
+  bindSheetLine(t);
   var dl = $("#ts-del");
   if (dl) dl.onclick = async function () {
     if (!confirm("「" + t.name + "」와 거기 넣은 성적을 모두 지운다. 되돌릴 수 없다.")) return;
@@ -1901,6 +1905,96 @@ function bindTestForm() {
       var tid = await saveTest({ kind: $("#tf-kind").value, name: name, grade: $("#tf-grade").value, date: $("#tf-date").value });
       S.tsForm = false; await loadTests(); S.testPick = tid; await loadTestScores(tid); renderScores();
     } catch (e) { this.disabled = false; alert("만들지 못했다: " + e.message); }
+  };
+}
+
+function sheetLineHtml() {
+  var sh = scoreSheet();
+  if (S.sheetEdit || !sh || !sh.id) {
+    return '<div class="entry" style="margin:8px 0"><div class="row">' +
+      '<span class="muted">근거 시트</span>' +
+      '<input type="text" id="sh-score-url" placeholder="성적을 적는 구글시트 주소를 붙여넣기" value="' + esc((sh && sh.url) || "") + '" style="flex:1;min-width:200px">' +
+      '<button class="btn" id="sh-score-save">저장</button>' +
+      (sh && sh.id ? '<button class="mini" id="sh-score-x">취소</button>' : "") + '</div>' +
+      '<div class="muted" style="font-size:12px">시트를 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "대시보드 서비스 계정") +
+      ' 에게 <b>뷰어</b>로 공유해야 읽힌다. 주소가 바뀌면 여기서 고친다.</div></div>';
+  }
+  return '<div class="row" style="margin:8px 0;font-size:13px"><span class="muted">근거 시트</span>' +
+    '<a href="' + esc(sh.url || ("https://docs.google.com/spreadsheets/d/" + sh.id)) + '" target="_blank">' +
+    esc(sh.title || (S.sheetScan && S.sheetScan.title) || "성적 시트") + '</a>' +
+    '<button class="mini" id="sh-score-edit">바꾸기</button>' +
+    '<span class="sp" style="flex:1"></span>' +
+    (S.testPick ? '<button class="mini" id="sh-pull">시트에서 가져오기</button>' : "") + '</div>' +
+    '<div id="sh-pull-box"></div>';
+}
+function bindSheetLine(t) {
+  var el = $("#sec-scores");
+  var sv = $("#sh-score-save", el);
+  if (sv) sv.onclick = async function () {
+    var raw = $("#sh-score-url").value.trim(), id = sheetIdFrom(raw);
+    if (!id) { alert("시트 주소를 못 읽었다"); return; }
+    this.disabled = true;
+    try { await saveScoreSheet({ id: id, url: raw, updated: Date.now() }); S.sheetEdit = false; S.sheetScan = null; renderScores(); }
+    catch (e) { this.disabled = false; alert("저장하지 못했다: " + e.message); }
+  };
+  var xb = $("#sh-score-x", el); if (xb) xb.onclick = function () { S.sheetEdit = false; renderScores(); };
+  var eb = $("#sh-score-edit", el); if (eb) eb.onclick = function () { S.sheetEdit = true; renderScores(); };
+  var pb = $("#sh-pull", el);
+  if (pb) pb.onclick = async function () {
+    pb.disabled = true; pb.textContent = "시트 읽는 중...";
+    try {
+      if (!S.sheetScan) await scanScoreSheet();
+      S.pullPick = matchGroup(S.sheetScan.found, t) || null;
+      S.pullOver = false;
+      drawPull(t);
+    } catch (e) { alert(e.message); }
+    pb.disabled = false; pb.textContent = "시트에서 가져오기";
+  };
+  if (S.sheetScan && $("#sh-pull-box", el)) drawPull(t);
+}
+function drawPull(t) {
+  var box = $("#sh-pull-box"); if (!box || !S.sheetScan) return;
+  var found = S.sheetScan.found;
+  if (!found.length) { box.innerHTML = '<div class="err">시트에서 시험 칸을 못 찾았다. 머리글에 「이름」과 「원점수/예상등급」이 있어야 한다.</div>'; return; }
+  var pv = S.pullPick ? pullPreview(t) : { list: [], skip: [] };
+  var fresh = pv.list.filter(function (x) { return !x.had; });
+  var over = pv.list.filter(function (x) { return x.had; });
+  box.innerHTML = '<div class="entry"><div class="row">' +
+    '<span class="muted">시트의 시험</span><select id="pl-g">' + found.map(function (f, i) {
+      return '<option value="' + i + '"' + (S.pullPick === f ? " selected" : "") + '>' + esc(f.g.name) +
+        ' <span>(' + esc(f.tab) + ')</span></option>'; }).join("") + '</select>' +
+    (S.pullPick && normName(S.pullPick.g.name) !== normName(t.name) ? '<span class="orange" style="font-size:12px">이름이 정확히 안 맞아 비슷한 것을 골랐다. 확인할 것</span>' : "") +
+    '<span class="sp" style="flex:1"></span><button class="mini" id="pl-x">닫기</button></div>' +
+    (S.pullPick ? '<div class="row"><label style="font-size:13px"><input type="checkbox" id="pl-over"' + (S.pullOver ? " checked" : "") + '> 이미 넣은 ' + over.length + '명도 덮어쓰기</label>' +
+      '<span class="sp" style="flex:1"></span><button class="btn o" id="pl-go"' + ((fresh.length || (S.pullOver && over.length)) ? "" : " disabled") + '>' +
+      (S.pullOver ? pv.list.length : fresh.length) + '명 넣기</button></div>' +
+      '<div class="tbl" style="max-height:260px"><table><thead><tr><th>이름</th><th>시트 학교</th><th>원점수</th><th>예상등급</th><th>지금 값</th></tr></thead><tbody>' +
+      pv.list.map(function (x) {
+        return '<tr' + (x.had && !S.pullOver ? ' class="skip"' : "") + '><td><b>' + esc(x.p.name) + '</b></td><td>' + esc(x.sheetSchool) + '</td>' +
+          '<td>' + esc(x.raw || "—") + '</td><td>' + (x.grade ? '<span class="pill ' + gradeTone(x.grade) + '">' + esc(x.grade) + '</span>' : "—") + '</td>' +
+          '<td class="muted">' + (x.had ? esc((x.cur.raw || "") + (x.cur.grade ? " / " + x.cur.grade + "등급" : "")) + (S.pullOver ? " → 덮어씀" : " → 그대로 둠") : "비어 있음") + '</td></tr>';
+      }).join("") + '</tbody></table></div>' +
+      (pv.skip.length ? '<div class="muted" style="font-size:12px;margin-top:6px"><b>못 가져온 ' + pv.skip.length + '명</b> — ' +
+        esc(pv.skip.map(function (x) { return x.name + "(" + x.why + ")"; }).join(", ")) + '</div>' : "") : "") +
+    '</div>';
+  $("#pl-x").onclick = function () { S.sheetScan = null; S.pullPick = null; box.innerHTML = ""; };
+  $("#pl-g").onchange = function () { S.pullPick = found[Number(this.value)]; drawPull(t); };
+  var ov = $("#pl-over"); if (ov) ov.onchange = function () { S.pullOver = this.checked; drawPull(t); };
+  var go = $("#pl-go");
+  if (go) go.onclick = async function () {
+    var take = S.pullOver ? pv.list : fresh;
+    go.disabled = true; go.textContent = "넣는 중...";
+    try {
+      for (var i = 0; i < take.length; i++) {
+        var x = take[i], patch = {};
+        if (x.raw) patch.raw = x.raw;
+        if (x.grade) patch.grade = x.grade;
+        await saveScore(t.tid, x.p.pid, x.p.name, patch);
+      }
+      alert(take.length + "명을 가져왔다.");
+      S.sheetScan = null; S.pullPick = null;
+      keepScrollIn("#sec-scores", renderScores);
+    } catch (e) { go.disabled = false; go.textContent = "다시"; alert("넣지 못했다: " + e.message); }
   };
 }
 
@@ -2070,6 +2164,136 @@ function parseScoreLine(line, cols) {
     if (i < nums.length) vals[c] = nums[i];
   });
   return { name: name, vals: vals };
+}
+
+// ---- 근거 시트에서 성적 가져오기 ----
+//
+// 성적을 따로 적는 구글시트가 있다. 머리글이 **두 줄**이고 시험별로 칸이 묶여 있다:
+//   1줄  연번 | 이름 | 학교/학년 | 소속 | 담임 | 3월 모의고사 ←──묶임──→ | 2026-1학기 중간고사 ←→ | …
+//   2줄                                        수학(원점수) | 예상등급 | 비고 | 수학(예상등급) | 비고
+// 묶인 칸은 API 가 **맨 왼쪽에만 값을 주고 나머지는 빈 칸**으로 준다. 그래서 1줄을 오른쪽으로
+// 끌어 채운 뒤(ffill) 2줄에 이름표가 있는 칸만 실제 점수 칸으로 본다.
+// 탭마다 머리글 생김새가 조금씩 다르다(학교/학년이 한 칸이기도, 두 칸이기도 하다) — 그래서
+// 자리를 못 박지 않고 **글자로 찾는다.**
+//
+// 시트 주소는 언제든 바뀔 수 있으므로 `dash/config.scoreSheet` 에 두고 화면에서 고친다.
+// (공개 저장소라 코드에 적지 않는다 — 볼트 작업 노트에 있다.)
+
+function scoreSheet() { return S.config.scoreSheet || null; }
+async function saveScoreSheet(v) {
+  S.config.scoreSheet = v;
+  await dashDoc("config").set({ scoreSheet: v, updated: Date.now() }, { merge: true });
+}
+// 두 줄 머리글을 읽어 시험 묶음을 뽑는다
+function parseScoreSheet(values) {
+  var v = values || [];
+  var hi = -1;
+  for (var i = 0; i < Math.min(v.length, 12); i++) {
+    var row = v[i] || [];
+    var hasName = row.some(function (c) { return String(c || "").trim() === "이름"; });
+    var next = v[i + 1] || [];
+    var hasMeasure = next.some(function (c) { return /원점수|등급/.test(String(c || "")); })
+                  || row.some(function (c) { return /원점수|등급/.test(String(c || "")); });
+    if (hasName && hasMeasure) { hi = i; break; }
+  }
+  if (hi < 0) return null;
+  var top = (v[hi] || []).slice(), sub = (v[hi + 1] || []).slice();
+  var wide = Math.max(top.length, sub.length);
+  // 묶인 칸을 오른쪽으로 끌어 채운다
+  var carry = "";
+  var group = [];
+  for (var c = 0; c < wide; c++) {
+    var t = String(top[c] || "").trim();
+    if (t) carry = t;
+    group[c] = carry;
+  }
+  var find = function (re) {
+    for (var c = 0; c < wide; c++) {
+      if (re.test(String(top[c] || "").trim())) return c;
+      if (re.test(String(sub[c] || "").trim())) return c;
+    }
+    return -1;
+  };
+  var nameCol = find(/^이름$/), schoolCol = find(/학교/), gradeCol = find(/^학년$/), hrCol = find(/^담임$/);
+  if (nameCol < 0) return null;
+  // 2줄에 이름표가 있는 칸만 점수 칸이다
+  var groups = {};
+  for (var c2 = 0; c2 < wide; c2++) {
+    var lab = String(sub[c2] || "").trim();
+    if (!lab) continue;
+    var g = group[c2];
+    if (!g || g === "이름" || /^연번$|^소속$|^담임$|학교|^학년$/.test(g)) continue;
+    groups[g] = groups[g] || { name: g, raw: -1, grade: -1, note: -1 };
+    if (/원점수/.test(lab)) groups[g].raw = c2;
+    else if (/등급/.test(lab)) groups[g].grade = c2;
+    else if (/^비고/.test(lab) && groups[g].note < 0) groups[g].note = c2;
+  }
+  var rows = [];
+  for (var r = hi + 2; r < v.length; r++) {
+    var row = v[r] || [];
+    var nm = String(row[nameCol] || "").trim();
+    if (!nm || nm === "이름") continue;
+    rows.push({ name: nm, row: row,
+      school: schoolCol >= 0 ? String(row[schoolCol] || "").trim() : "",
+      grade: gradeCol >= 0 ? String(row[gradeCol] || "").trim() : "",
+      homeroom: hrCol >= 0 ? String(row[hrCol] || "").trim() : "" });
+  }
+  return { groups: Object.keys(groups).map(function (k) { return groups[k]; }), rows: rows };
+}
+// 시트 전체를 훑어 (탭 × 시험 묶음)을 모은다
+async function scanScoreSheet() {
+  var sh = scoreSheet();
+  if (!sh || !sh.id) throw new Error("근거 시트를 먼저 정해주세요");
+  var meta = await sheetsApi({ action: "meta", spreadsheetId: sh.id });
+  var out = [];
+  for (var i = 0; i < meta.tabs.length; i++) {
+    var tab = meta.tabs[i].title;
+    try {
+      var r = await sheetsApi({ action: "values", spreadsheetId: sh.id, range: "'" + tab.replace(/'/g, "''") + "'!A1:BZ400" });
+      var parsed = parseScoreSheet(r.values);
+      if (parsed) parsed.groups.forEach(function (g) { out.push({ tab: tab, g: g, rows: parsed.rows }); });
+    } catch (e) { /* 못 읽는 탭은 건너뛴다 */ }
+  }
+  S.sheetScan = { title: meta.title, at: Date.now(), found: out };
+  return S.sheetScan;
+}
+// 시험 이름으로 묶음 찾기 — 띄어쓰기·괄호를 무시하고 견준다
+function normName(x) { return String(x || "").replace(/[\s()·・]/g, "").toLowerCase(); }
+function matchGroup(found, test) {
+  var n = normName(test.name);
+  var exact = found.filter(function (f) { return normName(f.g.name) === n; });
+  if (exact.length) return exact[0];
+  var part = found.filter(function (f) { var m = normName(f.g.name); return m.indexOf(n) >= 0 || n.indexOf(m) >= 0; });
+  return part[0] || null;
+}
+// 시트 한 줄 → 우리 학생. 이름이 겹치면 시트의 학교로 가른다.
+function matchStudent(row, grade) {
+  var hit = S.students.filter(function (x) { return x.name === row.name && (!grade || x.grade === grade); });
+  if (hit.length === 1) return { p: hit[0] };
+  if (!hit.length) {
+    var any = S.students.filter(function (x) { return x.name === row.name; });
+    return { err: any.length ? "학년이 다름(" + any.map(function (x) { return x.grade || "?"; }).join("/") + ")" : "명단에 없음" };
+  }
+  var sch = row.school.replace(/[0-9]/g, "");
+  var narrowed = hit.filter(function (x) { return sch && x.school && (x.school.indexOf(sch) >= 0 || sch.indexOf(x.school) >= 0); });
+  if (narrowed.length === 1) return { p: narrowed[0] };
+  return { err: "동명이인 " + hit.length + "명" };
+}
+function pullPreview(t) {
+  var pick = S.pullPick;
+  if (!pick) return { list: [], skip: [] };
+  var g = pick.g, list = [], skip = [];
+  pick.rows.forEach(function (r) {
+    var raw = g.raw >= 0 ? String(r.row[g.raw] || "").trim() : "";
+    var grd = g.grade >= 0 ? String(r.row[g.grade] || "").trim() : "";
+    if (!raw && !grd) return;                                  // 빈 줄은 가져오지 않는다
+    var m = matchStudent(r, t.grade);
+    if (m.err) { skip.push({ name: r.name, school: r.school, why: m.err }); return; }
+    var cur = S.testScores[m.p.pid] || {};
+    var had = (cur.raw != null && cur.raw !== "") || (cur.grade != null && cur.grade !== "");
+    list.push({ p: m.p, raw: raw, grade: grd, had: had, cur: cur, sheetSchool: r.school });
+  });
+  return { list: list, skip: skip };
 }
 
 // 일일 테스트 입력 현황 — 선생님이 테스트를 돌리고 있는지 보는 신호로만 남긴다
