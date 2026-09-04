@@ -1288,6 +1288,8 @@ async function runPull(term, targets, from, to, kind) {
     if (!r.hasAny) { noData.push(school); return; }
     if (r.dupes && r.dupes.length) dupe.push(school + " (" + r.dupes.join("·") + "에도 있음)");
     if (r.via === "doc") fromDoc.push(school + (r.docTitle ? " (" + r.docTitle + ")" : ""));
+    // 그림에서 읽은 것은 대조할 원문이 없다. 요일로 걸렀어도 사람이 한 번 봐야 한다.
+    else if (r.via === "image") fromDoc.push(school + " (그림)");
     var note = planNote(r.plan);
     var srcU = (r.src && r.src.url) || "", srcN = (r.src && r.src.name) || "";
     var mine = targets.filter(function (x) { return x.school === school; });
