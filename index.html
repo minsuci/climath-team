@@ -1629,6 +1629,58 @@ function schedFor(school, grade) {
   return S.schoolTerms[key] || null;
 }
 
+// ---- 학교 일정으로 한꺼번에 채우기 ----
+//
+// 학교 일정은 이 앱에서만 채운다(2026-09-04 결정). 선생님들은 앱에서 참여표를
+// **보기만** 하므로, 일정 → 참여표로 옮기는 일도 여기서 해야 한다.
+//
+// 자동으로 덮지 않는다 — 분반마다 진짜 다를 수 있고, 학생이 맞게 낸 것을
+// 지워버리면 되돌릴 방법이 없다. 그래서 «안 낸 사람 채우기» 와
+// «다르게 낸 사람 맞추기» 를 나눠 두고 각각 물어본다.
+function schedFields(x, sc, keep) {
+  return {
+    name: x.st.name, school: sc.school, grade: sc.grade,
+    start: sc.start, end: sc.end, math: sc.math || "",
+    // 직보를 손으로 고쳐둔 사람은 그대로 둔다 (전날이 아니면 일부러 바꾼 것)
+    prep: (keep && keep.prep && keep.prep !== dayBefore(keep.math)) ? keep.prep
+          : (sc.math ? dayBefore(sc.math) : ""),
+    // 복귀는 선생님이 학생별로 정한다. 이미 정해둔 게 있으면 안 건드린다.
+    back: (keep && keep.back) || sc.back || "",
+    note: (keep && keep.note) || "",
+    byTeacher: true, fromSchedule: true,
+  };
+}
+// 안 낸 사람 중 학교 일정이 있는 사람 / 이미 냈는데 일정과 다른 사람
+function fillTargets(rows) {
+  var fillable = [], off = [];
+  rows.forEach(function (x) {
+    if (!x.school || !x.grade) return;
+    var sc = schedFor(x.school, x.grade);
+    if (!sc || !sc.start) return;
+    if (!x.v) { fillable.push({ x: x, s: sc }); return; }
+    if (examSig(x.v) !== examSig(sc) || x.v.school !== sc.school || x.v.grade !== sc.grade)
+      off.push({ x: x, s: sc });
+  });
+  return { fillable: fillable, off: off };
+}
+async function runFill(list, keepOld, btn, label) {
+  if (!list.length) return;
+  btn.disabled = true; btn.textContent = "…";
+  var n = 0;
+  try {
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      await saveExam(it.x.cls.id, it.x.st.id, schedFields(it.x, it.s, keepOld ? it.x.v : null));
+      n++;
+    }
+    renderExams();
+    alert(label + " " + n + "명 ✓");
+  } catch (e) {
+    renderExams();
+    alert("하다 멈췄다 (" + n + "명까지): " + e.message);
+  }
+}
+
 // 표에 놓을 줄 — 담당 반을 가로질러 모은다. 반별로 보면 "이번 주에 누가 빠지나"를 못 본다.
 function examRows() {
   var out = [];
@@ -1767,6 +1819,7 @@ function renderExams() {
     (clash.length ? '<div class="banner" style="margin:0 0 10px"><b>같은 학교·학년인데 일정이 다르다</b> — ' +
       esc(clash.map(function (k) { return k.split("__")[0] + " " + k.split("__")[1]; }).join(", ")) +
       '. 분반마다 진짜 다를 수 있어 자동으로 고치지 않는다. 표에서 확인하고 고칠 것.</div>' : "") +
+    fillBoxHtml(rows) +
     '<div id="ex-entry"></div>' +
     (strip.length ? stripHtml(strip, done) : '<div class="empty">아직 낸 사람이 없다. 아래에서 학생을 눌러 넣는다.</div>') +
     tableHtml(rows, monthDays, examMonth) +
@@ -1808,6 +1861,20 @@ function renderExams() {
     };
   });
   $("#ex-re").onclick = function () { S.exams = {}; loadExams().then(renderExams); };
+  // 학교 일정으로 채우기. 덮어쓰는 쪽은 몇 명인지 이름까지 보여주고 묻는다.
+  if ($("#ex-fill")) $("#ex-fill").onclick = function () {
+    var t = window.__FILL;
+    if (!confirm("학교 일정으로 " + t.fillable.length + "명을 채운다.\n이미 낸 학생은 안 건드린다. 계속할까?")) return;
+    runFill(t.fillable, false, this, "채웠다");
+  };
+  if ($("#ex-sync")) $("#ex-sync").onclick = function () {
+    var t = window.__FILL;
+    if (!confirm("학교 일정과 다르게 낸 " + t.off.length + "명을 일정에 맞춘다.\n" +
+      "손으로 고친 직보와 복귀 날짜는 그대로 둔다. 계속할까?\n\n" +
+      t.off.slice(0, 15).map(function (o) { return "  " + o.x.st.name + " (" + o.x.cls.name + ")"; }).join("\n") +
+      (t.off.length > 15 ? "\n  … 외 " + (t.off.length - 15) + "명" : ""))) return;
+    runFill(t.off, true, this, "맞췄다");
+  };
   $("#ex-edit-term").onclick = async function () {
     var t = prompt("회차 이름 (학원 전체로 하나다)", S.term);
     if (t === null || !t.trim() || t.trim() === S.term) return;
@@ -1832,6 +1899,24 @@ function stripHtml(strip, done) {
     }).join("") + '</tr>';
   }).join("");
   return '<div class="gridwrap" style="max-height:none"><table class="cgrid strip"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+}
+
+// 학교 일정으로 채우는 상자. 채울 게 없으면 안 보인다.
+function fillBoxHtml(rows) {
+  var t = fillTargets(rows);
+  window.__FILL = t;
+  if (!t.fillable.length && !t.off.length) return "";
+  return '<div class="banner" style="margin:0 0 10px">' +
+    '<b style="font-size:13px">학교 일정으로 채우기</b> ' +
+    '<span class="muted" style="font-size:12px">— 학교 일정에 적어둔 내신 기간·수학시험으로 학생 것을 만든다. ' +
+    '복귀 날짜와 손으로 고친 직보는 그대로 둔다.</span>' +
+    '<div class="row" style="margin-top:6px">' +
+    (t.fillable.length ? '<button class="btn o" id="ex-fill">안 낸 ' + t.fillable.length + '명 채우기</button>' : "") +
+    (t.off.length ? '<button class="mini" id="ex-sync">일정과 다른 ' + t.off.length + '명 맞추기</button>' : "") +
+    '</div>' +
+    (t.off.length ? '<div class="muted" style="font-size:12px;margin-top:4px">다른 사람: ' +
+      esc(t.off.slice(0, 12).map(function (o) { return o.x.st.name; }).join(", ")) +
+      (t.off.length > 12 ? " 외 " + (t.off.length - 12) + "명" : "") + '</div>' : "") + '</div>';
 }
 
 function tableHtml(rows, monthDays, examMonth) {
