@@ -127,6 +127,14 @@
   table.cgrid .nm[data-open] { cursor: pointer; }
   table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
 
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  table.sheet-t.ts { min-width: 780px; }
+  table.sheet-t.ts input[type=number] { text-align: right; }
+  table.sheet-t.ts input.green { color: #1f7a45; font-weight: 700; }
+  table.sheet-t.ts input.blue { color: #234e9e; font-weight: 700; }
+  table.sheet-t.ts input.red { color: #b42318; font-weight: 700; }
+
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { background: #eef1f6; }
   th.sortable .ar { font-size: 10px; color: var(--navy); }
@@ -261,6 +269,7 @@ var S = {
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
+  tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
@@ -393,7 +402,7 @@ function renderShell() {
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
 var PAGES = [["tasks", "할 일"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
-  ["exams", "내신 참여표"], ["scores", "성적 입력"], ["sheets", "구글시트"]];
+  ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "구글시트"]];
 function isPage(id) { return PAGES.some(function (p) { return p[0] === id; }); }
 function currentPage() {
   var h = (location.hash || "").replace("#", "");
@@ -427,6 +436,7 @@ async function loadCore() {
     dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
     dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
+    loadTests(),
     db.collection("appConfig").doc("studentLog").get()
       .then(function (d) { S.stLog = (d.exists && d.data().items) || []; }).catch(function () { S.stLog = []; }),
     dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sheets: [] }, d.data()) : { sheets: [] }; })
@@ -1705,9 +1715,336 @@ function bindEntry() {
   };
 }
 
-// ---------- 성적 입력 ----------
-var SCORE_DAYS = 30;   // 최근 며칠을 보나
-var SCORE_MAX_DOCS = 14; // 반 하나당 날짜 문서를 몇 개까지 읽나 (읽기 수 제한)
+// ---------- 시험 성적 ----------
+//
+// 일일 테스트가 아니라 **중간고사·기말고사·모의고사**를 넣는 곳.
+// 이건 수업관리 앱에 없는 자료라 이 앱 DB(climath-team)에 둔다 — 앱 규칙을 안 건드린다.
+//   tests/{tid}                 { kind, name, grade, date, created }
+//   testScores/{tid}__{pid}     { tid, pid, name, raw, ach, grade, std, pct, avg, note }
+// 나중에 학생·학부모에게 보여주려면 그때 앱 쪽으로 옮긴다. 지금은 팀장이 보는 자료다.
+
+var TEST_KINDS = {
+  midterm: { label: "중간고사", short: "중간", cols: ["raw", "ach", "grade", "avg"] },
+  final:   { label: "기말고사", short: "기말", cols: ["raw", "ach", "grade", "avg"] },
+  mock:    { label: "모의고사", short: "모의", cols: ["raw", "std", "pct", "grade"] },
+};
+var TEST_COLS = {
+  raw:   { label: "원점수", w: 74, max: 100 },
+  ach:   { label: "성취도", w: 66, text: true },      // A~E
+  grade: { label: "등급", w: 62, max: 9 },
+  avg:   { label: "과목평균", w: 78, max: 100 },
+  std:   { label: "표준점수", w: 78, max: 200 },
+  pct:   { label: "백분위", w: 70, max: 100 },
+};
+function gradeTone(g) {
+  var n = Number(g);
+  if (!n) return "";
+  if (n <= 2) return "green";
+  if (n <= 4) return "blue";
+  if (n <= 6) return "";
+  return "red";
+}
+var testsCol = function () { return tdb.collection("tests"); };
+var scoresCol = function () { return tdb.collection("testScores"); };
+var scoreKey = function (tid, pid) { return tid + "__" + pid; };
+
+async function loadTests() {
+  try {
+    var s = await testsCol().get();
+    S.tests = []; s.forEach(function (d) { S.tests.push(Object.assign({ tid: d.id }, d.data())); });
+    S.tests.sort(function (a, b) { return (b.date || "") < (a.date || "") ? -1 : 1; });   // 최근 시험이 위
+  } catch (e) { S.tests = []; }
+}
+async function loadTestScores(tid) {
+  S.testScores = {};
+  if (!tid) return;
+  var s = await scoresCol().where("tid", "==", tid).get();
+  s.forEach(function (d) { var v = d.data(); S.testScores[v.pid] = Object.assign({ id: d.id }, v); });
+}
+async function saveTest(t) {
+  var ref = await testsCol().add(Object.assign({}, t, { created: Date.now() }));
+  return ref.id;
+}
+async function deleteTest(tid) {
+  // 성적을 먼저 지운다. 시험만 지우면 어디에도 안 보이는 성적이 남는다 (학생 지우기와 같은 함정).
+  var s = await scoresCol().where("tid", "==", tid).get();
+  var jobs = []; s.forEach(function (d) { jobs.push(d.ref.delete()); });
+  await Promise.all(jobs);
+  await testsCol().doc(tid).delete();
+  S.tests = S.tests.filter(function (x) { return x.tid !== tid; });
+  if (S.testPick === tid) S.testPick = "";
+}
+async function saveScore(tid, pid, name, patch) {
+  var cur = S.testScores[pid] || {};
+  var next = Object.assign({}, cur, patch, { tid: tid, pid: pid, name: name, updated: Date.now() });
+  delete next.id;
+  // 값이 전부 비면 문서를 지운다 — 빈 껍데기가 "응시함"으로 세어지면 평균이 틀어진다.
+  var has = Object.keys(TEST_COLS).some(function (k) { return next[k] !== "" && next[k] != null; }) || next.note;
+  if (!has) { await deleteScore(tid, pid); return; }
+  await scoresCol().doc(scoreKey(tid, pid)).set(next, { merge: true });
+  S.testScores[pid] = next;
+}
+async function deleteScore(tid, pid) {
+  await scoresCol().doc(scoreKey(tid, pid)).delete().catch(function () {});
+  delete S.testScores[pid];
+}
+
+// 그 학년 학생 + 반·담임. 시험은 학년 단위로 본다.
+function testRoster(grade) {
+  var inCls = {};
+  activeClasses().forEach(function (c) {
+    rosterStudents(c).forEach(function (r) { if (r.pid) (inCls[r.pid] = inCls[r.pid] || []).push(c); });
+  });
+  return S.students.filter(function (x) { return !grade || x.grade === grade; }).map(function (x) {
+    var cs = inCls[x.pid] || [];
+    return { p: x, cls: cs, clsName: cs.map(function (c) { return c.name; }).join(", "),
+             homeroom: x.homeroom ? teacherName(x.homeroom) : "" };
+  });
+}
+function avgOf(list) {
+  var n = list.filter(function (x) { return x !== "" && x != null && !isNaN(Number(x)); }).map(Number);
+  if (!n.length) return null;
+  return Math.round(n.reduce(function (a, b) { return a + b; }, 0) / n.length * 10) / 10;
+}
+
+function renderScores() {
+  var el = $("#sec-scores");
+  var t = S.tests.filter(function (x) { return x.tid === S.testPick; })[0] || null;
+  // 메뉴 숫자 = 만들어 두고 아직 아무도 안 넣은 시험
+  navBadge("scores", S.tests.filter(function (x) { return !x.n; }).length, false);
+
+  el.innerHTML = '<h2>시험 성적 <span class="n">' + S.tests.length + '개</span><span class="sp"></span>' +
+    (t ? '<button class="mini" id="ts-del">이 시험 지우기</button>' : "") +
+    '<button class="mini" id="ts-new">새 시험</button></h2>' +
+    '<div class="chips">' + (S.tests.length ? S.tests.map(function (x) {
+      return '<button class="mini ' + (x.tid === S.testPick ? "on" : "") + '" data-tsp="' + esc(x.tid) + '">' +
+        '<b>' + esc(TEST_KINDS[x.kind].short) + '</b> ' + esc(x.name) +
+        ' <span class="muted">' + esc(x.grade || "") + (x.date ? " · " + esc(fmtMD(x.date)) : "") + '</span></button>';
+    }).join("") : '<span class="muted">아직 만든 시험이 없다. "새 시험"으로 만든다.</span>') + '</div>' +
+    '<div id="ts-form"></div>' +
+    (t ? testPanelHtml(t) : '') +
+    dailyDetailsHtml();
+
+  $$("[data-tsp]", el).forEach(function (b) {
+    b.onclick = function () {
+      S.testPick = b.getAttribute("data-tsp"); S.tsPaste = false;
+      loadTestScores(S.testPick).then(function () { keepScrollIn("#sec-scores", renderScores); });
+    };
+  });
+  $("#ts-new").onclick = function () { S.tsForm = !S.tsForm; renderScores(); if (S.tsForm) bindTestForm(); };
+  if (S.tsForm) bindTestForm();
+  if (t) bindTestPanel(t);
+  var dl = $("#ts-del");
+  if (dl) dl.onclick = async function () {
+    if (!confirm("「" + t.name + "」와 거기 넣은 성적을 모두 지운다. 되돌릴 수 없다.")) return;
+    dl.disabled = true;
+    try { await deleteTest(t.tid); S.testScores = {}; renderScores(); }
+    catch (e) { dl.disabled = false; alert("지우지 못했다: " + e.message); }
+  };
+}
+// 상자 안에서 자리를 지키며 다시 그리기 (명단 편집과 같은 이유)
+function keepScrollIn(sel, fn) {
+  var box = $(sel + " .tbl"), top = box ? box.scrollTop : 0;
+  var wy = window.scrollY || window.pageYOffset || 0;
+  fn();
+  var box2 = $(sel + " .tbl");
+  if (box2 && top) box2.scrollTop = top;
+  if (wy) window.scrollTo(0, wy);
+}
+
+function bindTestForm() {
+  var box = $("#ts-form");
+  box.innerHTML = S.tsForm ? '<div class="entry"><div class="row">' +
+    '<select id="tf-kind">' + Object.keys(TEST_KINDS).map(function (k) {
+      return '<option value="' + k + '">' + TEST_KINDS[k].label + '</option>'; }).join("") + '</select>' +
+    '<input type="text" id="tf-name" placeholder="시험 이름 (예: 2026 2학기 중간 · 9월 학평)" style="flex:1;min-width:180px">' +
+    '<select id="tf-grade">' + GRADES.map(function (g) { return '<option>' + g + '</option>'; }).join("") + '</select>' +
+    '<input type="date" id="tf-date" value="' + TODAY + '">' +
+    '<button class="btn" id="tf-go">만들기</button><button class="mini" id="tf-x">취소</button></div>' +
+    '<div class="muted" style="font-size:12px">중간·기말은 원점수·성취도·등급·과목평균을, 모의고사는 원점수·표준점수·백분위·등급을 넣는다.</div></div>' : "";
+  if (!S.tsForm) return;
+  $("#tf-x").onclick = function () { S.tsForm = false; renderScores(); };
+  $("#tf-go").onclick = async function () {
+    var name = $("#tf-name").value.trim();
+    if (!name) { alert("시험 이름을 넣어주세요"); return; }
+    this.disabled = true;
+    try {
+      var tid = await saveTest({ kind: $("#tf-kind").value, name: name, grade: $("#tf-grade").value, date: $("#tf-date").value });
+      S.tsForm = false; await loadTests(); S.testPick = tid; await loadTestScores(tid); renderScores();
+    } catch (e) { this.disabled = false; alert("만들지 못했다: " + e.message); }
+  };
+}
+
+function testPanelHtml(t) {
+  var cols = TEST_KINDS[t.kind].cols;
+  var rows = testRoster(t.grade);
+  var so = S.tsSort;
+  if (so) {
+    var keyOf = function (x) {
+      var v = S.testScores[x.p.pid] || {};
+      if (so.key === "name") return x.p.name || "";
+      if (so.key === "cls") return x.clsName || "";
+      if (so.key === "homeroom") return x.homeroom || "";
+      if (so.key === "school") return x.p.school || "";
+      var n = v[so.key];
+      return (n === "" || n == null) ? "" : ("0000" + n).slice(-5);
+    };
+    rows = rows.slice().sort(function (a, b) {
+      var ka = keyOf(a), kb = keyOf(b);
+      var byName = String(a.p.name || "").localeCompare(String(b.p.name || ""), "ko");
+      if (!ka && !kb) return byName;
+      if (!ka) return 1;
+      if (!kb) return -1;
+      var c = ka.localeCompare(kb, "ko");
+      return (so.dir === "desc" ? -c : c) || byName;
+    });
+  } else {
+    rows.sort(function (a, b) { return (a.clsName || "힣").localeCompare(b.clsName || "힣", "ko") || String(a.p.name).localeCompare(String(b.p.name), "ko"); });
+  }
+  var got = rows.filter(function (x) { var v = S.testScores[x.p.pid]; return v && v.raw !== "" && v.raw != null; });
+  var dist = {}; for (var i = 1; i <= 9; i++) dist[i] = 0;
+  var noGrade = 0;
+  rows.forEach(function (x) {
+    var v = S.testScores[x.p.pid]; if (!v) return;
+    var g = Number(v.grade);
+    if (g >= 1 && g <= 9) dist[g]++; else if (v.raw !== "" && v.raw != null) noGrade++;
+  });
+  var mean = avgOf(got.map(function (x) { return S.testScores[x.p.pid].raw; }));
+  // 담임별 평균 — 누가 맡은 아이들이 어땠나
+  var byT = {};
+  got.forEach(function (x) {
+    var k = x.homeroom || "담임 없음";
+    (byT[k] = byT[k] || []).push(Number(S.testScores[x.p.pid].raw));
+  });
+  var byC = {};
+  got.forEach(function (x) {
+    var k = x.clsName || "반 미배정";
+    (byC[k] = byC[k] || []).push(Number(S.testScores[x.p.pid].raw));
+  });
+  var sortTh = function (key, label, w) {
+    var on = so && so.key === key;
+    return '<th class="sortable" data-tss="' + key + '"' + (w ? ' style="width:' + w + 'px"' : "") + '>' + esc(label) +
+      ' <span class="ar' + (on ? "" : " off") + '">' + (on ? (so.dir === "asc" ? "▲" : "▼") : "↕") + '</span></th>';
+  };
+  var meanBox = function (m) { return m == null ? '<span class="muted">—</span>' : '<b>' + m + '</b>'; };
+
+  return '<div class="row" style="margin:10px 0 4px"><b>' + esc(TEST_KINDS[t.kind].label) + ' · ' + esc(t.name) + '</b>' +
+    '<span class="muted">' + esc(t.grade) + (t.date ? " · " + esc(fmtMD(t.date)) : "") + '</span>' +
+    '<span class="sp" style="flex:1"></span><button class="mini" id="ts-paste">붙여넣기로 넣기</button>' +
+    (so ? '<button class="mini" data-tss="">원래 순서</button>' : "") + '</div>' +
+    '<div class="stat"><div><b>' + got.length + '/' + rows.length + '</b><span>넣은 사람</span></div>' +
+    '<div>' + meanBox(mean) + '<span>원점수 평균</span></div>' +
+    '<div><b>' + (dist[1] + dist[2]) + '</b><span>1~2등급</span></div>' +
+    (noGrade ? '<div class="bad"><b>' + noGrade + '</b><span>등급 없음</span></div>' : "") + '</div>' +
+    (got.length ? '<div class="chips">' + [1,2,3,4,5,6,7,8,9].map(function (g) {
+      return dist[g] ? '<span class="pill ' + gradeTone(g) + '">' + g + '등급 ' + dist[g] + '</span>' : "";
+    }).join("") + '</div>' : "") +
+    '<div id="ts-paste-box"></div>' +
+    '<div class="tbl tall"><table class="sheet-t ts"><thead><tr>' +
+    sortTh("name", "이름", 100) + sortTh("cls", "반", 150) + sortTh("homeroom", "담임", 90) + sortTh("school", "학교", 130) +
+    cols.map(function (c) { return sortTh(c, TEST_COLS[c].label, TEST_COLS[c].w); }).join("") +
+    '<th style="width:130px">비고</th></tr></thead><tbody id="ts-rows">' +
+    rows.map(function (x) {
+      var v = S.testScores[x.p.pid] || {};
+      return '<tr data-pid="' + esc(x.p.pid) + '"><td><b>' + esc(x.p.name) + '</b></td>' +
+        '<td>' + (x.clsName ? esc(x.clsName) : '<span class="red">미배정</span>') + '</td>' +
+        '<td>' + esc(x.homeroom) + '</td><td>' + esc(x.p.school || "") + '</td>' +
+        cols.map(function (c) {
+          var val = v[c] == null ? "" : v[c];
+          var tone = c === "grade" ? gradeTone(val) : "";
+          return '<td><input type="' + (TEST_COLS[c].text ? "text" : "number") + '" data-c="' + c + '" value="' + esc(val) + '"' +
+            (TEST_COLS[c].max ? ' max="' + TEST_COLS[c].max + '" min="0"' : "") +
+            ' class="' + tone + '"></td>';
+        }).join("") +
+        '<td><input type="text" data-c="note" value="' + esc(v.note || "") + '"></td></tr>';
+    }).join("") + '</tbody></table></div>' +
+    '<div class="grid2">' +
+    '<div><b style="font-size:13px">담임별 평균</b><div class="tbl" style="max-height:180px"><table><thead><tr><th>담임</th><th>인원</th><th>평균</th></tr></thead><tbody>' +
+    Object.keys(byT).sort(function (a, b) { return avgOf(byT[b]) - avgOf(byT[a]); }).map(function (k) {
+      return '<tr><td>' + esc(k) + '</td><td>' + byT[k].length + '</td><td><b>' + avgOf(byT[k]) + '</b></td></tr>'; }).join("") +
+    '</tbody></table></div></div>' +
+    '<div><b style="font-size:13px">반별 평균</b><div class="tbl" style="max-height:180px"><table><thead><tr><th>반</th><th>인원</th><th>평균</th></tr></thead><tbody>' +
+    Object.keys(byC).sort(function (a, b) { return avgOf(byC[b]) - avgOf(byC[a]); }).map(function (k) {
+      return '<tr><td>' + esc(k) + '</td><td>' + byC[k].length + '</td><td><b>' + avgOf(byC[k]) + '</b></td></tr>'; }).join("") +
+    '</tbody></table></div></div></div>';
+}
+
+function bindTestPanel(t) {
+  var el = $("#sec-scores");
+  var cols = TEST_KINDS[t.kind].cols;
+  // 칸을 고치면 그 자리에서 저장한다. **다시 그리지 않는다** — 치던 칸에서 포커스가 날아간다.
+  $$("#ts-rows input", el).forEach(function (inp) {
+    inp.onchange = async function () {
+      var tr = inp.closest("tr"), pid = tr.getAttribute("data-pid"), c = inp.getAttribute("data-c");
+      var name = S.byPid[pid] ? S.byPid[pid].name : "";
+      var patch = {}; patch[c] = inp.value.trim();
+      try {
+        await saveScore(t.tid, pid, name, patch);
+        inp.classList.add("ok"); setTimeout(function () { inp.classList.remove("ok"); }, 900);
+        if (c === "grade") { inp.className = gradeTone(inp.value) + " ok"; }
+      } catch (e) { inp.classList.add("bad"); alert("저장하지 못했다: " + e.message); }
+    };
+  });
+  $$("[data-tss]", el).forEach(function (b) {
+    b.onclick = function () {
+      var k = b.getAttribute("data-tss");
+      if (!k) S.tsSort = null;
+      else if (!S.tsSort || S.tsSort.key !== k) S.tsSort = { key: k, dir: k === "name" || k === "cls" || k === "homeroom" || k === "school" ? "asc" : "desc" };
+      else if (S.tsSort.dir === "desc") S.tsSort = { key: k, dir: "asc" };
+      else S.tsSort = null;
+      keepScrollIn("#sec-scores", renderScores);
+    };
+  });
+  var pb = $("#ts-paste", el);
+  pb.onclick = function () { S.tsPaste = !S.tsPaste; drawPaste(t); };
+  drawPaste(t);
+}
+function drawPaste(t) {
+  var box = $("#ts-paste-box"); if (!box) return;
+  if (!S.tsPaste) { box.innerHTML = ""; return; }
+  var cols = TEST_KINDS[t.kind].cols.filter(function (c) { return !TEST_COLS[c].text; });
+  box.innerHTML = '<div class="entry"><div class="muted" style="font-size:12px;margin-bottom:4px">' +
+    '한 줄에 한 명. <b>이름 ' + cols.map(function (c) { return TEST_COLS[c].label; }).join(" ") + '</b> 차례로. ' +
+    '성취도(A~E)는 아무 자리에나 써도 된다. 빈 값은 건너뛰려면 <b>-</b> 를 쓴다.</div>' +
+    '<textarea id="ts-pt" rows="6" style="width:100%" placeholder="김서진 88 2 71.4"></textarea>' +
+    '<div class="row"><button class="btn o" id="ts-pt-go">넣기</button><span class="muted" id="ts-pt-msg"></span></div></div>';
+  $("#ts-pt-go").onclick = async function () {
+    var lines = $("#ts-pt").value.split(/\r?\n/), msg = $("#ts-pt-msg");
+    var done = 0, unknown = [];
+    this.disabled = true; msg.textContent = "넣는 중...";
+    try {
+      for (var i = 0; i < lines.length; i++) {
+        var one = parseScoreLine(lines[i], TEST_KINDS[t.kind].cols);
+        if (!one) continue;
+        var hit = S.students.filter(function (x) { return x.name === one.name && (!t.grade || x.grade === t.grade); });
+        if (hit.length !== 1) { unknown.push(one.name + (hit.length > 1 ? "(동명이인)" : "")); continue; }
+        await saveScore(t.tid, hit[0].pid, hit[0].name, one.vals);
+        done++;
+      }
+      msg.textContent = done + "명 넣었다" + (unknown.length ? " · 못 찾은 이름: " + unknown.join(", ") : "");
+      $("#ts-pt").value = "";
+      keepScrollIn("#sec-scores", renderScores);
+    } catch (e) { msg.textContent = "실패: " + e.message; }
+    this.disabled = false;
+  };
+}
+// "김서진 88 2 71.4" → { name, vals }. 성취도(A~E)는 자리를 안 가린다.
+function parseScoreLine(line, cols) {
+  var t = line.split(/[\t,]|\s+/).map(function (x) { return x.trim(); }).filter(Boolean);
+  if (t.length < 2) return null;
+  var name = t.shift(), vals = {}, nums = [];
+  t.forEach(function (x) {
+    if (/^[A-Ea-e]$/.test(x)) { vals.ach = x.toUpperCase(); return; }
+    nums.push(x === "-" ? "" : x);
+  });
+  cols.filter(function (c) { return !TEST_COLS[c].text; }).forEach(function (c, i) {
+    if (i < nums.length) vals[c] = nums[i];
+  });
+  return { name: name, vals: vals };
+}
+
+// 일일 테스트 입력 현황 — 선생님이 테스트를 돌리고 있는지 보는 신호로만 남긴다
+var SCORE_DAYS = 30, SCORE_MAX_DOCS = 14;
 async function loadScores() {
   var since = addDays(TODAY, -SCORE_DAYS);
   await Promise.all(activeClasses().map(async function (c) {
@@ -1725,41 +2062,27 @@ async function loadScores() {
     } catch (e) { S.scores[c.id] = []; }
   }));
 }
-function renderScores() {
-  var el = $("#sec-scores");
-  var loaded = Object.keys(S.scores).length;
-  if (!loaded) { el.innerHTML = '<h2>성적 입력 <span class="n">최근 ' + SCORE_DAYS + '일</span></h2><div class="empty">불러오는 중...</div>'; return; }
-  var rows = [], byT = {};
+function dailyDetailsHtml() {
+  var rows = [];
   activeClasses().forEach(function (c) {
-    var sc = S.scores[c.id] || []; var studs = rosterStudents(c); if (!studs.length) return;
-    var last = sc.reduce(function (m, s) { return s.date > m ? s.date : m; }, "");
-    var labels = {}; sc.forEach(function (s) { labels[s.label || "(이름 없음)"] = 1; });
-    var withScore = {}; sc.forEach(function (s) { withScore[s.sid] = 1; });
-    var covered = studs.filter(function (r) { return withScore[r.id]; }).length;
-    var ts = classTeachers(c.id); if (!ts.length) ts = ["담당 없음"];
-    ts.forEach(function (t) { (byT[t] = byT[t] || { c: 0, n: 0, tests: 0, last: "" }); byT[t].c++; byT[t].n += sc.length; byT[t].tests += Object.keys(labels).length; if (last > byT[t].last) byT[t].last = last; });
-    rows.push({ c: c, t: ts.join("·"), n: sc.length, tests: Object.keys(labels).length, last: last, covered: covered, total: studs.length, labels: Object.keys(labels) });
+    var sc = S.scores[c.id]; if (!sc) return;
+    var studs = rosterStudents(c); if (!studs.length) return;
+    var last = sc.reduce(function (m, x) { return x.date > m ? x.date : m; }, "");
+    var ts = classTeachers(c.id);
+    rows.push({ c: c, t: ts.length ? ts.join("·") : "담당 없음", n: sc.length, last: last });
   });
+  if (!rows.length) return "";
   rows.sort(function (a, b) { return (a.last || "") < (b.last || "") ? -1 : 1; });
-  var silent = rows.filter(function (r) { return !r.last; });
-  navBadge("scores", silent.length, true);
-  el.innerHTML = '<h2>성적 입력 <span class="n">최근 ' + SCORE_DAYS + '일</span><span class="sp"></span><button id="sc-re">다시 세기</button></h2>' +
-    '<div class="stat"><div class="' + (silent.length ? "bad" : "good") + '"><b>' + silent.length + '</b><span>입력 없는 반</span></div>' +
-    '<div><b>' + rows.reduce(function (a, r) { return a + r.n; }, 0) + '</b><span>점수 건수</span></div></div>' +
-    '<div class="tbl" style="max-height:170px"><table><thead><tr><th>선생님</th><th>반</th><th>테스트</th><th>건수</th><th>마지막</th></tr></thead><tbody>' +
-    Object.keys(byT).sort(function (a, b) { return (byT[a].last || "") < (byT[b].last || "") ? -1 : 1; }).map(function (t) {
-      var v = byT[t];
-      return '<tr><td>' + esc(t) + '</td><td>' + v.c + '</td><td>' + v.tests + '</td><td>' + v.n + '</td><td>' + (v.last ? esc(fmtMD(v.last)) : '<span class="red">없음</span>') + '</td></tr>';
-    }).join("") + '</tbody></table></div>' +
-    '<div class="tbl" style="margin-top:8px"><table><thead><tr><th>반</th><th>담당</th><th>마지막</th><th>테스트</th><th>학생 커버</th></tr></thead><tbody>' +
+  var silent = rows.filter(function (x) { return !x.last; });
+  return '<details style="margin-top:12px"><summary>일일 테스트 입력 현황 — 최근 ' + SCORE_DAYS + '일' +
+    (silent.length ? ' · <span class="red">입력 없는 반 ' + silent.length + '개</span>' : "") + '</summary>' +
+    '<div class="tbl" style="max-height:220px"><table><thead><tr><th>반</th><th>담당</th><th>건수</th><th>마지막</th></tr></thead><tbody>' +
     rows.map(function (r) {
       var n = daysFromToday(r.last);
-      return '<tr><td>' + esc(r.c.name) + '</td><td>' + esc(r.t) + '</td><td>' + (r.last ? esc(fmtMD(r.last)) + ' <span class="muted">' + (n === 0 ? "오늘" : (-n) + "일 전") + '</span>' : '<span class="red">없음</span>') + '</td>' +
-        '<td class="wrapc">' + r.labels.slice(0, 4).map(function (l) { return '<span class="pill">' + esc(l) + '</span>'; }).join("") + (r.labels.length > 4 ? '<span class="muted">+' + (r.labels.length - 4) + '</span>' : "") + '</td>' +
-        '<td>' + r.covered + '/' + r.total + '</td></tr>';
+      return '<tr><td>' + esc(r.c.name) + '</td><td>' + esc(r.t) + '</td><td>' + r.n + '</td><td>' +
+        (r.last ? esc(fmtMD(r.last)) + ' <span class="muted">' + (n === 0 ? "오늘" : (-n) + "일 전") + '</span>' : '<span class="red">없음</span>') + '</td></tr>';
     }).join("") + '</tbody></table></div>' +
-    '<p class="muted" style="font-size:12px;margin:6px 0 0">반마다 최근 ' + SCORE_MAX_DOCS + '개 날짜만 읽는다. 학생이 점수 탭에서 낸 것 + 선생님이 넣은 것.</p>';
-  $("#sc-re").onclick = function () { S.scores = {}; renderScores(); loadScores().then(renderScores); };
+    '<p class="muted" style="font-size:12px">학생이 점수 탭에서 낸 것. 시험 성적과는 다른 자료다.</p></details>';
 }
 
 // ---------- 구글시트 ----------
