@@ -100,6 +100,20 @@
   table.cgrid .nm { display: inline-block; padding: 1px 6px; border-radius: 4px; }
   table.cgrid .nm i { font-style: normal; opacity: .65; margin-left: 2px; font-size: 11px; }
 
+  /* 명단 편집 시트 */
+  table.sheet-t td { padding: 2px 4px; }
+  table.sheet-t input[type=text], table.sheet-t select { width: 100%; border: 1px solid transparent; background: transparent;
+    border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 13px; color: inherit; }
+  table.sheet-t input[type=text]:hover, table.sheet-t select:hover { border-color: var(--line); background: #fff; }
+  table.sheet-t input[type=text]:focus, table.sheet-t select:focus { border-color: var(--navy); background: #fff; outline: none; }
+  table.sheet-t input.ok, table.sheet-t select.ok { background: #e3f5ea; border-color: #2f9e5f; }
+  table.sheet-t input.bad, table.sheet-t select.bad { background: #fde8e8; border-color: var(--red); }
+  table.sheet-t .cls-btn { max-width: 180px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+  table.sheet-t tr.clsrow td { background: #f7f8fb; white-space: normal; }
+  table.sheet-t tr.newrow input { border: 1px dashed var(--line); background: #fff; }
+  table.cgrid .nm[data-open] { cursor: pointer; }
+  table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
+
   /* 학년 색 — 표 줄과 알약이 같은 색 */
   tr.g0 td { background: #eaf3ff; }  .pill.g0, .nm.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
   tr.g1 td { background: #eaf8ee; }  .pill.g1, .nm.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
@@ -213,7 +227,8 @@ var S = {
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
-  filterWho: "", stFilter: "", stQuery: "", stView: "grid", byPid: {}, showDone: false, saEmail: "",
+  filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", byPid: {}, notes: {},
+  showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
 };
@@ -377,6 +392,7 @@ async function loadCore() {
     db.collection("appConfig").doc("schoolTerms").get().then(function (d) { S.schoolTerms = d.exists ? d.data() : {}; }),
     dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
+    dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
     dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sheets: [] }, d.data()) : { sheets: [] }; })
       .catch(function () {}),
   ];
@@ -572,8 +588,8 @@ function renderStudents() {
   var chip = function (key, label, n) { return '<button class="mini ' + (f === key ? "on" : "") + '" data-gf="' + key + '">' + label + ' <span class="muted">' + n + '</span></button>'; };
   el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span>' +
     '<button class="mini ' + (view === "grid" ? "on" : "") + '" data-view="grid">반별 배치표</button>' +
-    '<button class="mini ' + (view === "list" ? "on" : "") + '" data-view="list">한 줄씩</button>' +
-    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 고치기</a></h2>' +
+    '<button class="mini ' + (view === "edit" ? "on" : "") + '" data-view="edit">명단 편집</button>' +
+    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
     '<div class="chips">' + chip("", "전체", st.length) +
     GRADES.map(function (g) { return chip(g, '<span class="pill ' + gradeCls(g) + '">' + g + '</span>', byGrade[g]); }).join("") +
     chip("none", "학년 없음", noGrade) +
@@ -583,7 +599,18 @@ function renderStudents() {
   $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); renderStudents(); }; });
   $$("[data-view]", el).forEach(function (b) { b.onclick = function () { S.stView = b.getAttribute("data-view"); renderStudents(); }; });
   // 찾기 칸은 아래만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
-  $("#st-q").oninput = function () { S.stQuery = this.value; $("#st-body").innerHTML = studentBodyHtml(S.stView || "grid", assigned); };
+  $("#st-q").oninput = function () {
+    S.stQuery = this.value;
+    $("#st-body").innerHTML = studentBodyHtml(S.stView || "grid", assigned);
+    afterStudentBody(el, assigned);
+  };
+  afterStudentBody(el, assigned);
+}
+function afterStudentBody(el, assigned) {
+  if ((S.stView || "grid") === "edit") bindEdit(el, assigned);
+  else $$("[data-open]", el).forEach(function (n) {
+    n.onclick = function () { S.stView = "edit"; S.stOpen = n.getAttribute("data-open"); renderStudents(); };
+  });
 }
 // 고른 학년·찾는 글자에 걸리는가. 배치표에서는 지우지 않고 **흐리게** 한다 —
 // 누가 어느 반에 흩어져 있는지가 배치표의 쓸모라 자리를 비우면 안 된다.
@@ -596,7 +623,7 @@ function stHit(name, grade, school, teacher, cls) {
   return true;
 }
 function studentBodyHtml(view, assigned) {
-  return view === "list" ? studentListHtml(assigned) : classGridHtml();
+  return view === "edit" ? studentEditHtml(assigned) : classGridHtml();
 }
 
 // ---- 반별 배치표 — 열 하나가 반, 아래로 학생 ----
@@ -628,8 +655,8 @@ function classGridHtml() {
       if (!r) return '<td></td>';
       var g = gradeOf(r), sch = schoolOf(r);
       var hit = stHit(r.name, g, sch, x.t, x.loose ? "" : x.c.name);
-      return '<td class="' + (hit ? "" : "dim") + '" title="' + esc([r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ")) + '">' +
-        '<span class="nm ' + gradeCls(g) + '">' + esc(r.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span></td>';
+      return '<td class="' + (hit ? "" : "dim") + '" title="' + esc([r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ")) + ' — 눌러서 고치기">' +
+        '<span class="nm ' + gradeCls(g) + '"' + (r.pid ? ' data-open="' + esc(r.pid) + '"' : "") + '>' + esc(r.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span></td>';
     }).join("") + '</tr>';
   }
   return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
@@ -645,25 +672,275 @@ function assignedNames(person, cols) {
 }
 function looseRow(x) { return { id: x.pid, pid: x.pid, name: x.name, grade: x.grade, school: x.school }; }
 
-// ---- 한 줄씩 ----
-function studentListHtml(assigned) {
+// ---- 명단 편집 — 이 앱이 학생 명단의 근거지 ----
+//
+// 저장은 **climath-class 한 곳에만** 한다. 사본을 여기 따로 두면 다른 선생님이 앱에서
+// 넣은 학생이 안 보이고, 다음 "보내기"에 조용히 덮인다. 학생 로그인·출결·참여표가 전부
+// 그쪽을 보므로 진실은 하나여야 한다. 이 앱은 **고치는 자리**이고, 앱 화면은 그 결과를 비춘다.
+// 앱에 없는 칸(메모)만 climath-team `dash/students` 에 따로 붙인다.
+//
+// 관리자 토큰이면 앱 규칙이 이미 students 쓰기와 classes 갱신을 허용한다 — 앱 규칙은 안 건드렸다.
+
+function studentEditHtml(assigned) {
   var rows = S.students.filter(function (x) {
     return stHit(x.name, x.grade, x.school, teacherName(x.homeroom), (assigned[x.pid] || []).join(" "));
   });
   rows.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
-  if (!rows.length) return '<div class="empty">해당하는 학생이 없다.</div>';
-  return '<div class="tbl tall"><table><thead><tr><th>#</th><th>이름</th><th>학년</th><th>학교</th><th>담임</th><th>반</th></tr></thead><tbody>' +
-    rows.map(function (x, i) {
-      var g = x.grade && GRADES.indexOf(x.grade) >= 0 ? x.grade : "";
-      var cls = assigned[x.pid] || [];
-      return '<tr class="' + gradeCls(g) + '"><td class="muted">' + (i + 1) + '</td><td><b>' + esc(x.name) + '</b></td>' +
-        '<td>' + (g ? '<span class="pill ' + gradeCls(g) + '">' + esc(g) + '</span>' : '<span class="pill red">없음</span>') + '</td>' +
-        '<td>' + esc(x.school || "") + '</td>' +
-        '<td>' + (x.homeroom ? esc(teacherName(x.homeroom)) : '<span class="red">없음</span>') + '</td>' +
-        '<td class="wrapc">' + (cls.length ? cls.map(esc).join(", ") : '<span class="red">미배정</span>') + '</td></tr>';
-    }).join("") + '</tbody></table></div>' +
-    '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(S.students) + '</details>';
+  var drift = rosterDrift(), loose = looseRosterRows();
+  return (drift.length || loose.length ? '<div class="banner" style="margin:0 0 10px">' +
+      (drift.length ? '<div><b>앱 명단과 어긋난 것 ' + drift.length + '건</b> — 이름·학교·학년이 반 명단에 안 흘러갔다. ' +
+        '<button class="mini" id="st-fix">앱으로 다시 보내기</button></div>' : "") +
+      (loose.length ? '<div style="margin-top:' + (drift.length ? "6px" : "0") + '"><b>반에만 있는 항목 ' + loose.length + '건</b> — 사람 정보가 없어 명단에 안 뜬다. ' +
+        '<button class="mini" id="st-link">사람으로 만들어 잇기</button></div>' : "") + '</div>' : "") +
+    '<div class="tbl tall"><table class="sheet-t"><thead><tr>' +
+    '<th style="width:34px">#</th><th style="width:110px">이름</th><th style="width:74px">학년</th><th style="width:130px">학교</th>' +
+    '<th style="width:92px">담임</th><th style="width:190px">반</th><th>메모</th><th style="width:34px"></th></tr></thead>' +
+    '<tbody id="st-rows">' + rows.map(editRowHtml).join("") +
+    '<tr class="newrow"><td class="muted">+</td><td colspan="7"><input type="text" id="st-new" placeholder="새 학생 이름을 치고 Enter"></td></tr>' +
+    '</tbody></table></div>' +
+    '<details><summary>여러 명 한꺼번에 만들기 — 엑셀에서 붙여넣기</summary>' +
+    '<textarea id="st-bulk" rows="6" style="width:100%" placeholder="한 줄에 한 명. 이름 학년 학교\n김서진 고1 중대부고\n설민준\t중3\t봉은중"></textarea>' +
+    '<div class="row"><span class="muted">만들면서 반에 넣기</span><select id="st-bulk-cls"><option value="">넣지 않음</option>' +
+    activeClasses().map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>'; }).join("") + '</select>' +
+    '<button class="btn o" id="st-bulk-go">만들기</button><span class="muted" id="st-bulk-msg"></span></div>' +
+    '<p class="muted" style="font-size:12px">학년은 <b>중3·고1·고2·고3</b> 또는 <b>9·10·11·12</b>. 이미 있는 이름은 건너뛴다.</p></details>' +
+    '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(S.students) + '</details>' +
+    '<datalist id="st-schools">' + schoolOpts().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + '</datalist>';
 }
+function schoolOpts() {
+  var m = {}; S.students.forEach(function (x) { if (x.school) m[x.school] = 1; });
+  return Object.keys(m).sort();
+}
+function editRowHtml(x, i) {
+  var cls = classesOfPid(x.pid);
+  var memo = (S.notes[x.pid] || {}).memo || "";
+  var g = x.grade || "";
+  return '<tr data-pid="' + esc(x.pid) + '" class="' + gradeCls(GRADES.indexOf(g) >= 0 ? g : "") + '">' +
+    '<td class="muted">' + (i + 1) + '</td>' +
+    '<td><input type="text" data-f="name" value="' + esc(x.name || "") + '"></td>' +
+    '<td><select data-f="grade"><option value="">—</option>' + GRADES.map(function (v) { return '<option' + (v === g ? " selected" : "") + '>' + v + '</option>'; }).join("") + '</select></td>' +
+    '<td><input type="text" data-f="school" list="st-schools" value="' + esc(x.school || "") + '"></td>' +
+    '<td><select data-f="homeroom"><option value="">—</option>' + S.teachers.map(function (t) { return '<option value="' + esc(t.tid) + '"' + (t.tid === x.homeroom ? " selected" : "") + '>' + esc(t.name) + '</option>'; }).join("") + '</select></td>' +
+    '<td class="wrapc"><button class="mini cls-btn">' + (cls.length ? cls.map(function (c) { return esc(c.name); }).join(", ") : '<span class="red">미배정</span>') + '</button></td>' +
+    '<td><input type="text" data-f="memo" value="' + esc(memo) + '" placeholder="이 앱에만 남는 메모"></td>' +
+    '<td><button class="x del" title="지우기">×</button></td></tr>' +
+    (S.stOpen === x.pid ? '<tr class="clsrow"><td></td><td colspan="7">' +
+      activeClasses().map(function (c) {
+        var on = cls.some(function (y) { return y.id === c.id; });
+        return '<button class="mini ' + (on ? "on" : "") + '" data-cls="' + esc(c.id) + '">' + esc(c.name) + '</button>';
+      }).join("") + '<div class="muted" style="font-size:12px;margin-top:4px">누르면 그 반에 넣고 뺀다. 빼도 출결·과제 기록은 남는다.</div></td></tr>' : "");
+}
+function classesOfPid(pid) { return activeClasses().filter(function (c) { return (c.roster || []).some(function (r) { return r.pid === pid; }); }); }
+
+function bindEdit(el, assigned) {
+  var flash = function (node) { node.classList.add("ok"); setTimeout(function () { node.classList.remove("ok"); }, 900); };
+  var fail = function (node, e) { node.classList.add("bad"); alert("저장하지 못했다: " + ((e && e.message) || e)); };
+  // 값 고치기 — **다시 그리지 않는다.** 표를 다시 그리면 치던 칸에서 포커스가 날아간다.
+  $$("#st-rows [data-f]", el).forEach(function (inp) {
+    inp.onchange = async function () {
+      var pid = inp.closest("tr").getAttribute("data-pid"), f = inp.getAttribute("data-f"), v = inp.value.trim();
+      try {
+        if (f === "memo") await stMemoSave(pid, v);
+        else { var patch = {}; patch[f] = v; await stSave(pid, patch); }
+        flash(inp);
+        if (f === "grade" || f === "homeroom") { renderStudents(); }
+      } catch (e) { fail(inp, e); }
+    };
+  });
+  $$("#st-rows .cls-btn", el).forEach(function (b) {
+    b.onclick = function () { var pid = b.closest("tr").getAttribute("data-pid"); S.stOpen = S.stOpen === pid ? "" : pid; renderStudents(); };
+  });
+  $$("#st-rows [data-cls]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var pid = S.stOpen, cid = b.getAttribute("data-cls"), person = S.byPid[pid];
+      b.disabled = true;
+      try {
+        if (b.classList.contains("on")) await stUnassign(cid, pid); else await stAssign(cid, person);
+        renderStudents();
+      } catch (e) { b.disabled = false; alert("바꾸지 못했다: " + e.message); }
+    };
+  });
+  $$("#st-rows .del", el).forEach(function (b) {
+    b.onclick = async function () {
+      var pid = b.closest("tr").getAttribute("data-pid"), person = S.byPid[pid];
+      var inCls = classesOfPid(pid);
+      if (!confirm("「" + person.name + "」의 사람 정보를 지운다.\n\n" +
+        (inCls.length ? "반 명단(" + inCls.map(function (c) { return c.name; }).join(", ") + ")의 항목과 출결·과제 기록은 그대로 남는다.\n" : "") +
+        "학교·학년·담임만 사라진다. 앱과 같은 방식이다.")) return;
+      try { await stDelete(pid); renderStudents(); } catch (e) { alert("지우지 못했다: " + e.message); }
+    };
+  });
+  var nw = $("#st-new", el);
+  if (nw) nw.onkeydown = async function (e) {
+    if (e.key !== "Enter") return;
+    var name = nw.value.trim(); if (!name) return;
+    nw.disabled = true;
+    try { await stCreate({ name: name, school: "", grade: "", homeroom: "" }); nw.value = ""; renderStudents(); }
+    catch (err) { nw.disabled = false; alert("만들지 못했다: " + err.message); }
+  };
+  var bg = $("#st-bulk-go", el);
+  if (bg) bg.onclick = async function () {
+    var txt = $("#st-bulk").value, cid = $("#st-bulk-cls").value, msg = $("#st-bulk-msg");
+    var made = 0, skipped = [], lines = txt.split(/\r?\n/);
+    bg.disabled = true; msg.textContent = "만드는 중...";
+    try {
+      for (var i = 0; i < lines.length; i++) {
+        var one = parseBulkLine(lines[i]); if (!one) continue;
+        if (S.students.some(function (x) { return x.name === one.name; })) { skipped.push(one.name); continue; }
+        var person = await stCreate(one);
+        if (cid) await stAssign(cid, person);
+        made++;
+      }
+      msg.textContent = made + "명 만들었다" + (skipped.length ? " · 이미 있어 건너뜀: " + skipped.join(", ") : "");
+      $("#st-bulk").value = "";
+      renderStudents();
+    } catch (e) { msg.textContent = "실패: " + e.message; }
+    bg.disabled = false;
+  };
+  var fx = $("#st-fix", el);
+  if (fx) fx.onclick = async function () {
+    fx.disabled = true; fx.textContent = "보내는 중...";
+    try { var n = await fixDrift(); alert(n + "건을 앱 명단에 맞췄다."); renderStudents(); }
+    catch (e) { fx.disabled = false; alert("보내지 못했다: " + e.message); }
+  };
+  var lk = $("#st-link", el);
+  if (lk) lk.onclick = async function () {
+    lk.disabled = true; lk.textContent = "잇는 중...";
+    try { var r = await linkLoose(); alert(r.made + "명을 만들어 이었다." + (r.skip ? "\n이름이 겹쳐 건너뛴 것 " + r.skip + "건은 앱에서 골라야 한다." : "")); renderStudents(); }
+    catch (e) { lk.disabled = false; alert("잇지 못했다: " + e.message); }
+  };
+}
+
+// ---- 쓰기 (climath-class) ----
+// 반 명단은 배열 하나라 통째로 다시 쓴다. **반드시 방금 읽은 것 위에 얹는다** —
+// 화면이 들고 있던 옛 사본으로 저장하면 그 사이 다른 선생님이 바꾼 것이 날아간다.
+async function withFreshRoster(cid, fn) {
+  var snap = await db.collection("classes").doc(cid).get();
+  var cur = (snap.exists && snap.data().roster) || [];
+  var next = fn(cur);
+  if (!next) return null;
+  await db.collection("classes").doc(cid).update({ roster: next });
+  var c = S.classes.filter(function (x) { return x.id === cid; })[0];
+  if (c) c.roster = next;
+  return next;
+}
+async function stSave(pid, patch) {
+  await db.collection("students").doc(pid).set(Object.assign({}, patch, { updated: Date.now() }), { merge: true });
+  var p = S.byPid[pid]; if (p) Object.assign(p, patch);
+  if ("name" in patch || "school" in patch || "grade" in patch) await stSyncRosters(p);
+}
+async function stCreate(data) {
+  var ref = await db.collection("students").add(Object.assign({}, data, { time: Date.now(), updated: Date.now() }));
+  var p = Object.assign({ pid: ref.id }, data);
+  S.students.push(p); S.byPid[ref.id] = p;
+  return p;
+}
+// 앱과 같은 방식 — 사람 문서만 지운다. 반 명단 항목과 출결·과제는 남는다.
+async function stDelete(pid) {
+  await db.collection("students").doc(pid).delete();
+  S.students = S.students.filter(function (x) { return x.pid !== pid; });
+  delete S.byPid[pid];
+  if (S.notes[pid]) { delete S.notes[pid]; try { await saveNotes(); } catch (e) {} }
+}
+async function stAssign(cid, person) {
+  await withFreshRoster(cid, function (roster) {
+    if (roster.some(function (r) { return r.pid === person.pid; })) return null;
+    return roster.concat([{ id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      pid: person.pid, name: person.name, school: person.school || "", grade: person.grade || "" }]);
+  });
+}
+async function stUnassign(cid, pid) {
+  await withFreshRoster(cid, function (roster) { return roster.filter(function (r) { return r.pid !== pid; }); });
+}
+// 사람 정보 → 그 사람이 든 모든 반 명단의 미러. 이름도 함께 보낸다 —
+// 안 보내면 출석부·참여표가 옛 이름을 계속 쓴다.
+async function stSyncRosters(person) {
+  for (var i = 0; i < S.classes.length; i++) {
+    var c = S.classes[i];
+    if (!(c.roster || []).some(function (r) { return r.pid === person.pid; })) continue;
+    await withFreshRoster(c.id, function (roster) {
+      return roster.map(function (r) {
+        if (r.pid !== person.pid) return r;
+        var n = Object.assign({}, r, { school: person.school || "", grade: person.grade || "" });
+        if (person.name) n.name = person.name;
+        return n;
+      });
+    });
+  }
+}
+// 반 명단의 미러가 사람 정보와 어긋난 것
+function rosterDrift() {
+  var out = [];
+  activeClasses().forEach(function (c) {
+    (c.roster || []).forEach(function (r) {
+      if (!r.pid) return;
+      var p = S.byPid[r.pid]; if (!p) return;
+      if ((r.name || "") !== (p.name || "") || (r.school || "") !== (p.school || "") || (r.grade || "") !== (p.grade || ""))
+        out.push({ cid: c.id, cname: c.name, pid: r.pid });
+    });
+  });
+  return out;
+}
+async function fixDrift() {
+  var d = rosterDrift(), seen = {}, n = 0;
+  for (var i = 0; i < d.length; i++) {
+    if (seen[d[i].pid]) continue;
+    seen[d[i].pid] = 1;
+    var p = S.byPid[d[i].pid]; if (!p) continue;
+    await stSyncRosters(p); n++;
+  }
+  return d.length;
+}
+// 반에는 있는데 사람 정보가 없는 항목(pid 없음). 명단에 안 떠서 통째로 안 보인다.
+function looseRosterRows() {
+  var out = [];
+  activeClasses().forEach(function (c) {
+    (c.roster || []).forEach(function (r) { if (!r.teacher && !r.pid && !isEnded(r)) out.push({ cid: c.id, cname: c.name, r: r }); });
+  });
+  return out;
+}
+// 이름이 하나뿐일 때만 잇는다. 겹치면 사람이 골라야 한다 — 동명이인을 섞으면 되돌리기 어렵다.
+async function linkLoose() {
+  var rows = looseRosterRows(), byName = {};
+  rows.forEach(function (x) { (byName[x.r.name] = byName[x.r.name] || []).push(x); });
+  var made = 0, skip = 0;
+  for (var name in byName) {
+    var group = byName[name];
+    var existing = S.students.filter(function (x) { return x.name === name; });
+    if (existing.length > 1 || group.length > 1) { skip += group.length; continue; }
+    var person = existing[0] || await stCreate({ name: name, school: group[0].r.school || "", grade: group[0].r.grade || "", homeroom: "" });
+    var g = group[0];
+    await withFreshRoster(g.cid, function (roster) {
+      return roster.map(function (r) { return r.id === g.r.id ? Object.assign({}, r, { pid: person.pid }) : r; });
+    });
+    made++;
+  }
+  return { made: made, skip: skip };
+}
+// 메모는 앱에 없는 칸이라 이 앱 DB에 둔다.
+async function saveNotes() { await dashDoc("students").set({ notes: S.notes, updated: Date.now() }); }
+async function stMemoSave(pid, memo) {
+  if (memo) S.notes[pid] = { memo: memo, updated: Date.now() }; else delete S.notes[pid];
+  await saveNotes();
+}
+
+function bulkParseGrade(tok) {
+  if (GRADES.indexOf(tok) >= 0) return tok;
+  var m = { "9": "중3", "10": "고1", "11": "고2", "12": "고3", "중3": "중3" };
+  return m[tok] || "";
+}
+function parseBulkLine(line) {
+  var t = line.split(/[\t,]|\s{1,}/).map(function (x) { return x.trim(); }).filter(Boolean);
+  if (!t.length) return null;
+  var name = t.shift(), grade = "", school = "";
+  for (var i = 0; i < t.length; i++) {
+    var g = bulkParseGrade(t[i]);
+    if (g && !grade) { grade = g; continue; }
+    school = school ? school + " " + t[i] : t[i];
+  }
+  return { name: name, grade: grade, school: school, homeroom: "" };
+}
+
 function homeroomTableHtml(st) {
   var byT = {};
   st.forEach(function (x) { var k = x.homeroom || "_"; (byT[k] = byT[k] || { n: 0, g: {} }); byT[k].n++; byT[k].g[x.grade || "없음"] = (byT[k].g[x.grade || "없음"] || 0) + 1; });

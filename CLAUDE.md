@@ -22,8 +22,9 @@ repo/
 
 | | 프로젝트 | 무엇 | 쓰기 |
 |---|---|---|---|
-| `firebase.app()` 기본 | climath-class | teachers · classes · students · appConfig · exams · scores | **절대 안 쓴다** |
-| `teamApp` | climath-team | `dash/tasks`(팀 할 일) · `dash/config`(연동 시트 목록) | 여기만 |
+| `firebase.app()` 기본 | climath-class | teachers · classes · appConfig · exams · scores | 읽기만 |
+| 〃 | 〃 | **students · classes.roster** | **쓴다** — 학생 명단이 이 앱에서 관리된다 |
+| `teamApp` | climath-team | `dash/tasks`(할 일) · `dash/config`(시트) · `dash/students`(메모) | 여기만 |
 
 브라우저가 두 프로젝트에 따로 로그인한다. `/api/auth login` 이 `classToken`(수업관리 앱이 발급)과
 `teamToken`(이 프로젝트 서비스 계정이 서명)을 함께 주고, 각각 `signInWithCustomToken` 한다.
@@ -38,6 +39,37 @@ repo/
 
 PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. 이 앱은 그 서비스 계정 키를 갖지 않는다.
 앱이 `role: "owner"` 라고 답할 때만 teamToken 을 발급한다.
+
+## 학생 명단 — 이 앱이 근거지 (2026-09-04)
+
+만들기·고치기·반 배정·지우기를 여기서 한다. 수업관리 앱의 학생 명단 화면은 그 결과를 비출 뿐이다.
+
+> [!warning] 사본을 여기 두지 않는다
+> "여기서 만들고 앱으로 보낸다"를 **두 벌**로 만들면 주인이 둘이 된다. 다른 선생님이 앱에서 넣은
+> 학생이 이쪽에 안 보이고 다음 보내기에 조용히 덮인다. 학생 로그인·출결·참여표가 전부
+> climath-class 를 보므로 진실은 거기 하나여야 한다. **이 앱은 고치는 자리이고 저장은 앱 DB 한 곳.**
+> 앱에 없는 칸(메모)만 `dash/students` 에 붙인다.
+
+관리자 토큰이면 앱 규칙이 이미 `students` 쓰기와 `classes` 갱신을 허용한다 — **앱 규칙은 안 건드렸다.**
+
+- `stSave/stCreate/stDelete` — `students/{pid}`. 지우기는 **앱과 같은 방식**으로 사람 문서만 지운다.
+  반 명단 항목과 출결·과제는 남는다(그래야 기록이 안 묻힌다). 확인창에 그렇게 적어 뒀다.
+- `stSyncRosters(person)` — 이름·학교·학년을 그 사람이 든 모든 반의 `roster` 미러에 흘려보낸다.
+  **이름을 빼먹으면** 출석부·참여표가 옛 이름을 계속 쓴다.
+- `withFreshRoster(cid, fn)` — 반 명단은 배열 하나라 통째로 다시 쓴다. 그래서 **쓰기 직전에 반 문서를
+  다시 읽고** 그 위에 얹는다. 화면이 들고 있던 사본으로 쓰면 그 사이 다른 선생님이 넣은 학생이 날아간다.
+- `rosterDrift()` / `fixDrift()` — 미러가 어긋난 것을 찾아 다시 보낸다. 편집 화면 위 배너.
+- `looseRosterRows()` / `linkLoose()` — 반에만 있고 사람 정보가 없는 옛 항목. **이름이 하나뿐일 때만**
+  잇는다. 겹치면 건너뛴다 — 동명이인을 섞으면 되돌리기 어렵다.
+
+### 시험
+
+```bash
+node tools/test-roster.js
+```
+
+가짜 Firestore로 쓰기 로직을 돌린다(20건). **운영 DB를 건드리는 코드라 고치면 반드시 돌린다.**
+"남이 그 사이 넣은 학생이 안 지워지는가"까지 본다 — 이건 눈으로는 못 잡는다.
 
 ## 함정
 
