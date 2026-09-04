@@ -45,6 +45,9 @@ PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. �
   climath-team 의 Google Sheets API 를 켜야 한다. `api/sheets.js` 의 `explain()` 이 그 링크를 돌려준다.
 - 로컬에서 켜볼 수 없다. `/api` 가 Vercel 에만 있고 Firestore 는 로그인이 있어야 열린다.
   구문 검사: `node --check api/*.js`, index.html 은 `<script>` 를 뽑아 `new vm.Script()`.
+  **그리기 함수는 가짜 데이터로 돌려볼 수 있다** — `<script>` 를 vm 컨텍스트에 넣고(firebase·document·
+  location 은 빈 껍데기로) `S` 에 반·학생을 손으로 채운 뒤 `classGridHtml()` 같은 걸 불러 HTML 을 본다.
+  브라우저 없이 배치표가 실제로 그려지는지 확인하는 유일한 방법이다.
 
 ## 볼트
 

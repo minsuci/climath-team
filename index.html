@@ -80,12 +80,32 @@
   .pill.green { background: #e3f5ea; color: #1f7a45; }
   .pill.yellow { background: #fff4d6; color: #8a5a00; }
   .pill.blue { background: #e4ecfb; color: #234e9e; }
+  /* 반별 배치표 — 열 하나가 반 */
+  .gridwrap { overflow: auto; max-height: calc(100vh - 300px); border: 1px solid var(--line); border-radius: 8px; }
+  table.cgrid { border-collapse: separate; border-spacing: 0; width: auto; font-size: 12px; }
+  table.cgrid th, table.cgrid td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 3px 6px; white-space: nowrap; vertical-align: middle; }
+  table.cgrid thead th { position: sticky; top: 0; z-index: 2; background: #eef1f6; text-align: center;
+    min-width: 104px; max-width: 150px; padding: 5px 7px; }
+  table.cgrid thead th.mine { background: #dce6f8; box-shadow: inset 0 3px 0 var(--navy); }
+  table.cgrid .cn { font-weight: 700; white-space: normal; line-height: 1.25; }
+  table.cgrid .cm { font-weight: 400; color: var(--muted); font-size: 11px; }
+  table.cgrid .cnt { font-weight: 700; color: var(--text); }
+  table.cgrid .cnt.red { color: var(--red); } table.cgrid .cnt.orange { color: #b35d00; }
+  table.cgrid th.rn { position: sticky; left: 0; z-index: 3; background: #f7f8fb; color: var(--muted);
+    text-align: right; min-width: 30px; font-weight: 400; }
+  table.cgrid thead th.rn { z-index: 4; }
+  table.cgrid td { background: #fff; }
+  table.cgrid td.dim { opacity: .22; }
+  table.cgrid .nm { display: inline-block; padding: 1px 6px; border-radius: 4px; }
+  table.cgrid .nm i { font-style: normal; opacity: .65; margin-left: 2px; font-size: 11px; }
+
   /* 학년 색 — 표 줄과 알약이 같은 색 */
-  tr.g0 td { background: #eaf3ff; }  .pill.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
-  tr.g1 td { background: #eaf8ee; }  .pill.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
-  tr.g2 td { background: #fff7e3; }  .pill.g2 { background: #ffe7a8; color: #7a5200; }   /* 고2 노랑 */
-  tr.g3 td { background: #fdecf1; }  .pill.g3 { background: #f9cfdb; color: #9b2246; }   /* 고3 분홍 */
-  tr.g9 td { background: #f3f4f6; }  .pill.g9 { background: #e5e7eb; color: #4b5563; }   /* 학년 없음 */
+  tr.g0 td { background: #eaf3ff; }  .pill.g0, .nm.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
+  tr.g1 td { background: #eaf8ee; }  .pill.g1, .nm.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
+  tr.g2 td { background: #fff7e3; }  .pill.g2, .nm.g2 { background: #ffe7a8; color: #7a5200; }   /* 고2 노랑 */
+  tr.g3 td { background: #fdecf1; }  .pill.g3, .nm.g3 { background: #f9cfdb; color: #9b2246; }   /* 고3 분홍 */
+  tr.g9 td { background: #f3f4f6; }  .pill.g9, .nm.g9 { background: #e5e7eb; color: #4b5563; }   /* 학년 없음 */
   .chips input.mini { padding: 3px 8px; }
   .bar { height: 8px; background: #eef1f6; border-radius: 4px; overflow: hidden; min-width: 80px; }
   .bar i { display: block; height: 100%; background: var(--green); }
@@ -193,7 +213,7 @@ var S = {
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
-  filterWho: "", stFilter: "", stQuery: "", showDone: false, saEmail: "",
+  filterWho: "", stFilter: "", stQuery: "", stView: "grid", byPid: {}, showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
 };
@@ -497,72 +517,127 @@ function renderWeek() {
 }
 
 // ---------- 학생 명단 ----------
-// 학년별 색. 표의 줄과 학년 알약이 같은 색을 쓴다.
+// 학년별 색. 배치표의 이름과 표의 줄이 같은 색을 쓴다.
 var GRADE_CLS = { "중3": "g0", "고1": "g1", "고2": "g2", "고3": "g3" };
+var GRADE_NUM = { "중3": 9, "고1": 10, "고2": 11, "고3": 12 };
 function gradeCls(g) { return GRADE_CLS[g] || "g9"; }
+// 반 명단(roster)에 학교·학년이 미러돼 있다. 없으면 사람(students)에서 찾는다.
+function personOf(r) { return r.pid ? (S.byPid[r.pid] || null) : null; }
+function gradeOf(r) { var p = personOf(r); return r.grade || (p && p.grade) || ""; }
+function schoolOf(r) { var p = personOf(r); return r.school || (p && p.school) || ""; }
+
 function renderStudents() {
   var el = $("#sec-students");
   var st = S.students;
+  S.byPid = {}; st.forEach(function (x) { S.byPid[x.pid] = x; });
   var byGrade = {}; GRADES.forEach(function (g) { byGrade[g] = 0; }); var noGrade = 0;
-  st.forEach(function (s) { if (byGrade[s.grade] !== undefined) byGrade[s.grade]++; else noGrade++; });
-  // 반 배정: roster.pid 로 잇는다
+  st.forEach(function (x) { if (byGrade[x.grade] !== undefined) byGrade[x.grade]++; else noGrade++; });
   var assigned = {};
   activeClasses().forEach(function (c) { rosterStudents(c).forEach(function (r) { if (r.pid) (assigned[r.pid] = assigned[r.pid] || []).push(c.name); }); });
-  var unassigned = st.filter(function (s) { return !assigned[s.pid]; });
-  var noTeacher = st.filter(function (s) { return !s.homeroom; });
+  var unassigned = st.filter(function (x) { return !assigned[x.pid]; });
+  var noTeacher = st.filter(function (x) { return !x.homeroom; });
   navBadge("students", unassigned.length + noGrade + noTeacher.length, true);
 
-  var f = S.stFilter || "";   // "" 전체 · 학년 · "none"
-  var q = (S.stQuery || "").trim();
-  var rows = st.filter(function (s) {
-    if (f === "none") { if (s.grade && GRADES.indexOf(s.grade) >= 0) return false; }
-    else if (f && s.grade !== f) return false;
-    if (q) { var hay = [s.name, s.school, s.grade, teacherName(s.homeroom), (assigned[s.pid] || []).join(" ")].join(" "); if (hay.indexOf(q) < 0) return false; }
-    return true;
+  var view = S.stView || "grid";
+  var f = S.stFilter || "";
+  var chip = function (key, label, n) { return '<button class="mini ' + (f === key ? "on" : "") + '" data-gf="' + key + '">' + label + ' <span class="muted">' + n + '</span></button>'; };
+  el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span>' +
+    '<button class="mini ' + (view === "grid" ? "on" : "") + '" data-view="grid">반별 배치표</button>' +
+    '<button class="mini ' + (view === "list" ? "on" : "") + '" data-view="list">한 줄씩</button>' +
+    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 고치기</a></h2>' +
+    '<div class="chips">' + chip("", "전체", st.length) +
+    GRADES.map(function (g) { return chip(g, '<span class="pill ' + gradeCls(g) + '">' + g + '</span>', byGrade[g]); }).join("") +
+    chip("none", "학년 없음", noGrade) +
+    '<input type="text" id="st-q" class="mini" placeholder="이름·학교·담임 찾기" value="' + esc(S.stQuery || "") + '" style="min-width:170px">' +
+    (unassigned.length ? '<button class="mini warn" data-gf="un">반 미배정 ' + unassigned.length + '</button>' : "") + '</div>' +
+    '<div id="st-body">' + studentBodyHtml(view, assigned) + '</div>';
+  $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); renderStudents(); }; });
+  $$("[data-view]", el).forEach(function (b) { b.onclick = function () { S.stView = b.getAttribute("data-view"); renderStudents(); }; });
+  // 찾기 칸은 아래만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
+  $("#st-q").oninput = function () { S.stQuery = this.value; $("#st-body").innerHTML = studentBodyHtml(S.stView || "grid", assigned); };
+}
+// 고른 학년·찾는 글자에 걸리는가. 배치표에서는 지우지 않고 **흐리게** 한다 —
+// 누가 어느 반에 흩어져 있는지가 배치표의 쓸모라 자리를 비우면 안 된다.
+function stHit(name, grade, school, teacher, cls) {
+  var f = S.stFilter || "", q = (S.stQuery || "").trim();
+  if (f === "none") { if (grade && GRADES.indexOf(grade) >= 0) return false; }
+  else if (f === "un") { if (cls !== "") return false; }
+  else if (f && grade !== f) return false;
+  if (q && [name, grade, school, teacher, cls].join(" ").indexOf(q) < 0) return false;
+  return true;
+}
+function studentBodyHtml(view, assigned) {
+  return view === "list" ? studentListHtml(assigned) : classGridHtml();
+}
+
+// ---- 반별 배치표 — 열 하나가 반, 아래로 학생 ----
+function classGridHtml() {
+  var me = S.claims ? teacherName(S.claims.tid) : "";
+  var cols = activeClasses().map(function (c) {
+    var ts = classTeachers(c.id);
+    return { c: c, studs: rosterStudents(c), t: ts.length ? ts.join("·") : "", mine: ts.indexOf(me) >= 0 };
+  });
+  if (!cols.length) return '<div class="empty">반이 없다.</div>';
+  var maxN = cols.reduce(function (m, x) { return Math.max(m, x.studs.length); }, 0);
+  // 어느 반에도 없는 학생은 맨 오른쪽에 한 열로 모은다. 안 그러면 배치표에서 통째로 사라진다.
+  var loose = S.students.filter(function (x) { return !assignedNames(x, cols); });
+  if (loose.length) { cols.push({ c: { id: "_loose", name: "반 미배정", classDays: [] }, studs: loose.map(looseRow), t: "", mine: false, loose: true }); maxN = Math.max(maxN, loose.length); }
+
+  var head = cols.map(function (x) {
+    var n = x.studs.length;
+    var cnt = x.loose ? '<span class="cnt red">' + n + '</span>' : '<span class="cnt ' + (n === 0 ? "red" : n <= 5 ? "orange" : "") + '">' + n + '</span>';
+    var days = x.loose ? "" : (x.c.type === "individual" ? "개진" : (x.c.classDays || []).join(""));
+    return '<th class="' + (x.mine ? "mine" : "") + '"><div class="cn">' + esc(x.c.name) + '</div>' +
+      '<div class="cm">' + (x.t ? esc(x.t) : '<span class="red">담당 없음</span>') + (days ? ' · ' + esc(days) : "") + '</div>' +
+      '<div class="cm">' + cnt + '명</div></th>';
+  }).join("");
+
+  var body = "";
+  for (var i = 0; i < maxN; i++) {
+    body += '<tr><th class="rn">' + (i + 1) + '</th>' + cols.map(function (x) {
+      var r = x.studs[i];
+      if (!r) return '<td></td>';
+      var g = gradeOf(r), sch = schoolOf(r);
+      var hit = stHit(r.name, g, sch, x.t, x.loose ? "" : x.c.name);
+      return '<td class="' + (hit ? "" : "dim") + '" title="' + esc([r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ")) + '">' +
+        '<span class="nm ' + gradeCls(g) + '">' + esc(r.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span></td>';
+    }).join("") + '</tr>';
+  }
+  return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    '<p class="muted" style="font-size:12px;margin:6px 0 0">이름 옆 숫자는 학년(중3=9 · 고1=10 · 고2=11 · 고3=12). ' +
+    '인원이 <span class="orange">주황</span>이면 5명 이하, <span class="red">빨강</span>이면 0명이다. 파란 머리는 내가 담당인 반.</p>';
+}
+function assignedNames(person, cols) {
+  for (var i = 0; i < cols.length; i++) {
+    if (cols[i].loose) continue;
+    for (var j = 0; j < cols[i].studs.length; j++) if (cols[i].studs[j].pid === person.pid) return true;
+  }
+  return false;
+}
+function looseRow(x) { return { id: x.pid, pid: x.pid, name: x.name, grade: x.grade, school: x.school }; }
+
+// ---- 한 줄씩 ----
+function studentListHtml(assigned) {
+  var rows = S.students.filter(function (x) {
+    return stHit(x.name, x.grade, x.school, teacherName(x.homeroom), (assigned[x.pid] || []).join(" "));
   });
   rows.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
-
-  var chip = function (key, label, n) { return '<button class="mini ' + (f === key ? "on" : "") + '" data-gf="' + key + '">' + label + ' <span class="muted">' + n + '</span></button>'; };
-  el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 고치기</a></h2>' +
-    '<div class="stat">' +
-    '<div class="' + (unassigned.length ? "bad" : "") + '"><b>' + unassigned.length + '</b><span>반 미배정</span></div>' +
-    '<div class="' + (noTeacher.length ? "bad" : "") + '"><b>' + noTeacher.length + '</b><span>담임 없음</span></div>' +
-    '<div class="' + (noGrade ? "bad" : "") + '"><b>' + noGrade + '</b><span>학년 없음</span></div></div>' +
-    '<div class="chips">' + chip("", "전체", st.length) + GRADES.map(function (g) { return chip(g, '<span class="pill ' + gradeCls(g) + '">' + g + '</span>', byGrade[g]); }).join("") + chip("none", "학년 없음", noGrade) +
-    '<input type="text" id="st-q" class="mini" placeholder="이름·학교·담임·반 찾기" value="' + esc(q) + '" style="min-width:180px"></div>' +
-    '<div class="tbl tall" id="st-tbl">' + studentTableHtml(rows, assigned) + '</div>' +
-    '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(st) + '</details>';
-  $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); renderStudents(); }; });
-  // 찾기 칸은 표만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
-  $("#st-q").oninput = function () {
-    S.stQuery = this.value;
-    var q2 = S.stQuery.trim();
-    var rows2 = st.filter(function (s) {
-      if (f === "none") { if (s.grade && GRADES.indexOf(s.grade) >= 0) return false; }
-      else if (f && s.grade !== f) return false;
-      if (q2) { var hay = [s.name, s.school, s.grade, teacherName(s.homeroom), (assigned[s.pid] || []).join(" ")].join(" "); if (hay.indexOf(q2) < 0) return false; }
-      return true;
-    });
-    rows2.sort(function (a, b) { return gradeRank(a.grade) - gradeRank(b.grade) || (a.school || "").localeCompare(b.school || "") || (a.name || "").localeCompare(b.name || ""); });
-    $("#st-tbl").innerHTML = studentTableHtml(rows2, assigned);
-  };
-}
-function studentTableHtml(rows, assigned) {
   if (!rows.length) return '<div class="empty">해당하는 학생이 없다.</div>';
-  return '<table><thead><tr><th>#</th><th>이름</th><th>학년</th><th>학교</th><th>담임</th><th>반</th></tr></thead><tbody>' +
-    rows.map(function (s, i) {
-      var g = s.grade && GRADES.indexOf(s.grade) >= 0 ? s.grade : "";
-      var cls = (assigned[s.pid] || []);
-      return '<tr class="' + gradeCls(g) + '"><td class="muted">' + (i + 1) + '</td><td><b>' + esc(s.name) + '</b></td>' +
+  return '<div class="tbl tall"><table><thead><tr><th>#</th><th>이름</th><th>학년</th><th>학교</th><th>담임</th><th>반</th></tr></thead><tbody>' +
+    rows.map(function (x, i) {
+      var g = x.grade && GRADES.indexOf(x.grade) >= 0 ? x.grade : "";
+      var cls = assigned[x.pid] || [];
+      return '<tr class="' + gradeCls(g) + '"><td class="muted">' + (i + 1) + '</td><td><b>' + esc(x.name) + '</b></td>' +
         '<td>' + (g ? '<span class="pill ' + gradeCls(g) + '">' + esc(g) + '</span>' : '<span class="pill red">없음</span>') + '</td>' +
-        '<td>' + esc(s.school || "") + '</td>' +
-        '<td>' + (s.homeroom ? esc(teacherName(s.homeroom)) : '<span class="red">없음</span>') + '</td>' +
+        '<td>' + esc(x.school || "") + '</td>' +
+        '<td>' + (x.homeroom ? esc(teacherName(x.homeroom)) : '<span class="red">없음</span>') + '</td>' +
         '<td class="wrapc">' + (cls.length ? cls.map(esc).join(", ") : '<span class="red">미배정</span>') + '</td></tr>';
-    }).join("") + '</tbody></table>';
+    }).join("") + '</tbody></table></div>' +
+    '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(S.students) + '</details>';
 }
 function homeroomTableHtml(st) {
   var byT = {};
-  st.forEach(function (s) { var k = s.homeroom || "_"; (byT[k] = byT[k] || { n: 0, g: {} }); byT[k].n++; byT[k].g[s.grade || "없음"] = (byT[k].g[s.grade || "없음"] || 0) + 1; });
+  st.forEach(function (x) { var k = x.homeroom || "_"; (byT[k] = byT[k] || { n: 0, g: {} }); byT[k].n++; byT[k].g[x.grade || "없음"] = (byT[k].g[x.grade || "없음"] || 0) + 1; });
   return '<div class="tbl" style="max-height:260px"><table><thead><tr><th>담임</th><th>학생</th><th>학년</th></tr></thead><tbody>' +
     Object.keys(byT).sort(function (a, b) { return byT[b].n - byT[a].n; }).map(function (k) {
       var v = byT[k];
