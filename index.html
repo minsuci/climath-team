@@ -80,6 +80,32 @@
   .pill.green { background: #e3f5ea; color: #1f7a45; }
   .pill.yellow { background: #fff4d6; color: #8a5a00; }
   .pill.blue { background: #e4ecfb; color: #234e9e; }
+  /* 학년 업무 달력 */
+  .todo { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; background: #fff; }
+  .todo .task { border-bottom: 1px solid var(--line); }
+  .todo .task:last-child { border-bottom: 0; }
+  .calwrap { overflow-x: auto; }
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(132px, 1fr)); gap: 6px; min-width: 940px; }
+  .cday { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 5px 6px; min-height: 128px; }
+  .cday.wend { background: #fafbfc; }
+  .cday.today { border-color: var(--navy); box-shadow: inset 0 2px 0 var(--navy); }
+  .cday .ch { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted);
+    border-bottom: 1px solid var(--line); padding-bottom: 3px; margin-bottom: 4px; }
+  .cday .ch b { font-size: 14px; color: var(--text); }
+  .cday.today .ch b { color: var(--navy); }
+  .cday .ch .add { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 15px;
+    line-height: 1; padding: 0 2px; cursor: pointer; }
+  .cday .ch .add:hover { color: var(--navy); }
+  .cday .chip { font-size: 11px; padding: 2px 5px; border-radius: 4px; margin-bottom: 3px;
+    background: #eef1f6; color: #374151; white-space: normal; }
+  .cday .chip.school { background: #fff4d6; color: #8a5a00; }
+  .cday .chip.test { background: #fde8e8; color: #b42318; }
+  .cday .ctask { display: flex; gap: 4px; align-items: flex-start; font-size: 12px; margin-bottom: 3px; }
+  .cday .ctask input { margin: 2px 0 0; }
+  .cday .ctask.done span { text-decoration: line-through; color: var(--muted); }
+  .cday .ctask i { font-style: normal; font-size: 10px; color: var(--muted); }
+  .cday .ctask i.rep { color: #234e9e; }
+
   /* 반별 배치표 — 열 하나가 반 */
   .gridwrap { overflow: auto; max-height: calc(100vh - 300px); border: 1px solid var(--line); border-radius: 8px; }
   table.cgrid { border-collapse: separate; border-spacing: 0; width: auto; font-size: 12px; }
@@ -270,6 +296,7 @@ var S = {
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
+  calGrade: "전체", calAnchor: "", calAdd: "",
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
@@ -405,7 +432,7 @@ function renderShell() {
   showPage(currentPage());
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
-var PAGES = [["tasks", "할 일"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "구글시트"]];
 function isPage(id) { return PAGES.some(function (p) { return p[0] === id; }); }
 function currentPage() {
@@ -427,7 +454,7 @@ function navBadge(id, n, red) {
   var el = $("#nb-" + id); if (!el) return;
   el.hidden = !n; el.textContent = n; el.className = "b" + (red ? " red" : "");
 }
-function renderAll() { renderBanner(); renderTasks(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
+function renderAll() { renderBanner(); renderCal(); renderTasks(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
 // ---------- 불러오기 ----------
 async function loadCore() {
@@ -461,6 +488,215 @@ function renderBanner() {
   el.innerHTML = '<div class="banner"><b>대시보드 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
     'Firebase 콘솔의 climath-team 프로젝트에서 Firestore가 켜져 있고 규칙이 게시됐는지 본다. 규칙은 저장소 <code>firestore.rules</code>. ' +
     '나머지 상자(앱 데이터)는 그대로 돈다.</div>';
+}
+
+// ---------- 학년 업무 달력 ----------
+//
+// 원장님이 8/31 간부회의에서 지시한 그것 — "이번 주에 요일별로 뭐 해야 되고 뭐 보고해야 돼".
+// 그래서 **달력이 본체가 아니라 "이번 주까지 해야 할 일"이 본체**다. 달력은 그걸 요일에 늘어놓은 것.
+//
+// 할 일은 **팀 할 일과 같은 곳**(dash/tasks)에 둔다. 두 벌로 나누면 어느 쪽이 맞는지 알 수 없다 —
+// 학생 명단에서 배운 것과 같다. 여기서는 `grade`(학년)와 `repeat`(반복)만 더 쓴다.
+//   한 번 하는 일 : { due, status }
+//   반복하는 일   : { repeat: { dow: [1,5] }, doneOn: { "2026-09-05": true } }
+// 반복은 **날짜마다 따로** 체크한다. status 하나로 하면 이번 주에 했다고 다음 주도 끝난 게 된다.
+
+var GRADE_TABS = ["전체"].concat(GRADES).concat(["공통"]);
+var DOW_KO = ["일", "월", "화", "수", "목", "금", "토"];
+// 주는 월요일에 시작한다. 학원 주간 업무가 월~일로 돈다.
+function weekStart(d) {
+  var dt = parseYmd(d), w = dt.getDay();
+  return addDays(d, w === 0 ? -6 : 1 - w);
+}
+function weekDays(anchor) {
+  var s0 = weekStart(anchor), out = [];
+  for (var i = 0; i < 7; i++) out.push(addDays(s0, i));
+  return out;
+}
+function taskGrade(t) { return t.grade || "공통"; }
+function gradeHit(g, want) { return !want || want === "전체" || g === want; }
+// 이 할 일이 그날에 놓이는가
+function taskOnDate(t, d) {
+  if (t.repeat && t.repeat.dow && t.repeat.dow.length) {
+    return t.repeat.dow.indexOf(parseYmd(d).getDay()) >= 0;
+  }
+  return !!t.due && t.due === d;
+}
+function taskDoneOn(t, d) {
+  if (t.repeat) return !!(t.doneOn && t.doneOn[d]);
+  return t.status === "done";
+}
+// 앱이 이미 아는 일정. 손으로 안 넣어도 달력에 뜬다.
+function calAuto(want, from, to) {
+  var out = [];
+  var inRange = function (d) { return d && d >= from && d <= to; };
+  Object.keys(S.schoolTerms).forEach(function (k) {
+    var v = S.schoolTerms[k];
+    if (!v || v.term !== S.term || !gradeHit(v.grade, want)) return;
+    [["start", "내신 시작"], ["math", "수학시험"], ["end", "내신 끝"], ["back", "복귀"]].forEach(function (pr) {
+      if (!inRange(v[pr[0]])) return;
+      out.push({ date: v[pr[0]], kind: "school", grade: v.grade, text: v.school + " " + pr[1] });
+    });
+  });
+  (S.tests || []).forEach(function (t) {
+    if (!inRange(t.date) || !gradeHit(t.grade, want)) return;
+    out.push({ date: t.date, kind: "test", grade: t.grade, text: TEST_KINDS[t.kind].short + " " + t.name });
+  });
+  activeClasses().forEach(function (c) {
+    if (!inRange(c.endDate)) return;
+    out.push({ date: c.endDate, kind: "class", grade: "", text: c.name + " 종강" });
+  });
+  return out;
+}
+// 이번 주까지 해야 할 일 — 기한 지난 것과 이 주 안의 것. 반복은 그 주의 각 요일마다 한 건.
+function dueThrough(want, days) {
+  var last = days[days.length - 1], out = [];
+  S.tasks.forEach(function (t) {
+    if (!gradeHit(taskGrade(t), want)) return;
+    if (t.repeat && t.repeat.dow && t.repeat.dow.length) {
+      days.forEach(function (d) {
+        if (!taskOnDate(t, d) || taskDoneOn(t, d)) return;
+        out.push({ t: t, date: d, late: d < TODAY });
+      });
+      return;
+    }
+    if (t.status === "done" || !t.due || t.due > last) return;
+    out.push({ t: t, date: t.due, late: t.due < TODAY });
+  });
+  out.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+  return out;
+}
+
+function renderCal() {
+  var el = $("#sec-cal");
+  if (!el) return;
+  var want = S.calGrade || "전체";
+  if (!S.calAnchor) S.calAnchor = TODAY;
+  var days = weekDays(S.calAnchor);
+  var from = days[0], to = days[6];
+  var auto = calAuto(want, from, to);
+  var todo = dueThrough(want, days);
+  var lateN = todo.filter(function (x) { return x.late; }).length;
+  navBadge("cal", todo.length, lateN > 0);
+  var thisWeek = weekStart(TODAY) === from;
+
+  el.innerHTML = '<h2>업무 달력 <span class="n">' + esc(fmtMD(from)) + ' ~ ' + esc(fmtMD(to)) +
+    (thisWeek ? ' · 이번 주' : "") + '</span><span class="sp"></span>' +
+    '<button class="mini" data-cw="-1">‹ 지난 주</button>' +
+    (thisWeek ? "" : '<button class="mini" data-cw="0">이번 주</button>') +
+    '<button class="mini" data-cw="1">다음 주 ›</button></h2>' +
+    '<div class="chips">' + GRADE_TABS.map(function (g) {
+      var n = g === "전체" ? todo.length : dueThrough(g, days).length;
+      return '<button class="mini ' + (g === want ? "on" : "") + '" data-cg="' + esc(g) + '">' +
+        (GRADES.indexOf(g) >= 0 ? '<span class="pill ' + gradeCls(g) + '">' + g + '</span>' : esc(g)) +
+        (n ? ' ' + n : "") + '</button>';
+    }).join("") + '</div>' +
+    // ⚠ 본체는 이쪽이다. 달력보다 먼저 놓는다.
+    '<div class="todo"><b style="font-size:13px">이번 주까지 해야 할 일 ' +
+    (lateN ? '<span class="red">· 기한 지남 ' + lateN + '</span>' : "") + '</b>' +
+    (todo.length ? todo.map(todoRowHtml).join("") : '<div class="empty">이 주에 걸린 일이 없다.</div>') + '</div>' +
+    '<div class="calwrap"><div class="cal">' + days.map(function (d) {
+      var dow = parseYmd(d).getDay();
+      var mine = S.tasks.filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
+      return '<div class="cday' + (d === TODAY ? " today" : "") + (dow === 0 || dow === 6 ? " wend" : "") + '">' +
+        '<div class="ch"><b>' + Number(d.slice(8)) + '</b> <span>' + DOW_KO[dow] + '</span>' +
+        '<button class="add" data-cadd="' + d + '" title="여기에 할 일 넣기">＋</button></div>' +
+        auto.filter(function (a) { return a.date === d; }).map(function (a) {
+          return '<div class="chip ' + a.kind + '">' + esc(a.text) + '</div>';
+        }).join("") +
+        mine.map(function (t) {
+          var done = taskDoneOn(t, d);
+          return '<div class="ctask' + (done ? " done" : "") + '" data-tid="' + esc(t.id) + '" data-td="' + d + '">' +
+            '<input type="checkbox"' + (done ? " checked" : "") + '>' +
+            '<span>' + esc(t.text) + (t.repeat ? ' <i class="rep">매주</i>' : "") +
+            (t.who ? ' <i class="who">' + esc(t.who) + '</i>' : "") + '</span></div>';
+        }).join("") +
+        '</div>';
+    }).join("") + '</div></div>' +
+    '<div id="cal-add"></div>' +
+    '<p class="muted" style="font-size:12px;margin:6px 0 0">회색 칸은 앱이 아는 일정이다 — 학교 시험·시험 날짜·반 종강. ' +
+    '손으로 넣은 할 일만 체크가 붙는다. <b>매주</b>가 붙은 것은 날짜마다 따로 체크한다.</p>';
+
+  $$("[data-cw]", el).forEach(function (b) {
+    b.onclick = function () {
+      var n = Number(b.getAttribute("data-cw"));
+      S.calAnchor = n === 0 ? TODAY : addDays(S.calAnchor, n * 7);
+      keepScrollIn("#sec-cal", renderCal);
+    };
+  });
+  $$("[data-cg]", el).forEach(function (b) {
+    b.onclick = function () { S.calGrade = b.getAttribute("data-cg"); keepScrollIn("#sec-cal", renderCal); };
+  });
+  $$("[data-cadd]", el).forEach(function (b) {
+    b.onclick = function () { S.calAdd = b.getAttribute("data-cadd"); drawCalAdd(); };
+  });
+  $$(".ctask", el).forEach(function (row) {
+    $("input", row).onchange = async function () {
+      await toggleTask(row.getAttribute("data-tid"), row.getAttribute("data-td"));
+      keepScrollIn("#sec-cal", renderCal);
+    };
+  });
+  $$(".todo [data-tid]", el).forEach(function (row) {
+    $("input", row).onchange = async function () {
+      await toggleTask(row.getAttribute("data-tid"), row.getAttribute("data-td"));
+      keepScrollIn("#sec-cal", renderCal);
+    };
+  });
+  drawCalAdd();
+}
+function todoRowHtml(x) {
+  var t = x.t;
+  return '<div class="task" data-tid="' + esc(t.id) + '" data-td="' + esc(x.date) + '">' +
+    '<input type="checkbox">' +
+    '<div class="t">' + esc(t.text) +
+    '<div class="m">' + '<span class="' + (x.late ? "over" : daysFromToday(x.date) <= 1 ? "soon" : "") + '">' +
+    esc(fmtMD(x.date)) + ' ' + dday(x.date) + '</span>' +
+    (t.grade ? ' <span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
+    (t.who ? ' <span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
+    (t.repeat ? ' <span class="pill blue">매주</span>' : "") +
+    (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div></div>';
+}
+async function toggleTask(id, date) {
+  var t = S.tasks.filter(function (x) { return x.id === id; })[0];
+  if (!t) return;
+  if (t.repeat) {
+    t.doneOn = t.doneOn || {};
+    if (t.doneOn[date]) delete t.doneOn[date]; else t.doneOn[date] = true;
+  } else {
+    t.status = t.status === "done" ? "open" : "done";
+    t.done = t.status === "done" ? TODAY : "";
+  }
+  await saveTasks();
+}
+function drawCalAdd() {
+  var box = $("#cal-add"); if (!box) return;
+  if (!S.calAdd) { box.innerHTML = ""; return; }
+  var d = S.calAdd;
+  box.innerHTML = '<div class="entry"><div class="row">' +
+    '<b>' + esc(fmtMD(d)) + '</b>' +
+    '<input type="text" id="ca-text" placeholder="할 일" style="flex:1;min-width:160px">' +
+    '<select id="ca-grade">' + ["공통"].concat(GRADES).map(function (g) {
+      return '<option' + (g === S.calGrade ? " selected" : "") + '>' + g + '</option>'; }).join("") + '</select>' +
+    '<input type="text" id="ca-who" placeholder="담당" list="who-list" style="flex:0 0 90px">' +
+    '<label style="font-size:13px"><input type="checkbox" id="ca-rep"> 매주 ' + DOW_KO[parseYmd(d).getDay()] + '요일</label>' +
+    '<button class="btn" id="ca-go">넣기</button><button class="mini" id="ca-x">닫기</button></div>' +
+    '<datalist id="who-list">' + whoChips().map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist></div>';
+  $("#ca-x").onclick = function () { S.calAdd = ""; drawCalAdd(); };
+  var go = async function () {
+    var text = $("#ca-text").value.trim(); if (!text) return;
+    var rep = $("#ca-rep").checked;
+    var one = { id: newId(), text: text, who: $("#ca-who").value.trim(),
+      grade: $("#ca-grade").value === "공통" ? "" : $("#ca-grade").value,
+      src: "업무 달력", status: "open", created: TODAY };
+    if (rep) { one.repeat = { dow: [parseYmd(d).getDay()] }; one.doneOn = {}; }
+    else one.due = d;
+    S.tasks.push(one);
+    try { await saveTasks(); S.calAdd = ""; keepScrollIn("#sec-cal", renderCal); }
+    catch (e) { S.tasks.pop(); alert("넣지 못했다: " + e.message); }
+  };
+  $("#ca-go").onclick = go;
+  $("#ca-text").addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+  $("#ca-text").focus();
 }
 
 // ---------- 팀 할 일 ----------
@@ -546,7 +782,9 @@ function taskRow(t) {
   var stCls = { open: "", doing: "blue", hold: "yellow", done: "green" }[t.status || "open"];
   return '<div class="task" data-id="' + esc(t.id) + '"><input type="checkbox"' + (t.status === "done" ? " checked" : "") + '>' +
     '<div class="t' + (t.status === "done" ? " done" : "") + '">' + esc(t.text) +
-    '<div class="m">' + (t.who ? '<span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
+    '<div class="m">' + (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
+    (t.repeat ? '<span class="pill blue">매주 ' + t.repeat.dow.map(function (i) { return DOW_KO[i]; }).join("·") + '</span>' : "") +
+    (t.who ? '<span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
     '<span class="pill ' + stCls + ' st" title="눌러서 바꾸기">' + STATUS[t.status || "open"] + '</span>' + dueHtml +
     (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div>' +
     '<button class="x" title="지우기">×</button></div>';
