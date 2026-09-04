@@ -38,7 +38,15 @@
     border: 1px solid rgba(255,255,255,.35); border-radius: 6px; padding: 4px 10px; }
   .top a:hover, .top button.link:hover { opacity: 1; background: rgba(255,255,255,.1); }
   .wrap { max-width: 1400px; margin: 0 auto; padding: 14px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
+  .grid { display: block; }
+  .nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
+  .nav button { font: inherit; font-size: 14px; padding: 7px 14px; border: 1px solid var(--line); background: #fff;
+    border-radius: 8px; color: var(--text); }
+  .nav button.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .nav button .b { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 5px; border-radius: 9px;
+    font-size: 11px; background: #eef1f6; color: #374151; }
+  .nav button.on .b { background: rgba(255,255,255,.2); color: #fff; }
+  .nav button .b.red { background: #fde8e8; color: #b42318; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     padding: 14px 16px; min-width: 0; }
   .card.wide { grid-column: 1 / -1; }
@@ -62,8 +70,8 @@
     vertical-align: top; white-space: nowrap; }
   th { background: #f7f8fb; font-weight: 600; color: #374151; position: sticky; top: 0; }
   td.wrapc { white-space: normal; }
-  .tbl { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 8px; }
-  .tbl.tall { max-height: 640px; }
+  .tbl { overflow: auto; max-height: calc(100vh - 330px); min-height: 120px; border: 1px solid var(--line); border-radius: 8px; }
+  .tbl.tall { max-height: calc(100vh - 330px); }
   .muted { color: var(--muted); }
   .red { color: var(--red); } .green { color: var(--green); } .orange { color: #b35d00; }
   .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px;
@@ -108,11 +116,11 @@
   .sheet { margin-top: 10px; }
   .sheet h3 { margin: 0 0 6px; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .sheet h3 .sp { flex: 1; }
-  .sheet .tbl { max-height: 360px; }
+  .sheet .tbl { max-height: calc(100vh - 360px); }
   .sheet td, .sheet th { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
   details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 6px 0; }
   @media (max-width: 760px) {
-    .grid { grid-template-columns: 1fr; }
+    .nav button { padding: 6px 10px; font-size: 13px; }
     .wrap { padding: 8px; }
     .card { padding: 12px; }
   }
@@ -180,6 +188,7 @@ var S = {
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
   filterWho: "", showAllStudents: false, showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
+  sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
 };
 
 async function authApi(body) {
@@ -267,17 +276,38 @@ function renderShell() {
     '<a href="https://climath-class.vercel.app/flyer.html" target="_blank">안내문</a>' +
     '<button class="link" id="btn-reload">새로고침</button>' +
     '<button class="link" id="btn-out">로그아웃</button></div>' +
-    '<div class="wrap"><div id="banner"></div><div class="grid">' +
-    '<div class="card" id="sec-tasks"></div>' +
-    '<div class="card" id="sec-week"></div>' +
-    '<div class="card" id="sec-students"></div>' +
-    '<div class="card" id="sec-terms"></div>' +
-    '<div class="card" id="sec-exams"></div>' +
-    '<div class="card" id="sec-scores"></div>' +
-    '<div class="card wide" id="sec-sheets"></div>' +
+    '<div class="wrap"><div id="banner"></div><div class="nav">' +
+    PAGES.map(function (p) { return '<button data-page="' + p[0] + '">' + p[1] + '<span class="b" id="nb-' + p[0] + '" hidden></span></button>'; }).join("") +
+    '</div><div class="grid">' +
+    PAGES.map(function (p) { return '<div class="card" id="sec-' + p[0] + '" hidden></div>'; }).join("") +
     '</div></div>';
   $("#btn-out").onclick = function () { signOutAll(); };
   $("#btn-reload").onclick = function () { location.reload(); };
+  $$(".nav button").forEach(function (b) { b.onclick = function () { showPage(b.getAttribute("data-page")); }; });
+  showPage(currentPage());
+}
+// 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
+var PAGES = [["tasks", "할 일"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+  ["exams", "내신 참여표"], ["scores", "성적 입력"], ["sheets", "구글시트"]];
+function isPage(id) { return PAGES.some(function (p) { return p[0] === id; }); }
+function currentPage() {
+  var h = (location.hash || "").replace("#", "");
+  if (isPage(h)) return h;
+  try { var v = localStorage.getItem("dash.page"); if (isPage(v)) return v; } catch (e) {}
+  return "tasks";
+}
+function showPage(id) {
+  PAGES.forEach(function (p) { var el = $("#sec-" + p[0]); if (el) el.hidden = p[0] !== id; });
+  $$(".nav button").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-page") === id); });
+  try { localStorage.setItem("dash.page", id); } catch (e) {}
+  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", function () { if (S.claims) showPage(currentPage()); });
+// 메뉴 단추에 붙는 숫자. 빨간 건 손봐야 할 것.
+function navBadge(id, n, red) {
+  var el = $("#nb-" + id); if (!el) return;
+  el.hidden = !n; el.textContent = n; el.className = "b" + (red ? " red" : "");
 }
 function renderAll() { renderBanner(); renderTasks(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
@@ -340,6 +370,7 @@ function renderTasks() {
     var x = a.due || "9999", y = b.due || "9999"; return x < y ? -1 : x > y ? 1 : 0;
   });
   var chips = whoChips();
+  navBadge("tasks", overdue.length || open.length, overdue.length > 0);
   el.innerHTML =
     '<h2>팀 할 일 <span class="n">열림 ' + open.length + '</span><span class="sp"></span>' +
     '<button id="tk-done">' + (S.showDone ? "완료 숨기기" : "완료 보기") + '</button>' +
@@ -449,6 +480,7 @@ function renderWeek() {
   var grouped = {};
   items.forEach(function (i) { (grouped[i.date] = grouped[i.date] || []).push(i); });
   var dates = Object.keys(grouped).sort();
+  navBadge("week", items.length, false);
   el.innerHTML = '<h2>앞으로 2주 <span class="n">' + fmtMD(TODAY) + ' ~ ' + fmtMD(addDays(TODAY, 14)) + '</span></h2>' +
     (dates.length ? '<div class="tbl"><table><tbody>' + dates.map(function (d) {
       var n = daysFromToday(d);
@@ -481,6 +513,7 @@ function renderStudents() {
   st.forEach(function (s) { var k = s.school || "(학교 없음)"; bySchool[k] = (bySchool[k] || 0) + 1; });
   var schools = Object.keys(bySchool).sort(function (a, b) { return bySchool[b] - bySchool[a]; });
 
+  navBadge("students", unassigned.length + noGrade + noTeacher.length, true);
   el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span>' +
     '<button id="st-all">' + (S.showAllStudents ? "요약만" : "전체 표") + '</button><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 열기</a></h2>' +
     '<div class="stat">' + GRADES.map(function (g) { return '<div><b>' + byGrade[g] + '</b><span>' + g + '</span></div>'; }).join("") +
@@ -508,6 +541,7 @@ function renderTerms() {
   var missing = Object.keys(cnt).filter(function (k) { return !have[k]; });
   var incomplete = rows.filter(function (v) { return !v.start || !v.end || !v.math; });
   rows.sort(function (a, b) { return (a.start || "9999") < (b.start || "9999") ? -1 : 1; });
+  navBadge("terms", missing.length + incomplete.length, true);
   el.innerHTML = '<h2>학교 일정 <span class="n">' + (S.term ? esc(S.term) : "회차 없음") + ' · ' + rows.length + '건</span><span class="sp"></span><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 고치기</a></h2>' +
     '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>학생은 있는데 일정 없음</span></div>' +
     '<div class="' + (incomplete.length ? "bad" : "good") + '"><b>' + incomplete.length + '</b><span>칸 비어 있음</span></div>' +
@@ -548,6 +582,7 @@ function renderExams() {
   });
   rows.sort(function (a, b) { return (a.d / a.n) - (b.d / b.n); });
   var pct = tot ? Math.round(sub / tot * 100) : 0;
+  navBadge("exams", tot - sub, true);
   var barCls = function (p) { return p < 50 ? "low" : p < 90 ? "mid" : ""; };
   el.innerHTML = '<h2>내신 참여표 <span class="n">' + esc(S.term) + '</span><span class="sp"></span><button id="ex-re">다시 세기</button><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 열기</a></h2>' +
     '<div class="stat"><div class="' + (pct < 90 ? "bad" : "good") + '"><b>' + pct + '%</b><span>제출 ' + sub + '/' + tot + '</span></div>' +
@@ -603,6 +638,7 @@ function renderScores() {
   });
   rows.sort(function (a, b) { return (a.last || "") < (b.last || "") ? -1 : 1; });
   var silent = rows.filter(function (r) { return !r.last; });
+  navBadge("scores", silent.length, true);
   el.innerHTML = '<h2>성적 입력 <span class="n">최근 ' + SCORE_DAYS + '일</span><span class="sp"></span><button id="sc-re">다시 세기</button></h2>' +
     '<div class="stat"><div class="' + (silent.length ? "bad" : "good") + '"><b>' + silent.length + '</b><span>입력 없는 반</span></div>' +
     '<div><b>' + rows.reduce(function (a, r) { return a + r.n; }, 0) + '</b><span>점수 건수</span></div></div>' +
@@ -649,10 +685,18 @@ async function loadSheet(sh) {
 function renderSheets() {
   var el = $("#sec-sheets");
   var sheets = S.config.sheets || [];
+  navBadge("sheets", sheets.length, false);
+  if (!sheets.some(function (x) { return x.id === S.sheetPick; })) S.sheetPick = sheets.length ? sheets[0].id : "";
+  var picked = sheets.filter(function (x) { return x.id === S.sheetPick; });
   el.innerHTML = '<h2>구글시트 <span class="n">' + sheets.length + '개 연동</span><span class="sp"></span><button id="sh-reload">전부 새로고침</button></h2>' +
+    '<details' + (sheets.length ? "" : " open") + '><summary>시트 연동하기 — 주소 붙여넣기</summary>' +
     '<div class="row"><input type="text" id="sh-url" placeholder="시트 주소를 붙여넣기 (여러 개면 줄마다 하나)"><button class="btn" id="sh-add"' + (S.teamOk ? "" : " disabled") + '>연동</button></div>' +
-    '<p class="muted" style="font-size:12px;margin:0 0 6px">시트마다 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "서비스 계정") + ' 을 <b>뷰어</b>로 공유해야 읽힌다. 남이 만든 시트도 편집 권한이 있으면 공유할 수 있다. 읽기만 하고 절대 쓰지 않는다.</p>' +
-    (sheets.length ? sheets.map(sheetBlock).join("") : '<div class="empty">아직 연동한 시트가 없다.</div>');
+    '<p class="muted" style="font-size:12px;margin:0 0 6px">시트마다 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "서비스 계정") + ' 을 <b>뷰어</b>로 공유해야 읽힌다. 남이 만든 시트도 편집 권한이 있으면 공유할 수 있다. 읽기만 하고 절대 쓰지 않는다.</p></details>' +
+    (sheets.length ? '<div class="chips" style="margin-top:8px">' + sheets.map(function (sh) {
+      var d = S.sheetData[sh.id] || {};
+      return '<button class="mini ' + (sh.id === S.sheetPick ? "on" : "") + (d.err ? " warn" : "") + '" data-pick="' + esc(sh.id) + '">' + esc(sh.title || (d.meta && d.meta.title) || sh.id.slice(0, 8)) + '</button>';
+    }).join("") + '</div>' + picked.map(sheetBlock).join("") : '<div class="empty">아직 연동한 시트가 없다.</div>');
+  $$("[data-pick]", el).forEach(function (b) { b.onclick = function () { S.sheetPick = b.getAttribute("data-pick"); renderSheets(); }; });
   $("#sh-reload").onclick = function () { sheets.forEach(function (sh) { delete S.sheetData[sh.id]; loadSheet(sh); }); };
   $("#sh-add").onclick = async function () {
     var lines = $("#sh-url").value.split(/\r?\n/); var added = 0;
@@ -663,7 +707,7 @@ function renderSheets() {
       sheets.push({ id: id, title: "", tab: "", rows: 300, gid: m ? +m[1] : null }); added++;
     });
     if (!added) { alert("시트 주소를 못 읽었다"); return; }
-    S.config.sheets = sheets; await saveConfig(); renderSheets();
+    S.config.sheets = sheets; S.sheetPick = sheets[sheets.length - added].id; await saveConfig(); renderSheets();
     sheets.slice(-added).forEach(loadSheet);
   };
   sheets.forEach(function (sh) {
