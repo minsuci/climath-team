@@ -391,7 +391,6 @@ teamAuth.onAuthStateChanged(function () { authReady.t = true; scheduleBoot(); })
 function renderShell() {
   root.innerHTML =
     '<div class="top"><h1>한민수의 <b>대시보드</b></h1><span class="date">' + fmtMD(TODAY) + '</span><span class="sp"></span>' +
-    '<a href="https://climath-class.vercel.app/?admin=1" target="_blank">수업관리 앱</a>' +
     '<a href="https://climath-class.vercel.app/flyer.html" target="_blank">안내문</a>' +
     '<button class="link" id="btn-reload">새로고침</button>' +
     '<button class="link" id="btn-out">로그아웃</button></div>' +
@@ -640,7 +639,7 @@ function renderStudents() {
   el.innerHTML = '<h2>학생 명단 <span class="n">' + st.length + '명 · 반 ' + activeClasses().length + '개</span><span class="sp"></span>' +
     '<button class="mini ' + (view === "grid" ? "on" : "") + '" data-view="grid">반별 배치표</button>' +
     '<button class="mini ' + (view === "edit" ? "on" : "") + '" data-view="edit">명단 편집</button>' +
-    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
+    '</h2>' +
     '<div class="chips">' + chip("", "전체", st.length) +
     GRADES.map(function (g) { return chip(g, '<span class="pill ' + gradeCls(g) + '">' + g + '</span>', byGrade[g]); }).join("") +
     chip("none", "학년 없음", noGrade) +
@@ -1284,8 +1283,10 @@ async function runPull(term, targets, from, to, kind) {
     var r;
     try { r = await fetchSchedule(school, from, to, kind); }
     catch (e) { notFound.push(school + "(" + e.message + ")"); return; }
-    if (r.error) { notFound.push(school); return; }
-    if (!r.hasAny) { noData.push(school); return; }
+    // ⚠ 이유를 버리면 "못 찾음: 서운중" 만 남아 왜인지 알 길이 없다.
+    //    2026-09-04에 이것 때문에 짐작으로 팠다 — 실제로는 학교 **이름** 때문에 못 찾은 것이었다.
+    if (r.error) { notFound.push(school + " — " + r.error); return; }
+    if (!r.hasAny) { noData.push(school + (r.docReason ? " (" + r.docReason + ")" : "")); return; }
     if (r.dupes && r.dupes.length) dupe.push(school + " (" + r.dupes.join("·") + "에도 있음)");
     if (r.via === "doc") fromDoc.push(school + (r.docTitle ? " (" + r.docTitle + ")" : ""));
     // 그림에서 읽은 것은 대조할 원문이 없다. 요일로 걸렀어도 사람이 한 번 봐야 한다.
@@ -1385,7 +1386,7 @@ function renderTerms() {
 
   el.innerHTML = '<h2>학교 일정 <span class="n">' + esc(S.term) + ' · ' + rows.length + '줄</span><span class="sp"></span>' +
     '<button class="mini" id="tm-pull">시험 기간 찾아오기</button>' +
-    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
+    '</h2>' +
     '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>기간 비어 있음</span></div>' +
     '<div class="' + (noMath.length ? "bad" : "good") + '"><b>' + noMath.length + '</b><span>수학시험 없음</span></div>' +
     '<div><b>' + rows.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= 0 && n <= 14; }).length + '</b><span>2주 안 시작</span></div></div>' +
@@ -1801,7 +1802,7 @@ function renderExams() {
   el.innerHTML = '<h2>내신 참여표 <span class="n">' + esc(S.term) + '</span><span class="sp"></span>' +
     '<button class="mini" id="ex-edit-term">회차 바꾸기</button>' +
     '<button class="mini" id="ex-re">다시 읽기</button>' +
-    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
+    '</h2>' +
     '<div class="chips">' + GRADES.map(function (g) {
       return '<button class="mini ' + (g === S.exGrade ? "on" : "") + '" data-eg="' + g + '">' +
         '<span class="pill ' + gradeCls(g) + '">' + g + '</span> ' + grades[g] + '</button>' ;
