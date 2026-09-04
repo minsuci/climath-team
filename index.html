@@ -127,6 +127,11 @@
   table.cgrid .nm[data-open] { cursor: pointer; }
   table.cgrid .nm[data-open]:hover { outline: 2px solid var(--navy); }
 
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { background: #eef1f6; }
+  th.sortable .ar { font-size: 10px; color: var(--navy); }
+  th.sortable .ar.off { color: #c3cad6; }
+
   /* 내신 참여표 — 날짜 띠·칠하는 달력 */
   table.cgrid.strip th, table.cgrid.strip td { min-width: 21px; max-width: 21px; padding: 3px 1px;
     text-align: center; font-size: 11px; }
@@ -255,7 +260,7 @@ var S = {
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
-  exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "",
+  exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
@@ -1339,6 +1344,55 @@ function examRows() {
   return out;
 }
 
+// ----- 정렬 -----
+// 열 머리를 누르면 오름 → 내림 → 원래 순서(반 차례 · 명단 차례)로 돈다.
+// 빈 칸은 방향과 상관없이 **늘 맨 아래** — 안 채운 사람을 찾으려고 정렬하는 게 아니다.
+//
+// ⚠ 띠와 표가 **같은 목록**을 써야 한다. 따로 걸면 이름은 같은 줄에 있는데
+//   날짜 칸이 다른 사람 것이 되어버린다. 그래서 여기서 한 번만 걸고 둘 다 그걸 따라간다.
+var EX_SORTS = [
+  { key: "name", label: "이름" }, { key: "cls", label: "반" }, { key: "homeroom", label: "담임" },
+  { key: "school", label: "학교" }, { key: "start", label: "내신기간" }, { key: "math", label: "수학" },
+  { key: "come", label: "등원" },
+];
+function homeroomOf(st) {
+  var p = st.pid ? S.byPid[st.pid] : null;
+  return p && p.homeroom ? teacherName(p.homeroom) : "";
+}
+function examSortRows(rows, monthDays, examMonth) {
+  var so = S.exSort;
+  if (!so) return rows;
+  var keyOf = function (x) {
+    var v = x.v;
+    if (so.key === "name") return x.st.name || "";
+    if (so.key === "cls") return x.cls.name || "";
+    if (so.key === "homeroom") return homeroomOf(x.st);
+    if (so.key === "school") return (v && v.school) || x.school || "";
+    if (so.key === "start") return (v && v.start) || "";     // YYYY-MM-DD 라 글자 순 = 날짜 순
+    if (so.key === "math") return (v && v.math) || "";
+    if (so.key === "come") {
+      if (!v) return "";
+      var n = attendCount(x.cls, x.st, v, monthDays, examMonth).come;
+      return ("00" + n).slice(-3);                            // 숫자를 글자 순으로 비교하려고
+    }
+    return "";
+  };
+  var byName = function (a, b) { return String(a.st.name || "").localeCompare(String(b.st.name || ""), "ko"); };
+  return rows.slice().sort(function (a, b) {
+    var ka = keyOf(a), kb = keyOf(b);
+    if (!ka && !kb) return byName(a, b);
+    if (!ka) return 1;            // 빈 칸은 늘 아래
+    if (!kb) return -1;
+    var c = ka.localeCompare(kb, "ko");
+    return (so.dir === "desc" ? -c : c) || byName(a, b);
+  });
+}
+function exSortTh(key, label, style) {
+  var on = S.exSort && S.exSort.key === key;
+  return '<th class="sortable" data-esort="' + key + '"' + (style ? ' style="' + style + '"' : "") + '>' + esc(label) +
+    ' <span class="ar' + (on ? "" : " off") + '">' + (on ? (S.exSort.dir === "asc" ? "▲" : "▼") : "↕") + '</span></th>';
+}
+
 function renderExams() {
   var el = $("#sec-exams");
   if (!S.term) {
@@ -1363,12 +1417,12 @@ function renderExams() {
     S.exGrade = GRADES.filter(function (g) { return grades[g] > 0; })[0] || "고1";
   }
   var rows = all.filter(function (x) { return x.grade === S.exGrade; });
-  var done = rows.filter(function (x) { return x.v; }), miss = rows.filter(function (x) { return !x.v; });
   navBadge("exams", all.filter(function (x) { return !x.v; }).length, true);
 
   // 띠 = 시험 있는 달 1일 ~ 가장 늦은 복귀일. 회차 달 = 등원 회차를 세는 달.
+  // 정렬과 상관없이 같은 값이라 먼저 구한다 (등원 회차 정렬이 이걸 쓴다).
   var startsAll = [], endsAll = [];
-  done.forEach(function (x) {
+  rows.filter(function (x) { return x.v; }).forEach(function (x) {
     if (x.v.start) startsAll.push(x.v.start);
     if (x.v.back) endsAll.push(x.v.back); else if (x.v.end) endsAll.push(x.v.end);
   });
@@ -1381,6 +1435,10 @@ function renderExams() {
     while (d <= to && strip.length < 120) { strip.push(d); d = addDays(d, 1); }
   }
   var monthDays = examMonth ? daysOfMonth(examMonth) : [];
+
+  // 정렬은 여기서 한 번만. 띠와 표가 같은 목록을 따라간다.
+  rows = examSortRows(rows, monthDays, examMonth);
+  var done = rows.filter(function (x) { return x.v; }), miss = rows.filter(function (x) { return !x.v; });
 
   // 같은 학교·학년인데 기간이 갈린 것. 자동으로 고치지 않는다 — 분반마다 진짜 다를 수 있다.
   var sigs = {};
@@ -1396,8 +1454,15 @@ function renderExams() {
     '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
     '<div class="chips">' + GRADES.map(function (g) {
       return '<button class="mini ' + (g === S.exGrade ? "on" : "") + '" data-eg="' + g + '">' +
-        '<span class="pill ' + gradeCls(g) + '">' + g + '</span> ' + grades[g] + '</button>';
-    }).join("") + '</div>' +
+        '<span class="pill ' + gradeCls(g) + '">' + g + '</span> ' + grades[g] + '</button>' ;
+    }).join("") +
+    '<span class="sp" style="flex:1"></span><span class="muted" style="font-size:12px">정렬</span>' +
+    EX_SORTS.map(function (o) {
+      var on = S.exSort && S.exSort.key === o.key;
+      return '<button class="mini ' + (on ? "on" : "") + '" data-esort="' + o.key + '">' + o.label +
+        (on ? (S.exSort.dir === "asc" ? " ▲" : " ▼") : "") + '</button>';
+    }).join("") +
+    (S.exSort ? '<button class="mini" data-esort="">원래 순서</button>' : "") + '</div>' +
     '<div class="stat"><div class="' + (miss.length ? "bad" : "good") + '"><b>' + done.length + '/' + rows.length + '</b><span>낸 사람</span></div>' +
     '<div><b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "—") + '</b><span>회차 달</span></div>' +
     (clash.length ? '<div class="bad"><b>' + clash.length + '</b><span>일정 갈림</span></div>' : "") + '</div>' +
@@ -1417,6 +1482,17 @@ function renderExams() {
     '</p>';
 
   $$("[data-eg]", el).forEach(function (b) { b.onclick = function () { S.exGrade = b.getAttribute("data-eg"); S.exEntry = null; renderExams(); }; });
+  // 오름 → 내림 → 원래 순서. 같은 칩·같은 열 머리 어느 쪽을 눌러도 같이 돈다.
+  $$("[data-esort]", el).forEach(function (b) {
+    b.onclick = function () {
+      var k = b.getAttribute("data-esort");
+      if (!k) S.exSort = null;
+      else if (!S.exSort || S.exSort.key !== k) S.exSort = { key: k, dir: "asc" };
+      else if (S.exSort.dir === "asc") S.exSort = { key: k, dir: "desc" };
+      else S.exSort = null;
+      keepScroll(renderExams);
+    };
+  });
   $$("[data-ent]", el).forEach(function (b) { b.onclick = function () { openEntry(b.getAttribute("data-ent")); }; });
   $$("[data-fix]", el).forEach(function (b) { b.onclick = function () { openEntry(b.getAttribute("data-fix")); }; });
   $$("[data-del]", el).forEach(function (b) {
@@ -1463,14 +1539,17 @@ function stripHtml(strip, done) {
 function tableHtml(rows, monthDays, examMonth) {
   if (!rows.length) return '<div class="empty">이 학년에 학생이 없다.</div>';
   return '<div class="tbl" style="margin-top:10px"><table><thead><tr>' +
-    '<th>이름</th><th>반</th><th>학교</th><th>내신기간</th><th>수학</th><th>직보</th><th>복귀</th><th>등원</th><th>비고</th><th></th></tr></thead><tbody>' +
+    exSortTh("name", "이름") + exSortTh("cls", "반") + exSortTh("homeroom", "담임") + exSortTh("school", "학교") +
+    exSortTh("start", "내신기간") + exSortTh("math", "수학") +
+    '<th>직보</th><th>복귀</th>' + exSortTh("come", "등원") + '<th>비고</th><th></th></tr></thead><tbody>' +
     rows.map(function (x) {
       var k = x.cls.id + "|" + x.st.id;
-      if (!x.v) return '<tr><td><b>' + esc(x.st.name) + '</b></td><td>' + esc(x.cls.name) + '</td><td>' + esc(x.school) + '</td>' +
+      if (!x.v) return '<tr><td><b>' + esc(x.st.name) + '</b></td><td>' + esc(x.cls.name) + '</td>' +
+        '<td>' + esc(homeroomOf(x.st)) + '</td><td>' + esc(x.school) + '</td>' +
         '<td colspan="6" class="muted">아직 안 냈다</td><td><button class="mini" data-ent="' + esc(k) + '">넣기</button></td></tr>';
       var v = x.v, ac = attendCount(x.cls, x.st, v, monthDays, examMonth);
       return '<tr><td><b>' + esc(x.st.name) + '</b>' + (v.byTeacher ? ' <span class="pill">대신</span>' : "") + '</td>' +
-        '<td>' + esc(x.cls.name) + '</td><td>' + esc(v.school || "") + '</td>' +
+        '<td>' + esc(x.cls.name) + '</td><td>' + esc(homeroomOf(x.st)) + '</td><td>' + esc(v.school || "") + '</td>' +
         '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
         '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>' +
         '<td>' + (v.prep ? esc(fmtMD(v.prep)) : "—") + '</td>' +

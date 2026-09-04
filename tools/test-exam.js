@@ -104,6 +104,44 @@ ok("일정 지문이 시작·끝·수학으로 만들어진다",
 ok("달 넘기기 — 12월 다음은 이듬해 1월", run(`return shiftMonth("2026-12",1)`) === "2027-01");
 ok("달 넘기기 — 1월 이전은 지난해 12월", run(`return shiftMonth("2026-01",-1)`) === "2025-12");
 
+// 11. 정렬 — 오름 → 내림 → 원래 순서, 빈 칸은 늘 아래
+run(`
+  S.teachers=[{tid:"T1",name:"한민수"},{tid:"T2",name:"이창혁A"}];
+  S.byPid={p1:{pid:"p1",homeroom:"T2"},p2:{pid:"p2",homeroom:"T1"},p3:{pid:"p3",homeroom:"T1"}};
+  globalThis.ROWS=[
+    {cls:{id:"c2",name:"고1T"}, st:{id:"r1",name:"김서진",pid:"p1"}, school:"중대부고", v:{start:"2026-09-14",math:"2026-09-22",school:"중대부고"}},
+    {cls:{id:"c1",name:"고1S"}, st:{id:"r2",name:"임서윤",pid:"p2"}, school:"경기고",   v:{start:"2026-09-07",math:"2026-09-15",school:"경기고"}},
+    {cls:{id:"c1",name:"고1S"}, st:{id:"r3",name:"박준서",pid:"p3"}, school:"",        v:null}
+  ];
+`);
+const order = (key, dir) => run(
+  'S.exSort=' + (key ? '{key:"' + key + '",dir:"' + dir + '"}' : "null") + ';' +
+  'return examSortRows(ROWS, daysOfMonth("2026-09"), "2026-09").map(function(x){return x.st.name;}).join(",");');
+ok("정렬 없으면 원래 순서", order(null) === "김서진,임서윤,박준서", order(null));
+ok("수학시험 날짜 오름차순", order("math", "asc") === "임서윤,김서진,박준서", order("math", "asc"));
+ok("수학시험 날짜 내림차순", order("math", "desc") === "김서진,임서윤,박준서", order("math", "desc"));
+ok("안 낸 사람은 내림차순에서도 맨 아래", order("math", "desc").endsWith("박준서"));
+ok("내신 시작일 오름차순", order("start", "asc") === "임서윤,김서진,박준서", order("start", "asc"));
+ok("반 이름순 (같은 반은 이름 가나다)", order("cls", "asc") === "박준서,임서윤,김서진", order("cls", "asc"));
+ok("담임순", order("homeroom", "asc") === "김서진,박준서,임서윤", order("homeroom", "asc"));
+ok("이름순", order("name", "asc") === "김서진,박준서,임서윤", order("name", "asc"));
+ok("학교순 (빈 학교는 아래)", order("school", "asc") === "임서윤,김서진,박준서", order("school", "asc"));
+ok("등원 회차순도 숫자로 (글자로 세면 10이 9보다 앞)", run(`
+  S.exSort={key:"come",dir:"asc"};
+  var a={cls:{name:"A",classDays:[1,2,3,4,5]}, st:{id:"a",name:"많이"}, v:{start:"2026-09-01",end:"2026-09-01"}};
+  var b={cls:{name:"B",classDays:[1]},         st:{id:"b",name:"적게"}, v:{start:"2026-09-01",end:"2026-09-01"}};
+  return examSortRows([a,b], daysOfMonth("2026-09"), "2026-09").map(function(x){return x.st.name;}).join(",");
+`) === "적게,많이");
+// 띠와 표는 **같은 목록**을 써야 한다. 정렬한 배열에서 낸 사람만 걸러 내므로 순서가 어긋날 수 없다 —
+// 따로 걸면 이름은 같은 줄인데 날짜 칸이 다른 사람 것이 된다.
+ok("띠에 쓰는 목록이 표와 같은 순서", run(`
+  S.exSort={key:"math",dir:"asc"};
+  var sorted=examSortRows(ROWS, daysOfMonth("2026-09"), "2026-09");
+  var done=sorted.filter(function(x){return x.v;}).map(function(x){return x.st.name;}).join(",");
+  var table=sorted.map(function(x){return x.st.name;}).join(",");
+  return done + " | " + table;
+`) === "임서윤,김서진 | 임서윤,김서진,박준서");
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
