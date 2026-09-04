@@ -86,7 +86,7 @@
   table.cgrid th, table.cgrid td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
     padding: 3px 6px; white-space: nowrap; vertical-align: middle; }
   table.cgrid thead th { position: sticky; top: 0; z-index: 2; background: #eef1f6; text-align: center;
-    min-width: 104px; max-width: 150px; padding: 5px 7px; }
+    min-width: 132px; max-width: 190px; padding: 5px 7px; }
   table.cgrid thead th.mine { background: #dce6f8; box-shadow: inset 0 3px 0 var(--navy); }
   table.cgrid .cn { font-weight: 700; white-space: normal; line-height: 1.25; }
   table.cgrid .cm { font-weight: 400; color: var(--muted); font-size: 11px; }
@@ -99,6 +99,7 @@
   table.cgrid td.dim { opacity: .22; }
   table.cgrid .nm { display: inline-block; padding: 1px 6px; border-radius: 4px; }
   table.cgrid .nm i { font-style: normal; opacity: .65; margin-left: 2px; font-size: 11px; }
+  table.cgrid .sch { margin-left: 4px; font-size: 10px; color: var(--muted); }
 
   /* 명단 편집 시트 */
   /* 기본 table 은 width:100% 라 화면이 좁으면 칸을 줄여 글씨를 자른다.
@@ -131,6 +132,7 @@
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
   @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
   table.sheet-t.ts { min-width: 780px; }
+  table.sheet-t.tm { min-width: 1020px; }
   table.sheet-t.ts input[type=number] { text-align: right; }
   table.sheet-t.ts input.green { color: #1f7a45; font-weight: 700; }
   table.sheet-t.ts input.blue { color: #234e9e; font-weight: 700; }
@@ -272,6 +274,7 @@ var S = {
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
   sheetEdit: false, sheetScan: null, pullPick: null, pullOver: false,
+  pullOpen: false, pullRedo: false, pullFrom: "", pullTo: "", pullKind: "중간", jobUnsub: null,
   showDone: false, saEmail: "",
   sheetData: {},  // sheetId -> { meta, tab, values, err, q }
   sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
@@ -720,7 +723,8 @@ function classGridHtml() {
         esc(ghost ? r.name + " — 사람 정보가 지워졌다. 명단 편집에서 반 명단에서 빼면 된다"
                   : [r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ") + " — 눌러서 고치기") + '">' +
         '<span class="nm ' + (ghost ? "ghost" : gradeCls(g)) + '"' + (r.pid && !ghost ? ' data-open="' + esc(r.pid) + '"' : "") + '>' +
-        esc(r.name) + (ghost ? "" : (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "")) + '</span></td>';
+        esc(r.name) + (ghost ? "" : (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "")) + '</span>' +
+        (ghost || !sch ? "" : '<span class="sch">' + esc(sch) + '</span>') + '</td>';
     }).join("") + '</tr>';
   }
   return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
@@ -1216,29 +1220,278 @@ function homeroomTableHtml(st) {
 }
 
 // ---------- 학교 일정 ----------
+//
+// 학교·학년마다 내신 기간과 수학시험 날짜를 한 번만 적어두는 곳(`appConfig/schoolTerms`).
+// 참여표가 여기서 기본값을 가져간다. 수업관리 앱의 SchoolTermBoard 와 **같은 문서**를 쓴다.
+//
+// 시험 기간 찾아오기는 앱의 `/api/schedule` 을 중계해서 쓴다 — 나이스 → 학교 홈페이지 →
+// 게시판 첨부문서(→ AI) 네 단계가 이미 그쪽에 쌓여 있다.
+
+var termKeyOf = function (t) { return String(t || "").replace(/[^0-9A-Za-z가-힣]+/g, "_"); };
+var schedKey = function (term, school, grade) { return termKeyOf(term) + "__" + school + "__" + grade; };
+// **넘긴 칸만** 보낸다. merge:true 는 지도 안까지 합쳐주므로 나머지 칸은 그대로 남는다.
+// 통째로 보내면 화면이 들고 있던 옛 사본으로 덮게 되어, 시작 → 끝을 이어 고칠 때 시작이 날아간다.
+async function saveSchoolTerm(term, school, grade, v) {
+  var k = schedKey(term, school, grade);
+  var one = Object.assign({ term: term, school: school, grade: grade, updated: Date.now() }, v);
+  var patch = {}; patch[k] = one;
+  await db.collection("appConfig").doc("schoolTerms").set(patch, { merge: true });
+  S.schoolTerms[k] = Object.assign({}, S.schoolTerms[k], one);
+}
+
+// ---- 불러오기는 화면 밖에서 돈다 ----
+// 학교마다 몇 초에서 몇십 초씩 걸린다. 화면에 매어두면 다른 메뉴를 누르는 순간 통째로 날아간다.
+var PULL_JOB = { running: false, done: 0, total: 0, now: "", msg: "", diffs: [], stop: false, subs: [] };
+function jobSnap() { var o = {}; for (var k in PULL_JOB) if (k !== "subs") o[k] = PULL_JOB[k]; o.diffs = PULL_JOB.diffs.slice(); return o; }
+function jobEmit() { var sn = jobSnap(); PULL_JOB.subs.slice().forEach(function (f) { try { f(sn); } catch (e) {} }); }
+function jobSub(fn) { PULL_JOB.subs.push(fn); fn(jobSnap()); return function () { var i = PULL_JOB.subs.indexOf(fn); if (i >= 0) PULL_JOB.subs.splice(i, 1); }; }
+
+async function fetchSchedule(school, from, to, kind) {
+  var u = firebase.auth().currentUser, tu = teamAuth.currentUser;
+  if (!u || !tu) throw new Error("로그인이 풀렸습니다");
+  var r = await fetch("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken: await tu.getIdToken(), classToken: await u.getIdToken(),
+      school: school, from: from, to: to, kind: kind }) });
+  var j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || ("불러오지 못했어요 (" + r.status + ")"));
+  return j || {};
+}
+// 서버가 이름을 셋 중 하나로 못박아 보낸다. 이것 말고는 옛 양식이거나 손으로 적은 것이다.
+var CANON_LABEL = /^(중간고사|기말고사|졸업고사)$/;
+function planNote(plan) {
+  var bs = (plan && plan.blocks) || [];
+  if (!bs.length) return "";
+  var line = bs.map(function (b) {
+    var d = b.start.slice(5).replace("-", "/");
+    var e = b.end && b.end !== b.start ? "~" + b.end.slice(8) : "";
+    return b.name + " " + d + e;
+  }).join(" · ");
+  return line + (plan.pending ? " · 기말 아직" : "");
+}
+var PULL_CONC = 4;   // 학교끼리는 상관이 없다. 한 줄로 세우면 느린 학교가 곧 전체 시간이 된다
+async function runPull(term, targets, from, to, kind) {
+  if (PULL_JOB.running) return;
+  var names = []; targets.forEach(function (t) { if (names.indexOf(t.school) < 0) names.push(t.school); });
+  PULL_JOB.running = true; PULL_JOB.done = 0; PULL_JOB.total = names.length;
+  PULL_JOB.now = ""; PULL_JOB.msg = ""; PULL_JOB.diffs = []; PULL_JOB.stop = false;
+  jobEmit();
+  var filled = 0, same = 0, relabeled = 0;
+  var notFound = [], noExam = [], noData = [], fromDoc = [], dupe = [];
+  var inflight = [], next = 0;
+  var showNow = function () { PULL_JOB.now = inflight.join(", "); };
+
+  async function pullOne(school) {
+    var r;
+    try { r = await fetchSchedule(school, from, to, kind); }
+    catch (e) { notFound.push(school + "(" + e.message + ")"); return; }
+    if (r.error) { notFound.push(school); return; }
+    if (!r.hasAny) { noData.push(school); return; }
+    if (r.dupes && r.dupes.length) dupe.push(school + " (" + r.dupes.join("·") + "에도 있음)");
+    if (r.via === "doc") fromDoc.push(school + (r.docTitle ? " (" + r.docTitle + ")" : ""));
+    var note = planNote(r.plan);
+    var srcU = (r.src && r.src.url) || "", srcN = (r.src && r.src.name) || "";
+    var mine = targets.filter(function (x) { return x.school === school; });
+    for (var i = 0; i < mine.length; i++) {
+      var t = mine[i];
+      var g = r.byGrade && r.byGrade[t.grade];
+      // 시험을 못 찾았어도 학기 계획과 근거 링크는 적어둔다 —
+      // "이번 회차에 시험이 없다"와 "못 찾았다"를 가르는 유일한 단서이고, 손으로 채울 때 바로 필요하다.
+      var put = {};
+      if (note) put.plan = note;
+      if (srcU && !t.cur.srcUrl) { put.srcUrl = srcU; put.srcName = srcN; }
+      if (Object.keys(put).length) { try { await saveSchoolTerm(term, t.school, t.grade, put); } catch (e) {} }
+      if (!g) { noExam.push(t.school + " " + t.grade); continue; }
+      if (t.cur.start === g.start && t.cur.end === g.end) {
+        // 날짜는 맞는데 이름이 옛 나이스 이름 그대로일 수 있다. 이미 셋 중 하나면 손대지 않는다 —
+        // 선생님이 직접 적어 넣은 것을 덮어쓰지 않으려는 것이다.
+        if (g.name && t.cur.label !== g.name && !CANON_LABEL.test(t.cur.label || "")) {
+          try { await saveSchoolTerm(term, t.school, t.grade, { label: g.name }); relabeled++; } catch (e) {}
+        }
+        same++; continue;
+      }
+      // 이미 적어둔 것이 다르면 **덮지 않는다.** 학교가 바꿨을 수도, 사람이 맞게 고쳤을 수도 있다.
+      if (t.cur.start || t.cur.end) {
+        PULL_JOB.diffs.push({ school: t.school, grade: t.grade, mine: Object.assign({}, t.cur),
+                              neis: { start: g.start, end: g.end }, name: g.name });
+        jobEmit();
+        continue;
+      }
+      try { await saveSchoolTerm(term, t.school, t.grade, { start: g.start, end: g.end, label: g.name || "" }); filled++; }
+      catch (e) { notFound.push(t.school + "(저장 실패)"); }
+    }
+  }
+  async function worker() {
+    while (next < names.length && !PULL_JOB.stop) {
+      var school = names[next++];
+      inflight.push(school); showNow(); jobEmit();
+      try { await pullOne(school); } catch (e) {}
+      inflight.splice(inflight.indexOf(school), 1);
+      PULL_JOB.done++; showNow(); jobEmit();
+    }
+  }
+  var ws = []; for (var w = 0; w < Math.min(PULL_CONC, names.length); w++) ws.push(worker());
+  await Promise.all(ws);
+  var parts = [];
+  if (filled) parts.push("채움 " + filled + "칸");
+  if (same) parts.push("이미 맞음 " + same);
+  if (relabeled) parts.push("시험 이름 정리 " + relabeled + "칸");
+  if (PULL_JOB.diffs.length) parts.push("다른 값 " + PULL_JOB.diffs.length + "건");
+  if (noExam.length) parts.push("이 회차 시험 없음: " + noExam.join(", "));
+  if (noData.length) parts.push("학사일정 자체가 없음: " + noData.join(", "));
+  if (fromDoc.length) parts.push("첨부문서에서 읽음(확인 필요): " + fromDoc.join(", "));
+  if (dupe.length) parts.push("같은 이름 학교 있음: " + dupe.join(", "));
+  if (notFound.length) parts.push("못 찾음: " + notFound.join(", "));
+  PULL_JOB.msg = parts.length ? parts.join(" · ") : "바뀐 것이 없다";
+  PULL_JOB.running = false; PULL_JOB.now = "";
+  jobEmit();
+}
+
+// 화면에 놓을 줄 — 학생이 실제로 다니는 (학교·학년) + 이 회차에 이미 적어둔 것
+function termRows() {
+  var m = {};
+  Object.keys(S.schoolTerms).forEach(function (k) {
+    var v = S.schoolTerms[k];
+    if (v && v.term === S.term && v.school) m[v.school + "__" + v.grade] = Object.assign({ n: 0 }, v);
+  });
+  S.students.forEach(function (x) {
+    if (!x.school || !x.grade) return;
+    var k = x.school + "__" + x.grade;
+    if (!m[k]) m[k] = { term: S.term, school: x.school, grade: x.grade, n: 0 };
+    m[k].n++;
+  });
+  var out = Object.keys(m).map(function (k) { return m[k]; });
+  out.sort(function (a, b) {
+    return gradeRank(a.grade) - gradeRank(b.grade) || String(a.school).localeCompare(String(b.school), "ko");
+  });
+  return out;
+}
+
 function renderTerms() {
   var el = $("#sec-terms");
-  var rows = Object.keys(S.schoolTerms).map(function (k) { return S.schoolTerms[k]; }).filter(function (v) { return v && v.term === S.term; });
-  // 학교·학년별 학생 수
-  var cnt = {};
-  S.students.forEach(function (s) { if (s.school && s.grade) { var k = s.school + "__" + s.grade; cnt[k] = (cnt[k] || 0) + 1; } });
-  var have = {}; rows.forEach(function (v) { have[v.school + "__" + v.grade] = 1; });
-  var missing = Object.keys(cnt).filter(function (k) { return !have[k]; });
-  var incomplete = rows.filter(function (v) { return !v.start || !v.end || !v.math; });
-  rows.sort(function (a, b) { return (a.start || "9999") < (b.start || "9999") ? -1 : 1; });
-  navBadge("terms", missing.length + incomplete.length, true);
-  el.innerHTML = '<h2>학교 일정 <span class="n">' + (S.term ? esc(S.term) : "회차 없음") + ' · ' + rows.length + '건</span><span class="sp"></span><a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 고치기</a></h2>' +
-    '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>학생은 있는데 일정 없음</span></div>' +
-    '<div class="' + (incomplete.length ? "bad" : "good") + '"><b>' + incomplete.length + '</b><span>칸 비어 있음</span></div>' +
+  if (!S.term) {
+    navBadge("terms", 0, false);
+    el.innerHTML = '<h2>학교 일정</h2><div class="empty">내신 회차를 먼저 열어야 한다. <b>내신 참여표</b> 메뉴에서 연다.</div>';
+    return;
+  }
+  var rows = termRows();
+  var missing = rows.filter(function (v) { return !v.start || !v.end; });
+  var noMath = rows.filter(function (v) { return v.start && !v.math; });
+  navBadge("terms", missing.length + noMath.length, true);
+  var job = jobSnap();
+
+  el.innerHTML = '<h2>학교 일정 <span class="n">' + esc(S.term) + ' · ' + rows.length + '줄</span><span class="sp"></span>' +
+    '<button class="mini" id="tm-pull">시험 기간 찾아오기</button>' +
+    '<a class="mini" href="https://climath-class.vercel.app/?admin=1" target="_blank">앱에서 보기</a></h2>' +
+    '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>기간 비어 있음</span></div>' +
+    '<div class="' + (noMath.length ? "bad" : "good") + '"><b>' + noMath.length + '</b><span>수학시험 없음</span></div>' +
     '<div><b>' + rows.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= 0 && n <= 14; }).length + '</b><span>2주 안 시작</span></div></div>' +
-    (missing.length ? '<div class="wrapc" style="margin-bottom:8px">' + missing.sort().map(function (k) { var p = k.split("__"); return '<span class="pill red">' + esc(p[0]) + ' ' + esc(p[1]) + ' · ' + cnt[k] + '명</span>'; }).join(" ") + '</div>' : "") +
-    '<div class="tbl"><table><thead><tr><th>학교</th><th>학년</th><th>학생</th><th>시작</th><th>끝</th><th>수학</th><th>복귀</th><th></th></tr></thead><tbody>' +
+    '<div id="tm-pullbox"></div>' + jobBoxHtml(job) +
+    '<div class="tbl tall"><table class="sheet-t tm"><thead><tr>' +
+    '<th style="width:110px">학교</th><th style="width:60px">학년</th><th style="width:46px">학생</th>' +
+    '<th style="width:140px">시작</th><th style="width:140px">끝</th><th style="width:140px">수학시험</th><th style="width:140px">복귀</th>' +
+    '<th style="width:150px">시험 이름</th><th>학기 계획 · 근거</th></tr></thead><tbody id="tm-rows">' +
     rows.map(function (v) {
-      var n = daysFromToday(v.start); var k = v.school + "__" + v.grade;
-      var cell = function (x) { return x ? esc(fmtMD(x)) : '<span class="red">—</span>'; };
-      return '<tr><td>' + esc(v.school) + '</td><td>' + esc(v.grade) + '</td><td>' + (cnt[k] || 0) + '</td><td>' + cell(v.start) + '</td><td>' + cell(v.end) + '</td><td>' + cell(v.math) + '</td><td>' + (v.back ? esc(fmtMD(v.back)) : '<span class="muted">학생별</span>') + '</td>' +
-        '<td>' + (n !== null && n >= 0 && n <= 14 ? '<span class="pill yellow">' + dday(v.start) + '</span>' : n !== null && n < 0 && daysFromToday(v.end) >= 0 ? '<span class="pill blue">시험 중</span>' : "") + (v.label ? '<span class="muted">' + esc(v.label) + '</span>' : "") + '</td></tr>';
-    }).join("") + '</tbody></table></div>';
+      var k = esc(v.school + "|" + v.grade);
+      var n = daysFromToday(v.start);
+      var badge = n !== null && n >= 0 && n <= 14 ? '<span class="pill yellow">' + dday(v.start) + '</span>'
+                : (n !== null && n < 0 && daysFromToday(v.end) >= 0 ? '<span class="pill blue">시험 중</span>' : "");
+      return '<tr data-k="' + k + '" class="' + gradeCls(v.grade) + '"><td><b>' + esc(v.school) + '</b></td>' +
+        '<td><span class="pill ' + gradeCls(v.grade) + '">' + esc(v.grade) + '</span></td>' +
+        '<td class="muted">' + (v.n || 0) + '</td>' +
+        ["start", "end", "math", "back"].map(function (f) {
+          return '<td><input type="date" data-f="' + f + '" value="' + esc(v[f] || "") + '"></td>';
+        }).join("") +
+        '<td>' + esc(v.label || "") + ' ' + badge + '</td>' +
+        '<td class="wrapc muted" style="font-size:12px">' + esc(v.plan || "") +
+        (v.srcUrl ? ' <a href="' + esc(v.srcUrl) + '" target="_blank">' + esc(v.srcName || "근거") + '</a>' : "") + '</td></tr>';
+    }).join("") + '</tbody></table></div>' +
+    '<p class="muted" style="font-size:12px;margin:6px 0 0">학생이 다니는 학교·학년만 뜬다. ' +
+    '<b>수학시험 날짜는 학사일정에 없다</b> — 과목별 시간표는 안 올라오므로 손으로 넣거나 학생이 낸다. ' +
+    '직보는 참여표에서 수학시험 전날로 자동으로 잡힌다.</p>';
+
+  bindTerms();
+  $("#tm-pull").onclick = function () { S.pullOpen = !S.pullOpen; drawPullBox(); };
+  if (S.pullOpen) drawPullBox();
+  if (!S.jobUnsub) S.jobUnsub = jobSub(function () { var b = $("#sec-terms"); if (b && !$("#sec-terms").hidden) renderTermsJobOnly(); });
+}
+function renderTermsJobOnly() {
+  var box = $("#tm-jobbox");
+  if (box) box.outerHTML = jobBoxHtml(jobSnap());
+  bindJobBox();
+}
+function jobBoxHtml(job) {
+  if (!job.running && !job.msg && !job.diffs.length) return '<div id="tm-jobbox"></div>';
+  return '<div id="tm-jobbox" class="banner" style="margin:0 0 10px">' +
+    (job.running ? '<div><b>찾는 중 ' + job.done + '/' + job.total + '</b>' + (job.now ? ' <span class="muted">' + esc(job.now) + '</span>' : "") +
+      ' <button class="mini" id="tm-stop">멈추기</button></div>' : "") +
+    (job.msg ? '<div style="font-size:13px">' + esc(job.msg) + '</div>' : "") +
+    (job.diffs.length ? '<div style="margin-top:6px"><b>이미 적어둔 것과 다르다</b> — 덮지 않았다. 맞는 쪽을 고른다.' +
+      job.diffs.map(function (d, i) {
+        return '<div style="font-size:13px;margin-top:4px">' + esc(d.school + " " + d.grade) + ' · 지금 <b>' +
+          esc(fmtMD(d.mine.start) + "~" + fmtMD(d.mine.end)) + '</b> · 찾은 값 <b>' + esc(fmtMD(d.neis.start) + "~" + fmtMD(d.neis.end)) + '</b> ' +
+          '<button class="mini" data-take="' + i + '">찾은 값으로</button></div>';
+      }).join("") + '</div>' : "") + '</div>';
+}
+function bindJobBox() {
+  var st = $("#tm-stop");
+  if (st) st.onclick = function () { PULL_JOB.stop = true; jobEmit(); };
+  $$("#tm-jobbox [data-take]").forEach(function (b) {
+    b.onclick = async function () {
+      var d = PULL_JOB.diffs[Number(b.getAttribute("data-take"))];
+      b.disabled = true;
+      try {
+        await saveSchoolTerm(S.term, d.school, d.grade, { start: d.neis.start, end: d.neis.end, label: d.name || "" });
+        PULL_JOB.diffs = PULL_JOB.diffs.filter(function (x) { return !(x.school === d.school && x.grade === d.grade); });
+        jobEmit(); keepScrollIn("#sec-terms", renderTerms);
+      } catch (e) { b.disabled = false; alert("맞추지 못했다: " + e.message); }
+    };
+  });
+}
+function bindTerms() {
+  var el = $("#sec-terms");
+  // 칸을 고치면 그 자리에서 저장한다. 다시 그리지 않는다 — 치던 칸에서 포커스가 날아간다.
+  $$("#tm-rows input", el).forEach(function (inp) {
+    inp.onchange = async function () {
+      var kk = inp.closest("tr").getAttribute("data-k").split("|");
+      var f = inp.getAttribute("data-f"), patch = {};
+      patch[f] = inp.value;
+      try {
+        await saveSchoolTerm(S.term, kk[0], kk[1], patch);
+        inp.classList.add("ok"); setTimeout(function () { inp.classList.remove("ok"); }, 900);
+      } catch (e) { inp.classList.add("bad"); alert("저장하지 못했다: " + e.message); }
+    };
+  });
+  bindJobBox();
+}
+function drawPullBox() {
+  var box = $("#tm-pullbox"); if (!box) return;
+  if (!S.pullOpen) { box.innerHTML = ""; return; }
+  var rows = termRows();
+  var todo = S.pullRedo ? rows : rows.filter(function (v) { return !v.start || !v.end; });
+  box.innerHTML = '<div class="entry"><div class="row">' +
+    '<span class="muted">기간</span><input type="date" id="tm-from" value="' + esc(S.pullFrom || addDays(TODAY, -7)) + '">' +
+    '<span class="muted">~</span><input type="date" id="tm-to" value="' + esc(S.pullTo || addDays(TODAY, 75)) + '">' +
+    '<span class="muted">회차</span><select id="tm-kind">' +
+    ["중간", "기말"].map(function (k) { return '<option' + ((S.pullKind || "중간") === k ? " selected" : "") + '>' + k + '</option>'; }).join("") + '</select>' +
+    '<label style="font-size:13px"><input type="checkbox" id="tm-redo"' + (S.pullRedo ? " checked" : "") + '> 이미 채운 것도 다시 확인</label>' +
+    '<span class="sp" style="flex:1"></span>' +
+    '<button class="btn o" id="tm-go"' + (todo.length ? "" : " disabled") + '>' + todo.length + '줄 찾아오기</button>' +
+    '<button class="mini" id="tm-close">닫기</button></div>' +
+    '<div class="muted" style="font-size:12px">나이스 → 학교 홈페이지 → 게시판 첨부문서 차례로 뒤진다. ' +
+    '학교 하나에 몇 초, 문서까지 가면 20~30초 걸린다. 넷씩 나란히 부르고, 다른 메뉴로 옮겨도 계속 돈다. ' +
+    '<b>이미 적어둔 값은 덮지 않는다</b> — 다르면 알려주고 고를 수 있게 한다.</div></div>';
+  $("#tm-close").onclick = function () { S.pullOpen = false; drawPullBox(); };
+  $("#tm-redo").onchange = function () { S.pullRedo = this.checked; drawPullBox(); };
+  ["from", "to"].forEach(function (f) {
+    $("#tm-" + f).onchange = function () { S["pull" + f.charAt(0).toUpperCase() + f.slice(1)] = this.value; drawPullBox(); };
+  });
+  $("#tm-kind").onchange = function () { S.pullKind = this.value; };
+  $("#tm-go").onclick = function () {
+    var targets = todo.map(function (v) { return { school: v.school, grade: v.grade, cur: v }; });
+    runPull(S.term, targets, $("#tm-from").value, $("#tm-to").value, $("#tm-kind").value)
+      .then(function () { keepScrollIn("#sec-terms", renderTerms); });
+    S.pullOpen = false; drawPullBox(); renderTermsJobOnly();
+  };
 }
 
 // ---------- 내신 참여표 ----------
