@@ -116,23 +116,81 @@ vm.runInContext(`globalThis.__t = (async function(){
   return JSON.stringify(t.doneOn) + " | " + after;
 })();`, ctx);
 
-// ---- 앱이 아는 일정 ----
+// ---- 앱이 아는 일정 — 시험은 **기간**이다 ----
+// 날마다 칩을 찍으면 사흘짜리 시험이 끊긴 조각 셋으로 보인다. 시작~끝을 쥔 채로 다닌다.
 run(`
   S.term="2026 2학기 중간";
   S.schoolTerms={};
-  S.schoolTerms["k1"]={term:"2026 2학기 중간",school:"중대부고",grade:"고1",start:"2026-09-02",math:"2026-09-04",end:"2026-09-05",back:"2026-09-14"};
-  S.schoolTerms["k2"]={term:"2026 2학기 중간",school:"봉은중",grade:"중3",start:"2026-09-03"};
-  S.schoolTerms["k3"]={term:"옛 회차",school:"딴학교",grade:"고1",start:"2026-09-01"};
+  S.schoolTerms["k1"]={term:"2026 2학기 중간",school:"중대부고",grade:"고1",
+                       start:"2026-09-02",end:"2026-09-05",math:"2026-09-04",back:"2026-09-14",label:"중간고사"};
+  S.schoolTerms["k2"]={term:"2026 2학기 중간",school:"봉은중",grade:"중3",start:"2026-08-28",end:"2026-09-02"};
+  S.schoolTerms["k3"]={term:"옛 회차",school:"딴학교",grade:"고1",start:"2026-09-01",end:"2026-09-01"};
+  S.schoolTerms["k4"]={term:"2026 2학기 중간",school:"거꾸로고",grade:"고2",start:"2026-09-03",end:"2026-09-01"};
   S.tests=[{tid:"t1",kind:"mock",name:"9월 학평",grade:"고1",date:"2026-09-02"}];
   S.classes=[{id:"c1",name:"고1S",endDate:"2026-09-05",roster:[]}];
 `);
-const auto = (want) => run(`return calAuto("${want}","2026-08-31","2026-09-06").map(function(a){return a.kind+":"+a.text+"@"+a.date;}).join(" | ")`);
-ok("학교 시험 날짜가 달력에 뜬다", auto("전체").includes("중대부고 수학시험@2026-09-04"), auto("전체"));
-ok("복귀가 이 주 밖이면 안 뜬다", !auto("전체").includes("복귀"), auto("전체"));
-ok("다른 회차는 안 뜬다", !auto("전체").includes("딴학교"), auto("전체"));
-ok("시험 성적의 시험 날짜도 뜬다", auto("전체").includes("test:모의 9월 학평@2026-09-02"), auto("전체"));
-ok("반 종강도 뜬다", auto("전체").includes("고1S 종강"));
-ok("학년으로 거른다", !auto("고1").includes("봉은중") && auto("고1").includes("중대부고"), auto("고1"));
+const R = (want) => JSON.parse(run(`return JSON.stringify(calRanges("${want}"))`));
+const all = R("전체");
+const find = (t) => all.filter((x) => x.text.indexOf(t) >= 0)[0];
+ok("내신은 시작~끝을 가진 한 덩어리",
+  find("중대부고 중간고사") && find("중대부고 중간고사").s === "2026-09-02" && find("중대부고 중간고사").e === "2026-09-05",
+  JSON.stringify(find("중대부고 중간고사")));
+ok("수학시험은 하루짜리", find("수학시험").s === find("수학시험").e && find("수학시험").s === "2026-09-04");
+ok("복귀·모의고사·종강도 하루짜리",
+  find("복귀").s === find("복귀").e && find("9월 학평").s === find("9월 학평").e && find("종강").s === find("종강").e);
+ok("다른 회차는 안 들어온다", !find("딴학교"), JSON.stringify(all.map((x) => x.text)));
+ok("끝이 시작보다 앞서면 하루짜리로 붙든다",
+  find("거꾸로고") && find("거꾸로고").s === "2026-09-03" && find("거꾸로고").e === "2026-09-03",
+  JSON.stringify(find("거꾸로고")));
+ok("학년으로 거른다", !R("고1").some((x) => x.text.indexOf("봉은중") >= 0) && R("고1").some((x) => x.text.indexOf("중대부고") >= 0),
+  R("고1").map((x) => x.text).join(" | "));
+
+// ---- 이레에 눕히기 ----
+// 그 주는 8/31(월) ~ 9/6(일). 칸 번호는 0부터 여섯까지.
+const LAY = JSON.parse(run(`return JSON.stringify(weekSegments(calRanges("전체"), weekDays("2026-09-04")))`));
+const seg = (t) => LAY.segs.filter((x) => x.text.indexOf(t) >= 0)[0];
+ok("내신 막대가 9/2~9/5 칸을 덮는다", seg("중대부고 중간고사").a === 2 && seg("중대부고 중간고사").b === 5,
+  JSON.stringify(seg("중대부고 중간고사")));
+ok("시작도 끝도 이 주 안이면 양쪽이 닫힌다",
+  seg("중대부고 중간고사").head === true && seg("중대부고 중간고사").tail === true);
+// ⚠ 주 경계. 지난주에 시작한 시험은 왼쪽이 열려 있어야 "이어진다"가 보인다.
+ok("지난주에 시작한 것은 왼쪽이 열린다",
+  seg("봉은중").a === 0 && seg("봉은중").head === false && seg("봉은중").tail === true,
+  JSON.stringify(seg("봉은중")));
+ok("이 주 밖은 아예 안 눕는다", !seg("복귀"), LAY.segs.map((x) => x.text).join(" | "));
+ok("겹치면 층을 달리한다", seg("중대부고 중간고사").lane !== seg("9월 학평").lane,
+  LAY.segs.map((x) => x.text + "=" + x.lane).join(" | "));
+ok("안 겹치는 것은 아래층으로 내려온다 (빈 자리를 메운다)",
+  seg("수학시험").lane === 0 && seg("종강").lane === 0 && seg("거꾸로고").lane === 0,
+  LAY.segs.map((x) => x.text + "=" + x.lane).join(" | "));
+// 숫자를 못 박는 것보다 **규칙**을 보는 게 낫다 — 자료가 늘어도 시험이 안 깨진다.
+ok("겹치는 막대가 같은 층에 놓이는 일은 없다", (function () {
+  for (var i = 0; i < LAY.segs.length; i++) {
+    for (var j = i + 1; j < LAY.segs.length; j++) {
+      var x = LAY.segs[i], y = LAY.segs[j];
+      if (x.lane === y.lane && !(x.b < y.a || x.a > y.b)) return false;
+    }
+  }
+  return true;
+})(), LAY.segs.map((x) => x.text + "=" + x.lane).join(" | "));
+ok("층 수는 가장 높은 층 + 1", LAY.lanes === Math.max.apply(null, LAY.segs.map((x) => x.lane)) + 1,
+  String(LAY.lanes));
+
+// ---- 그리는 자리 ----
+const H = run(`
+  var lay = weekSegments(calRanges("전체"), weekDays("2026-09-04"));
+  var g = lay.segs.filter(function(x){return x.text.indexOf("중대부고 중간고사")>=0;})[0];
+  return barHtml(g, 2);
+`);
+ok("막대가 세 칸부터 네 칸을 차지한다", H.indexOf("grid-column:3/span 4") >= 0, H.slice(0, 120));
+ok("층에 맞는 줄에 놓인다 (밑줄 2 + 층 1)", H.indexOf("grid-row:3") >= 0, H.slice(0, 120));
+const H2 = run(`
+  var lay = weekSegments(calRanges("전체"), weekDays("2026-09-04"));
+  var g = lay.segs.filter(function(x){return x.text.indexOf("봉은중")>=0;})[0];
+  return barHtml(g, 2);
+`);
+ok("이어지는 막대는 ◂ 를 달고 왼쪽 모서리를 안 둥글린다",
+  H2.indexOf("◂") >= 0 && H2.indexOf('class="bar exam e"') >= 0, H2.slice(0, 140));
 
 ctx.__t.then((r) => {
   const [doneOn, after] = r.split(" | ");
