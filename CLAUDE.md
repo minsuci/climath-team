@@ -286,9 +286,19 @@ dash/config.sources[열쇠]   { id, url, title, tabs, updated, checked }
 
 ```bash
 node tools/test-sources.js
+node tools/test-wiring.js
 ```
 
 18건. 주소에서 id 뽑기, 메뉴별 근거 표, 옛 자리 읽어주기, 저장·끊기, 시험 성적이 그걸 그대로 쓰는지.
+
+> [!warning] 함수를 지우면 부르는 데가 남는다 — 문법 검사는 못 잡는다
+> 이 화면을 갈아엎으며 `loadSheetsAll` 을 지웠는데 `boot()` 이 계속 부르고 있었다.
+> `vm.Script` 는 통과했고 **로그인이 통째로 막혔다**("loadSheetsAll is not defined").
+> `tools/test-wiring.js` 가 로그인 길의 함수가 다 있는지 보고, **화면 그리는 함수를 실제로 불러본다**
+> (빈 상태로 한 번, 자료를 넣고 한 번). 화면을 고치면 이걸 돌린다.
+>
+> 처음엔 소스를 훑어 «부르는데 없는 이름»을 찾으려 했는데, 정규식 리터럴 속 따옴표(`/[&<>"']/`)에
+> 걸려 코드를 삼켰다. **파서를 흉내내는 것보다 실제로 불러보는 것이 정확하다.**
 
 > [!warning] 비동기 시험은 맨 마지막에 건다
 > `await` 로 양보하는 사이에 **뒤의 동기 줄이 `S.config` 를 갈아치운다.**

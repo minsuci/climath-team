@@ -3307,6 +3307,12 @@ async function checkSource(key) {
   return meta;
 }
 
+// 서비스 계정 이메일을 받아 둔다 — 시트를 누구에게 공유해야 하는지 화면에 적으려고.
+// boot() 이 부른다. 없애면 로그인이 통째로 죽는다.
+function loadSheetsAll() {
+  sheetsApi({ action: "whoami" }).then(function (r) { S.saEmail = r.email; renderSheets(); }).catch(function () {});
+}
+
 function renderSheets() {
   var el = $("#sec-sheets");
   var n = SOURCES.filter(function (x) { return x.sheet && !sourceOf(x.key); }).length;
