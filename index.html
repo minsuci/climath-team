@@ -3612,7 +3612,7 @@ async function loadDev(fresh) {
       .then(function (d) { return Object.assign({ cfg: rp, err: "" }, d); })
       .catch(function (e) { return { cfg: rp, err: e.message, commits: [], deploy: null }; });
   }));
-  out.forEach(function (r) { r.commits.forEach(function (c) { c.kind = devKind(c.msg); c.app = r.cfg.app; c.who = r.cfg.who; c.key = r.cfg.key; }); });
+  out.forEach(function (r) { r.commits.forEach(function (c) { c.kind = devKind(c.msg); c.app = r.cfg.app; c.who = r.cfg.who; c.key = r.cfg.key; c.owner = r.cfg.owner; }); });
   S.dev = out;
   return out;
 }
@@ -3691,7 +3691,7 @@ function devCardHtml(r, since) {
       (last ? ' <span class="muted">· 마지막 커밋 ' + esc(fmtMD(last.date)) + '</span>' : "") +
       (r.deploy ? ' <span class="muted">· 마지막 배포 ' + esc(fmtMD(r.deploy.date)) + ' <code>' + esc(r.deploy.short) + '</code>' +
         (last && r.deploy.sha !== last.sha ? ' <span class="pill yellow">마지막 커밋과 다름</span>' : "") + '</span>' : "") + '</div>' +
-      (r.description ? '<div class="muted" style="font-size:12px">' + esc(r.description) + '</div>' : ""));
+      (r.description ? '<div class="muted" style="font-size:12px">' + esc(r.description) + '</div>' : "")) + '</div>';
 }
 function devRowHtml(c) {
   var p = devSplit(c.msg), k = DEV_KINDS[c.kind] || DEV_KINDS.feat;
@@ -3699,7 +3699,7 @@ function devRowHtml(c) {
     (S.devApp ? "" : '<span class="pill">' + esc(c.app) + '</span>') +
     '<a href="' + esc(c.url) + '" target="_blank" class="dvmsg">' + esc(p[0]) + '</a>' +
     (p[1] ? '<span class="muted"> — ' + esc(p[1]) + '</span>' : "") +
-    '<span class="muted dvsha">' + esc(c.who !== c.author ? c.author + " · " : "") + esc(c.short) + '</span></div>';
+    '<span class="muted dvsha">' + esc(c.author && c.author !== c.owner && c.author !== c.who ? c.author + " · " : "") + esc(c.short) + '</span></div>';
 }
 function devEditHtml() {
   var list = reposOf();
