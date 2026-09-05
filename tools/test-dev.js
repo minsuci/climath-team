@@ -96,7 +96,7 @@ ok("주인 계정 커밋엔 이름 없음", row("minsuci").indexOf("minsuci ·")
 ok("남이 커밋하면 이름이 붙는다", row("someone").indexOf("someone ·") >= 0);
 
 // ---- 저장소 주소 없는 것 — 카드는 뜨되 깃허브는 안 부른다 ----
-ok("기본 목록에 주소 없는 것이 있다 (9/3 시연 도구)", run("S.config={}; return reposOf().filter(repoPending).length") >= 4);
+ok("기본 목록엔 주소 없는 것이 없다 — 받으면 그때 넣는다", run("S.config={}; return reposOf().filter(repoPending).length") === 0);
 ok("주소 있는 건 pending 이 아니다", run("return repoPending({owner:'a',repo:'b'})") === false);
 ok("owner 만 있어도 pending", run("return repoPending({owner:'a',repo:''})") === true);
 const pend = run(`
@@ -108,7 +108,7 @@ return pend.then((j) => {
   ok("주소 없는 건 깃허브를 안 부르고, 있는 것만 부른다", j === '{"calls":1,"p":true,"pe":"","q":false,"qe":"막힘"}', j);
   const c = run(`return devCardHtml({cfg:{key:"p",app:"학생 관리",who:"박준성",owner:"",repo:"",note:"설명"},pending:true,err:"",commits:[],deploy:null},"")`);
   ok("주소 없는 카드가 «저장소 주소 없음» 을 달고 div 를 다 닫는다", c.indexOf("저장소 주소 없음") >= 0 && (c.match(/<div/g) || []).length === (c.match(/<\/div>/g) || []).length);
-  ok("담당 후보에 앱 선생님과 적힌 이름이 다 든다", run(`S.teachers=[{name:"이현우"}]; S.config={}; var n=devWhoNames(); return n.indexOf("이현우")>=0 && n.indexOf("김효상")>=0 && n.indexOf("한민수")>=0`) === true);
+  ok("담당 후보에 앱 선생님과 적힌 이름이 다 든다", run(`S.teachers=[{name:"이현우"}]; S.config={repos:[{key:"k",app:"x",who:"김효상",owner:"",repo:""}]}; var n=devWhoNames(); return n.indexOf("이현우")>=0 && n.indexOf("김효상")>=0 && n.indexOf("한민수")>=0`) === true);
   finish();
 });
 

@@ -3654,16 +3654,13 @@ function bindSources() {
 // 그래서 자동 분류와 함께 **커밋 메시지 한 줄 규칙**을 공유 자리에서 정해야 한다.
 
 // owner/repo 가 비어 있으면 «저장소 주소를 아직 못 받은 것»이다. 카드는 뜨되 깃허브는 안 부른다.
-// 그래서 이 화면이 곧 "누가 아직 안 냈나" 명단이 된다 — 9/3 할 일 "각자 만든 도구 공개·공유"의 현황판.
+// 기본 목록은 내 것 둘뿐이다 — 다른 선생님 앱은 **주소를 받으면 그때** «저장소 관리»에서 넣는다 (2026-09-05 결정).
+// 어떤 앱이 있는지는 볼트 «40 팀장업무/팀 도구 목록»이 들고 있다. 여기 미리 앉히지 않는다.
 var REPOS_DEFAULT = [
   { key: "class", app: "수업관리 앱", who: "한민수", owner: "minsuci", repo: "climath-class", url: "https://climath-class.vercel.app",
     note: "출결·질문 번호·점수 추이·내신 참여표·결석 예고·영상→강의노트" },
   { key: "team", app: "한민수 대시보드", who: "한민수", owner: "minsuci", repo: "climath-team", url: "https://climath-team1.vercel.app",
     note: "교무팀장 화면. 업무 달력·회의록·학생 명단·학교 일정·참여표·성적" },
-  { key: "pjs", app: "학생 관리", who: "박준성", owner: "", repo: "", url: "", note: "등록→수업→클리닉→분석. 시험지 스캔 → 오답 원인 코드 → 클리닉 처방 (9/3 시연)" },
-  { key: "jcj", app: "학생 관리 + 기출 문제은행", who: "정찬준", owner: "", repo: "", url: "", note: "주간 리포트·위험 학생 자동 표시·공수1·2 유사문항 → 한글 (9/3 시연)" },
-  { key: "khs", app: "학교 일정 통합 캘린더", who: "김효상", owner: "", repo: "", url: "", note: "학교알리미·나이스 자동 수집 (9/3 시연). 서초" },
-  { key: "kjh", app: "교재 DB화", who: "김재헌", owner: "", repo: "", url: "", note: "문항 단위 분해. 11월 개강 전 사용 (9/3 시연). 서초" },
 ];
 function repoPending(rp) { return !(rp.owner && rp.repo); }
 // 담당 이름 후보 — 앱의 선생님 명단 + 이미 적힌 이름. 손으로 쳐도 되지만 표기가 갈리면 사람 거르기가 둘로 쪼개진다.
