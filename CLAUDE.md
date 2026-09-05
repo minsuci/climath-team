@@ -511,4 +511,4 @@ dash/config.repos[]   { key, app, who, owner, repo, url, note }   ← 화면 «�
 node tools/test-dev.js
 ```
 
-48건. **진짜 커밋 메시지 20건**으로 분류를 보고, 주소 읽기·기간 세기·저장소 목록 저장(`repos` 만 merge, 근거 자료 저장이 이걸 안 지우는지)을 본다.
+47건. **진짜 커밋 메시지 20건**으로 분류를 보고, 주소 읽기·기간 세기·저장소 목록 저장(`repos` 만 merge, 근거 자료 저장이 이걸 안 지우는지)을 본다.

@@ -135,8 +135,25 @@ ok("할 일 표의 담당 칸은 붉은색", (H.match(/<mark class="task">한민
 ok("남의 이름은 안 칠한다", H.indexOf("고우빈</mark>") < 0 && H.indexOf(">고우빈<") < 0 ? true : H.indexOf('mark class="task">고우빈') < 0);
 // ⚠ «정해야 할 것» 은 **담당이 아직 안 정해진** 것들이다. 붉게 칠하면 «맡았다» 로 읽힌다.
 ok("«정해야 할 것» 은 초록이다 (아직 맡은 게 아니다)",
-  H.indexOf('<li>추석특강 담당 — <mark class="hit">한민수</mark>') >= 0,
+  H.indexOf('<li class="hl-hit">추석특강 담당 — <mark class="hit">한민수</mark>') >= 0,
   H.slice(H.indexOf("정해야")));
+
+// ---- 이름만이 아니라 덩어리째 ----
+// 이름만 칠하면 «그 줄이 무슨 이야기인지» 가 안 보인다.
+ok("이름이 든 문단은 통째로 초록", H.indexOf('<p class="hl-hit">') >= 0, H.slice(0, 200));
+ok("담당 칸에만 이름이 있어도 그 줄 전체가 붉다",
+  H.indexOf('<tr class="hl-task">') >= 0 && H.indexOf('<tr class="hl-task"><td class="wrapc">고등관 회의') >= 0,
+  H.slice(H.indexOf("<tbody>"), H.indexOf("</tbody>")));
+ok("남의 줄은 안 칠한다", H.indexOf("<tr><td class=\"wrapc\">문자 재발송") >= 0,
+  H.slice(H.indexOf("문자 재발송") - 40, H.indexOf("문자 재발송") + 20));
+ok("이름이 없는 문단은 그대로", H.indexOf("<p>") < 0 || H.split("<p>").length - 1 === 0 ||
+  hi("고우빈", NOTE2).indexOf('<p class="hl') < 0, "고우빈 것으로 본다");
+const HB = hi("한민수", ["## 안건", "", "> [!warning] 조심할 것", "> 한민수가 맡는다."].join("\n"));
+ok("인용 상자도 통째로", HB.indexOf('blockquote class="yellow hl-hit"') >= 0, HB);
+// 붉은 것이 하나라도 있으면 그 덩어리는 임무다 — 초록보다 세다
+const HM = hi("한민수", ["## 할 일", "", "| 할 일 | 담당 |", "|---|---|", "| 한민수 이름이 앞에도 | 한민수 |"].join("\n"));
+ok("한 줄에 둘 다 있으면 붉은 쪽", HM.indexOf('<tr class="hl-task">') >= 0 && HM.indexOf('hl-hit') < 0, HM);
+ok("안 고르면 덩어리도 안 칠한다", hi("", NOTE2).indexOf("hl-") < 0);
 ok("붉은 것은 담당 칸 하나뿐", (H.match(/<mark class="task">/g) || []).length === 1,
   String((H.match(/<mark class="task">/g) || []).length));
 
