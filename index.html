@@ -82,6 +82,15 @@
   .pill.green { background: #e3f5ea; color: #1f7a45; }
   .pill.yellow { background: #fff4d6; color: #8a5a00; }
   .pill.blue { background: #e4ecfb; color: #234e9e; }
+  /* 근거 자료 */
+  .srcs { display: flex; flex-direction: column; gap: 8px; }
+  .src { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fafbfc; }
+  .src.on { background: #fff; }
+  .src .sh { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; font-size: 14px; }
+  .src .row { margin: 6px 0 4px; }
+  .src input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  .src .err:empty { display: none; }
+
   /* 회의록 */
   .mdoc { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 14px 18px; margin-top: 10px; }
   .mdoc h2 { font-size: 17px; margin: 0 0 8px; }
@@ -357,17 +366,15 @@ var S = {
   claims: null, teachers: [], classes: [], students: [], term: "", schoolTerms: {},
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
-  tasks: [], config: { sheets: [] }, teamOk: true, teamErr: "",
+  tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "",
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
-  sheetEdit: false, sheetScan: null, pullPick: null, pullOver: false,
+  srcEdit: "", sheetScan: null, pullPick: null, pullOver: false,
   pullOpen: false, pullRedo: false, pullFrom: "", pullTo: "", pullKind: "중간", jobUnsub: null,
   showDone: false, saEmail: "",
-  sheetData: {},  // sheetId -> { meta, tab, values, err, q }
-  sheetPick: "",  // 구글시트 페이지에서 지금 보는 시트
   stLog: [],      // 명단 변경 기록 (앱·대시보드 양쪽)
 };
 
@@ -495,7 +502,7 @@ function renderShell() {
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
 var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["minutes", "회의록"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
-  ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "구글시트"]];
+  ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
 function isPage(id) { return PAGES.some(function (p) { return p[0] === id; }); }
 function currentPage() {
   var h = (location.hash || "").replace("#", "");
@@ -538,7 +545,7 @@ async function loadCore() {
     loadTests(),
     db.collection("appConfig").doc("studentLog").get()
       .then(function (d) { S.stLog = (d.exists && d.data().items) || []; }).catch(function () { S.stLog = []; }),
-    dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sheets: [] }, d.data()) : { sheets: [] }; })
+    dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sources: {} }, d.data()) : { sources: {} }; })
       .catch(function () {}),
   ];
   await Promise.all(jobs);
@@ -2830,18 +2837,13 @@ function bindTestForm() {
 
 function sheetLineHtml() {
   var sh = scoreSheet();
-  if (S.sheetEdit || !sh || !sh.id) {
-    return '<div class="entry" style="margin:8px 0"><div class="row">' +
-      '<span class="muted">근거 시트</span>' +
-      '<input type="text" id="sh-score-url" placeholder="성적을 적는 구글시트 주소를 붙여넣기" value="' + esc((sh && sh.url) || "") + '" style="flex:1;min-width:200px">' +
-      '<button class="btn" id="sh-score-save">저장</button>' +
-      (sh && sh.id ? '<button class="mini" id="sh-score-x">취소</button>' : "") + '</div>' +
-      '<div class="muted" style="font-size:12px">시트를 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "대시보드 서비스 계정") +
-      ' 에게 <b>뷰어</b>로 공유해야 읽힌다. 주소가 바뀌면 여기서 고친다.</div></div>';
+  if (!sh || !sh.id) {
+    return '<div class="row" style="margin:8px 0;font-size:13px"><span class="muted">근거 시트가 없다.</span>' +
+      '<button class="mini" id="sh-score-edit">근거 자료에서 정하기</button></div><div id="sh-pull-box"></div>';
   }
   return '<div class="row" style="margin:8px 0;font-size:13px"><span class="muted">근거 시트</span>' +
     '<a href="' + esc(sh.url || ("https://docs.google.com/spreadsheets/d/" + sh.id)) + '" target="_blank">' +
-    esc(sh.title || (S.sheetScan && S.sheetScan.title) || "성적 시트") + '</a>' +
+    esc(sh.title || "성적 시트") + '</a>' +
     '<button class="mini" id="sh-score-edit">바꾸기</button>' +
     '<span class="sp" style="flex:1"></span>' +
     (S.testPick ? '<button class="mini" id="sh-pull">시트에서 가져오기</button>' : "") + '</div>' +
@@ -2849,16 +2851,9 @@ function sheetLineHtml() {
 }
 function bindSheetLine(t) {
   var el = $("#sec-scores");
-  var sv = $("#sh-score-save", el);
-  if (sv) sv.onclick = async function () {
-    var raw = $("#sh-score-url").value.trim(), id = sheetIdFrom(raw);
-    if (!id) { alert("시트 주소를 못 읽었다"); return; }
-    this.disabled = true;
-    try { await saveScoreSheet({ id: id, url: raw, updated: Date.now() }); S.sheetEdit = false; S.sheetScan = null; renderScores(); }
-    catch (e) { this.disabled = false; alert("저장하지 못했다: " + e.message); }
-  };
-  var xb = $("#sh-score-x", el); if (xb) xb.onclick = function () { S.sheetEdit = false; renderScores(); };
-  var eb = $("#sh-score-edit", el); if (eb) eb.onclick = function () { S.sheetEdit = true; renderScores(); };
+  // 근거는 «근거 자료» 메뉴에서 고친다. 여기서는 거기로 보내기만 한다.
+  var eb = $("#sh-score-edit", el);
+  if (eb) eb.onclick = function () { S.srcEdit = "scores"; showPage("sheets"); renderSheets(); };
   var pb = $("#sh-pull", el);
   if (pb) pb.onclick = async function () {
     pb.disabled = true; pb.textContent = "시트 읽는 중...";
@@ -3099,11 +3094,9 @@ function parseScoreLine(line, cols) {
 // 시트 주소는 언제든 바뀔 수 있으므로 `dash/config.scoreSheet` 에 두고 화면에서 고친다.
 // (공개 저장소라 코드에 적지 않는다 — 볼트 작업 노트에 있다.)
 
-function scoreSheet() { return S.config.scoreSheet || null; }
-async function saveScoreSheet(v) {
-  S.config.scoreSheet = v;
-  await dashDoc("config").set({ scoreSheet: v, updated: Date.now() }, { merge: true });
-}
+// 근거는 «근거 자료» 메뉴 한 곳에서 관리한다. 여기서는 읽기만 한다 —
+// 같은 것을 두 자리에서 고치게 하면 어느 쪽이 맞는지 알 수 없다.
+function scoreSheet() { return sourceOf("scores"); }
 // 두 줄 머리글을 읽어 시험 묶음을 뽑는다
 function parseScoreSheet(values) {
   var v = values || [];
@@ -3258,98 +3251,135 @@ function dailyDetailsHtml() {
     '<p class="muted" style="font-size:12px">학생이 점수 탭에서 낸 것. 시험 성적과는 다른 자료다.</p></details>';
 }
 
-// ---------- 구글시트 ----------
+// ---------- 근거 자료 ----------
+//
+// **각 메뉴가 어디서 자료를 끌어오는지**를 한 곳에서 관리한다. 여기서 바꾸면 그 메뉴가 바로 그걸 쓴다.
+//
+// 예전에는 시트를 표로 떠서 보여줬는데, 그건 시트를 그냥 여는 게 낫다(2026-09-05).
+// 필요한 건 "이 메뉴가 무엇을 근거로 삼는가"이지 시트 내용이 아니다.
+//
+// 시트 근거는 `dash/config.sources[열쇠]` 에 둔다. 옛 `config.scoreSheet` 도 읽어준다(한 번 옮긴다).
+
+var SOURCES = [
+  { key: "scores", menu: "시험 성적", sheet: true,
+    what: "모의고사·내신의 원점수와 예상등급",
+    how: "시험을 고르고 «시트에서 가져오기» 를 누르면 여기 등록한 시트에서 끌어온다. 탭 전체를 훑어 시험 이름으로 찾는다." },
+  { key: "", menu: "학교 일정", sheet: false,
+    what: "학교별 내신 기간",
+    how: "시트가 아니다. 나이스 → 학교 홈페이지 → 게시판 첨부문서 → 붙여둔 그림 차례로 찾는다. 줄마다 근거 링크가 붙는다." },
+  { key: "", menu: "학생 명단 · 내신 참여표", sheet: false,
+    what: "학생·반·담임·제출",
+    how: "수업관리 앱 DB에서 바로 읽고 쓴다. 사본이 없다." },
+  { key: "", menu: "회의록", sheet: false,
+    what: "회의록 본문",
+    how: "볼트 «40 팀장업무/회의록» 이 원본이다. 회의록을 쓰면 자동으로 올라온다." },
+  { key: "", menu: "업무 달력 · 할 일", sheet: false,
+    what: "할 일과 반복 업무",
+    how: "이 앱 DB에 쌓인다. 두 화면이 같은 것을 본다." },
+];
+
 async function saveConfig() {
-  if (!S.teamOk) return;
-  await dashDoc("config").set({ sheets: S.config.sheets || [], updated: Date.now() }, { merge: true });
+  await dashDoc("config").set({ sources: S.config.sources || {}, updated: Date.now() }, { merge: true });
 }
 function sheetIdFrom(s) {
-  var m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(s) || /^([A-Za-z0-9_-]{20,})$/.exec(s.trim());
+  var m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(s) || /^([A-Za-z0-9_-]{20,})$/.exec(String(s).trim());
   return m ? m[1] : "";
 }
-function loadSheetsAll() {
-  (S.config.sheets || []).forEach(function (sh) { loadSheet(sh); });
-  sheetsApi({ action: "whoami" }).then(function (r) { S.saEmail = r.email; renderSheets(); }).catch(function () {});
+// 옛 자리(config.scoreSheet)에 있던 것도 읽어준다 — 한 번 저장하면 새 자리로 옮겨간다.
+function sourceOf(key) {
+  var m = S.config.sources || {};
+  if (m[key]) return m[key];
+  if (key === "scores" && S.config.scoreSheet) return S.config.scoreSheet;
+  return null;
 }
-async function loadSheet(sh) {
-  var d = S.sheetData[sh.id] = S.sheetData[sh.id] || {};
-  d.loading = true; d.err = ""; renderSheets();
-  try {
-    if (!d.meta) { d.meta = await sheetsApi({ action: "meta", spreadsheetId: sh.id }); if (!sh.title) sh.title = d.meta.title; }
-    var tab = sh.tab || (d.meta.tabs[0] && d.meta.tabs[0].title) || "";
-    var r = await sheetsApi({ action: "values", spreadsheetId: sh.id, range: "'" + tab.replace(/'/g, "''") + "'!A1:AZ" + (sh.rows || 300) });
-    d.tab = tab; d.values = r.values || []; d.at = Date.now();
-  } catch (e) { d.err = e.message; }
-  d.loading = false; renderSheets();
+async function saveSource(key, v) {
+  S.config.sources = S.config.sources || {};
+  if (v) S.config.sources[key] = v; else delete S.config.sources[key];
+  await saveConfig();
 }
+// 서비스 계정이 그 시트를 정말 읽을 수 있는지 본다. 못 읽으면 무엇을 해야 하는지 그대로 나온다.
+async function checkSource(key) {
+  var sh = sourceOf(key);
+  if (!sh || !sh.id) throw new Error("주소를 먼저 넣어주세요");
+  var meta = await sheetsApi({ action: "meta", spreadsheetId: sh.id });
+  var next = Object.assign({}, sh, { title: meta.title || "", tabs: (meta.tabs || []).length, checked: Date.now() });
+  await saveSource(key, next);
+  return meta;
+}
+
 function renderSheets() {
   var el = $("#sec-sheets");
-  var sheets = S.config.sheets || [];
-  navBadge("sheets", sheets.length, false);
-  if (!sheets.some(function (x) { return x.id === S.sheetPick; })) S.sheetPick = sheets.length ? sheets[0].id : "";
-  var picked = sheets.filter(function (x) { return x.id === S.sheetPick; });
-  el.innerHTML = '<h2>구글시트 <span class="n">' + sheets.length + '개 연동</span><span class="sp"></span><button id="sh-reload">전부 새로고침</button></h2>' +
-    '<details' + (sheets.length ? "" : " open") + '><summary>시트 연동하기 — 주소 붙여넣기</summary>' +
-    '<div class="row"><input type="text" id="sh-url" placeholder="시트 주소를 붙여넣기 (여러 개면 줄마다 하나)"><button class="btn" id="sh-add"' + (S.teamOk ? "" : " disabled") + '>연동</button></div>' +
-    '<p class="muted" style="font-size:12px;margin:0 0 6px">시트마다 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "서비스 계정") + ' 을 <b>뷰어</b>로 공유해야 읽힌다. 남이 만든 시트도 편집 권한이 있으면 공유할 수 있다. 읽기만 하고 절대 쓰지 않는다.</p></details>' +
-    (sheets.length ? '<div class="chips" style="margin-top:8px">' + sheets.map(function (sh) {
-      var d = S.sheetData[sh.id] || {};
-      return '<button class="mini ' + (sh.id === S.sheetPick ? "on" : "") + (d.err ? " warn" : "") + '" data-pick="' + esc(sh.id) + '">' + esc(sh.title || (d.meta && d.meta.title) || sh.id.slice(0, 8)) + '</button>';
-    }).join("") + '</div>' + picked.map(sheetBlock).join("") : '<div class="empty">아직 연동한 시트가 없다.</div>');
-  $$("[data-pick]", el).forEach(function (b) { b.onclick = function () { S.sheetPick = b.getAttribute("data-pick"); renderSheets(); }; });
-  $("#sh-reload").onclick = function () { sheets.forEach(function (sh) { delete S.sheetData[sh.id]; loadSheet(sh); }); };
-  $("#sh-add").onclick = async function () {
-    var lines = $("#sh-url").value.split(/\r?\n/); var added = 0;
-    lines.forEach(function (l) {
-      var id = sheetIdFrom(l); if (!id) return;
-      if (sheets.some(function (s) { return s.id === id; })) return;
-      var m = /gid=(\d+)/.exec(l);
-      sheets.push({ id: id, title: "", tab: "", rows: 300, gid: m ? +m[1] : null }); added++;
-    });
-    if (!added) { alert("시트 주소를 못 읽었다"); return; }
-    S.config.sheets = sheets; S.sheetPick = sheets[sheets.length - added].id; await saveConfig(); renderSheets();
-    sheets.slice(-added).forEach(loadSheet);
-  };
-  sheets.forEach(function (sh) {
-    var box = $('[data-sheet="' + sh.id + '"]', el); if (!box) return;
-    var sel = $("select.tab", box);
-    if (sel) sel.onchange = async function () { sh.tab = sel.value; await saveConfig(); delete S.sheetData[sh.id].values; loadSheet(sh); };
-    var q = $("input.q", box);
-    if (q) q.oninput = function () { S.sheetData[sh.id].q = q.value; renderSheetTable(sh, $(".tbl", box)); };
-    $(".rm", box).onclick = async function () {
-      if (!confirm("연동을 풀까? " + (sh.title || sh.id))) return;
-      S.config.sheets = sheets.filter(function (s) { return s.id !== sh.id; }); delete S.sheetData[sh.id]; await saveConfig(); renderSheets();
+  var n = SOURCES.filter(function (x) { return x.sheet && !sourceOf(x.key); }).length;
+  navBadge("sheets", n, true);
+  el.innerHTML = '<h2>근거 자료 <span class="n">이 앱이 어디서 자료를 가져오나</span></h2>' +
+    '<p class="muted" style="font-size:12px;margin:0 0 10px">여기서 바꾸면 그 메뉴가 바로 그걸 쓴다. ' +
+    '시트는 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "이 앱의 서비스 계정") +
+    ' 에게 <b>뷰어</b>로 공유해야 읽힌다 — 남이 만든 시트도 편집 권한이 있으면 공유할 수 있다. 읽기만 하고 쓰지 않는다.</p>' +
+    '<div class="srcs">' + SOURCES.map(srcRowHtml).join("") + '</div>';
+  bindSources();
+}
+function srcRowHtml(x) {
+  if (!x.sheet) {
+    return '<div class="src"><div class="sh"><b>' + esc(x.menu) + '</b>' +
+      '<span class="pill">' + esc(x.what) + '</span></div>' +
+      '<div class="muted" style="font-size:12px">' + esc(x.how) + '</div></div>';
+  }
+  var sh = sourceOf(x.key), edit = S.srcEdit === x.key || !sh;
+  return '<div class="src on" data-src="' + esc(x.key) + '"><div class="sh"><b>' + esc(x.menu) + '</b>' +
+    '<span class="pill blue">' + esc(x.what) + '</span>' +
+    (sh ? '<span class="pill green">연결됨</span>' : '<span class="pill red">아직 없음</span>') +
+    '<span class="sp" style="flex:1"></span>' +
+    (sh ? '<a class="mini" href="' + esc(sh.url || ("https://docs.google.com/spreadsheets/d/" + sh.id)) + '" target="_blank">시트 열기</a>' +
+      '<button class="mini" data-scheck="' + esc(x.key) + '">읽히나 확인</button>' +
+      (edit ? "" : '<button class="mini" data-sedit="' + esc(x.key) + '">바꾸기</button>') : "") + '</div>' +
+    (sh && !edit ? '<div style="font-size:13px">' + esc(sh.title || "이름 모름") +
+      (sh.tabs ? ' <span class="muted">· 탭 ' + sh.tabs + '개</span>' : "") +
+      (sh.checked ? ' <span class="muted">· 확인 ' + esc(fmtMD(new Date(sh.checked).toISOString().slice(0, 10))) + '</span>' : "") +
+      '</div>' : "") +
+    (edit ? '<div class="row"><input type="text" class="surl" placeholder="구글시트 주소를 붙여넣기" value="' +
+      esc((sh && sh.url) || "") + '" style="flex:1;min-width:200px">' +
+      '<button class="btn" data-ssave="' + esc(x.key) + '">저장</button>' +
+      (sh ? '<button class="mini" data-scancel="1">취소</button>' +
+            '<button class="mini" data-sdel="' + esc(x.key) + '">연결 끊기</button>' : "") + '</div>' : "") +
+    '<div class="muted" style="font-size:12px">' + esc(x.how) + '</div>' +
+    '<div class="err" data-serr="' + esc(x.key) + '"></div></div>';
+}
+function bindSources() {
+  var el = $("#sec-sheets");
+  $$("[data-sedit]", el).forEach(function (b) { b.onclick = function () { S.srcEdit = b.getAttribute("data-sedit"); renderSheets(); }; });
+  $$("[data-scancel]", el).forEach(function (b) { b.onclick = function () { S.srcEdit = ""; renderSheets(); }; });
+  $$("[data-ssave]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var key = b.getAttribute("data-ssave"), box = b.closest(".src");
+      var raw = $(".surl", box).value.trim(), id = sheetIdFrom(raw);
+      var err = $('[data-serr="' + key + '"]', el);
+      if (!id) { err.textContent = "시트 주소를 못 읽었다. 주소창의 주소를 그대로 붙여넣는다."; return; }
+      b.disabled = true; err.textContent = "";
+      try {
+        await saveSource(key, { id: id, url: raw, updated: Date.now() });
+        S.srcEdit = "";
+        try { await checkSource(key); } catch (e) { err.textContent = e.message; }
+        S.sheetScan = null;                 // 근거가 바뀌었으니 훑어둔 것은 버린다
+        renderSheets();
+      } catch (e) { b.disabled = false; err.textContent = "저장하지 못했다: " + e.message; }
     };
-    $(".re", box).onclick = function () { delete S.sheetData[sh.id]; loadSheet(sh); };
-    var rowsSel = $("select.rows", box);
-    if (rowsSel) rowsSel.onchange = async function () { sh.rows = +rowsSel.value; await saveConfig(); delete S.sheetData[sh.id].values; loadSheet(sh); };
   });
-}
-function sheetBlock(sh) {
-  var d = S.sheetData[sh.id] || {};
-  var tabs = (d.meta && d.meta.tabs) || [];
-  return '<div class="sheet" data-sheet="' + esc(sh.id) + '"><h3>' + esc(sh.title || d.meta && d.meta.title || sh.id) +
-    ' <a href="https://docs.google.com/spreadsheets/d/' + esc(sh.id) + '/edit' + (sh.gid != null ? "#gid=" + sh.gid : "") + '" target="_blank" class="mini">열기</a>' +
-    (tabs.length ? '<select class="tab mini">' + tabs.map(function (t) { return '<option' + (t.title === d.tab ? " selected" : "") + '>' + esc(t.title) + '</option>'; }).join("") + '</select>' : "") +
-    (d.values ? '<input type="text" class="q mini" placeholder="찾기" value="' + esc(d.q || "") + '" style="width:120px">' : "") +
-    '<select class="rows mini" title="읽을 줄 수">' + [100, 300, 1000].map(function (n) { return '<option value="' + n + '"' + ((sh.rows || 300) === n ? " selected" : "") + '>' + n + '줄</option>'; }).join("") + '</select>' +
-    '<span class="sp"></span>' + (d.loading ? '<span class="muted">읽는 중...</span>' : d.at ? '<span class="muted" style="font-size:12px">' + new Date(d.at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) + '</span>' : "") +
-    '<button class="mini re">새로고침</button><button class="mini rm">풀기</button></h3>' +
-    (d.err ? '<div class="err">' + esc(d.err) + '</div>' : "") +
-    '<div class="tbl">' + sheetTableHtml(sh) + '</div></div>';
-}
-function renderSheetTable(sh, el) { el.innerHTML = sheetTableHtml(sh); }
-function sheetTableHtml(sh) {
-  var d = S.sheetData[sh.id] || {};
-  var v = d.values; if (!v) return d.loading ? "" : '<div class="empty">아직 안 읽었다</div>';
-  if (!v.length) return '<div class="empty">비어 있다</div>';
-  var q = (d.q || "").trim().toLowerCase();
-  var head = v[0] || []; var body = v.slice(1);
-  if (q) body = body.filter(function (r) { return r.join(" ").toLowerCase().indexOf(q) >= 0; });
-  var cols = Math.min(head.length || (body[0] || []).length, 26);
-  return '<table><thead><tr>' + Array.apply(null, Array(cols)).map(function (_, i) { return '<th>' + esc(head[i] || "") + '</th>'; }).join("") + '</tr></thead><tbody>' +
-    body.slice(0, 200).map(function (r) { return '<tr>' + Array.apply(null, Array(cols)).map(function (_, i) { return '<td title="' + esc(r[i] || "") + '">' + esc(r[i] || "") + '</td>'; }).join("") + '</tr>'; }).join("") +
-    '</tbody></table>' + (body.length > 200 ? '<div class="muted" style="padding:6px">' + body.length + '줄 중 200줄만</div>' : "");
+  $$("[data-scheck]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var key = b.getAttribute("data-scheck"), err = $('[data-serr="' + key + '"]', el);
+      b.disabled = true; b.textContent = "확인 중..."; err.textContent = "";
+      try { var meta = await checkSource(key); alert("읽힌다.\n\n" + meta.title + "\n탭 " + (meta.tabs || []).length + "개"); renderSheets(); }
+      catch (e) { b.disabled = false; b.textContent = "읽히나 확인"; err.textContent = e.message; }
+    };
+  });
+  $$("[data-sdel]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var key = b.getAttribute("data-sdel");
+      if (!confirm("연결을 끊는다. 그 메뉴에서 시트를 못 쓰게 된다.")) return;
+      try { await saveSource(key, null); S.srcEdit = ""; S.sheetScan = null; renderSheets(); }
+      catch (e) { alert("끊지 못했다: " + e.message); }
+    };
+  });
 }
 </script>
 </body>
