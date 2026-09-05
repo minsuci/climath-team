@@ -186,8 +186,33 @@ ctx.__p.then((o) => {
   ok("다시 넣으면 옛 번호를 되쓴다   (기록이 안 끊긴다)", o.reusedSame === true, o.reused);
   ok("이미 쓰는 번호면 되쓰지 않는다", o.noClash === true);
   ok("pid 없으면 이름으로 찾는다", o.nameKey === true);
+// ---- 학생 PIN 초기화 ----
+// 수업관리 앱의 `/api/auth` 를 브라우저에서 바로 부른다. **새 비번을 정해주지 않고**
+// 초기 PIN 으로 되돌린다 — 선생님이 정한 비번은 그것대로 남의 손을 거친 비번이 된다.
+const CALLS = [];
+vm.runInContext(`
+  fetch = function (url, opt) {
+    CALLS_REF.push({ url: url, body: JSON.parse(opt.body) });
+    return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ ok: true, pin: "1234", classes: ["고1S"] }); } });
+  };
+  firebase.auth = function () { return { currentUser: { getIdToken: function () { return Promise.resolve("CLASSTOKEN"); } } }; };
+`, Object.assign(ctx, { CALLS_REF: CALLS }));
+
+vm.runInContext(`globalThis.__pin = stResetPin("김서진");`, ctx);
+ctx.__pin.then((r) => {
+  const c = CALLS[0] || {};
+  ok("수업관리 앱 쪽으로 부른다", String(c.url).indexOf("climath-class.vercel.app/api/auth") >= 0, String(c.url));
+  ok("resetStudentPin 을 부른다", c.body && c.body.action === "resetStudentPin", JSON.stringify(c.body));
+  ok("이름을 넘긴다", c.body && c.body.name === "김서진");
+  // ⚠ class 토큰을 넘겨야 한다. team 토큰으로는 그쪽이 아무것도 안 해준다.
+  ok("수업관리 앱 토큰을 넘긴다", c.body && c.body.idToken === "CLASSTOKEN", c.body && c.body.idToken);
+  ok("초기 PIN 을 돌려받는다", r.pin === "1234", JSON.stringify(r));
+  ok("새 비번을 이쪽에서 정하지 않는다", !("newPin" in (c.body || {})) && !("pin" in (c.body || {})),
+    JSON.stringify(c.body));
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
   process.exit(bad ? 1 : 0);
+}).catch((e) => { console.error("터짐:", e); process.exit(1); });
 }).catch((e) => { console.error("터짐:", e); process.exit(1); });

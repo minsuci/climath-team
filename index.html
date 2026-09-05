@@ -201,7 +201,7 @@
   /* 명단 편집 시트 */
   /* 기본 table 은 width:100% 라 화면이 좁으면 칸을 줄여 글씨를 자른다.
      최소 폭을 박아 두면 대신 상자가 가로로 굴러간다. */
-  table.sheet-t { min-width: 840px; }
+  table.sheet-t { min-width: 880px; }
   table.sheet-t td { padding: 2px 4px; }
   /* 가로로 밀어도 누구 줄인지 보이게 번호·이름은 왼쪽에 붙여 둔다.
      배경은 tr.gN td 가 이미 칠해 주므로 따로 주지 않는다(학년 색이 살아 있어야 한다). */
@@ -216,6 +216,8 @@
   table.sheet-t input[type=text]:focus, table.sheet-t select:focus { border-color: var(--navy); background: #fff; outline: none; }
   table.sheet-t input.ok, table.sheet-t select.ok { background: #e3f5ea; border-color: #2f9e5f; }
   table.sheet-t input.bad, table.sheet-t select.bad { background: #fde8e8; border-color: var(--red); }
+  table.sheet-t .rowbtns { white-space: nowrap; }
+  table.sheet-t .rowbtns .pin { padding: 2px 6px; font-size: 11px; margin-right: 2px; }
   table.sheet-t .cls-btn { max-width: 180px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
   table.sheet-t tr.clsrow td { background: #f7f8fb; white-space: normal; }
   table.sheet-t tr.newrow input { border: 1px dashed var(--line); background: #fff; }
@@ -384,6 +386,24 @@ async function authApi(body) {
   if (!r.ok) throw new Error((j && j.error) || ("요청 실패 (" + r.status + ")"));
   return j || {};
 }
+// 수업관리 앱의 `/api/auth` 를 브라우저에서 바로 부른다. 그쪽은 CORS 를 열어 두었고,
+// **class 토큰으로 스스로 권한을 본다** — 우리 서버가 한 번 더 감쌀 이유가 없다.
+// (학교 일정은 CORS 가 없어서 서버가 중계한다. 여기는 다르다)
+var CLASS_API = "https://climath-class.vercel.app/api/auth";
+async function classAuthApi(body) {
+  var u = firebase.auth().currentUser;
+  if (!u) throw new Error("로그인이 풀렸다. 새로고침 해주세요");
+  var idToken = await u.getIdToken();
+  var r = await fetch(CLASS_API, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ idToken: idToken }, body)) });
+  var j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || ("요청 실패 (" + r.status + ")"));
+  return j || {};
+}
+// 학생 PIN 초기화. 새 비번을 **정해주지 않고** 초기 PIN 으로 되돌린다 —
+// 선생님이 정한 비번은 그것대로 남의 손을 거친 비번이 된다. 학생이 다음에 들어올 때 스스로 정한다.
+function stResetPin(name) { return classAuthApi({ action: "resetStudentPin", name: name }); }
+
 async function sheetsApi(body) {
   var u = teamAuth.currentUser;
   if (!u) throw new Error("로그인이 필요합니다");
@@ -1351,7 +1371,7 @@ function studentEditHtml(assigned) {
         '<button class="mini" id="st-link">사람으로 만들어 잇기</button></div>' : "") + '</div>' : "") +
     '<div class="tbl tall"><table class="sheet-t"><thead><tr>' +
     '<th style="width:34px">#</th><th style="width:104px">이름</th><th style="width:82px">학년</th><th style="width:150px">학교</th>' +
-    '<th style="width:104px">담임</th><th style="width:200px">반</th><th style="width:130px">메모</th><th style="width:36px"></th></tr></thead>' +
+    '<th style="width:104px">담임</th><th style="width:200px">반</th><th style="width:130px">메모</th><th style="width:78px"></th></tr></thead>' +
     '<tbody id="st-rows">' + rows.map(editRowHtml).join("") +
     '<tr class="newrow"><td class="muted">+</td><td colspan="7"><input type="text" id="st-new" placeholder="새 학생 이름을 치고 Enter"></td></tr>' +
     '</tbody></table></div>' +
@@ -1411,7 +1431,8 @@ function editRowHtml(x, i) {
     '<td><select data-f="homeroom"><option value="">—</option>' + S.teachers.map(function (t) { return '<option value="' + esc(t.tid) + '"' + (t.tid === x.homeroom ? " selected" : "") + '>' + esc(t.name) + '</option>'; }).join("") + '</select></td>' +
     '<td><button class="mini cls-btn">' + (cls.length ? cls.map(function (c) { return esc(c.name); }).join(", ") : '<span class="red">미배정</span>') + '</button></td>' +
     '<td><input type="text" data-f="memo" value="' + esc(memo) + '" placeholder="이 앱에만 남는 메모"></td>' +
-    '<td><button class="x del" title="지우기">×</button></td></tr>' +
+    '<td class="rowbtns"><button class="mini pin" title="PIN을 초기 값으로 되돌린다">PIN</button>' +
+    '<button class="x del" title="지우기">×</button></td></tr>' +
     (S.stOpen === x.pid ? clsRowHtml(x.pid) : "");
 }
 function clsRowHtml(pid) {
@@ -1497,6 +1518,24 @@ function bindEdit(el, assigned) {
     };
   });
   bindClsRow(el, assigned);
+  // «비번 까먹었어요» 를 받아주는 자리. 앱의 학생 명단에 있는 것과 같은 일을 한다.
+  $$("#st-rows .pin", el).forEach(function (b) {
+    b.onclick = async function () {
+      var pid = b.closest("tr").getAttribute("data-pid"), person = S.byPid[pid];
+      if (!person) return;
+      if (!confirm(person.name + " 학생의 PIN을 초기화할까?\n\n" +
+        "지금 쓰던 비번이 사라지고 초기 PIN으로 돌아간다.\n" +
+        "그 학생은 다음에 들어올 때 새 PIN을 스스로 정한다.")) return;
+      b.disabled = true; b.textContent = "…";
+      try {
+        var r = await stResetPin(person.name);
+        alert(person.name + " PIN을 초기화했다.\n\n초기 PIN은 " + r.pin + " 이다. 학생에게 알려준다." +
+          (r.noClass ? "\n(아직 반이 없는 학생이다)" : "") +
+          (r.classes && r.classes.length ? "\n반: " + r.classes.join(", ") : ""));
+      } catch (e) { alert("초기화하지 못했다: " + e.message); }
+      b.disabled = false; b.textContent = "PIN";
+    };
+  });
   $$("#st-rows .del", el).forEach(function (b) {
     b.onclick = async function () {
       var pid = b.closest("tr").getAttribute("data-pid"), person = S.byPid[pid];
