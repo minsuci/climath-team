@@ -371,11 +371,52 @@ var teamApp = firebase.initializeApp(teamConfig, "team");     // 대시보드 DB
 var db = firebase.firestore();
 var tdb = firebase.firestore(teamApp);
 var teamAuth = firebase.auth(teamApp);
+
+// ---------- 읽기만 하는 계정 ----------
+// 선생님은 관리자와 같은 것을 보되 아무것도 못 고친다 (2026-09-05 결정 — «전부, 읽기만»).
+// 쓰는 자리가 스물여섯 군데라 하나씩 막지 않는다. Firestore 의 set/update/delete/add/commit 을
+// **한 군데서** 가로채 S.ro 면 거절한다. 팀 DB 는 규칙(firestore.rules)이 한 번 더 막고,
+// 앱 DB(climath-class)는 그쪽 규칙이 선생님 쓰기를 허용하므로 이 가로채기가 유일한 문턱이다.
+var RO_MSG = "읽기만 하는 계정이다. 고치는 것은 관리자(한민수)만 한다";
+function guardWrites() {
+  var FS = firebase.firestore;
+  if (!FS || !FS.DocumentReference) return;
+  var wrap = function (proto, m) {
+    var orig = proto[m];
+    if (typeof orig !== "function") return;
+    proto[m] = function () { if (S.ro) return Promise.reject(new Error(RO_MSG)); return orig.apply(this, arguments); };
+  };
+  ["set", "update", "delete"].forEach(function (m) { wrap(FS.DocumentReference.prototype, m); });
+  if (FS.CollectionReference) wrap(FS.CollectionReference.prototype, "add");
+  if (FS.WriteBatch) wrap(FS.WriteBatch.prototype, "commit");
+  if (FS.Transaction) ["set", "update", "delete"].forEach(function (m) { wrap(FS.Transaction.prototype, m); });
+}
+guardWrites();
+// 화면에서 고치는 단추·칸을 감춘다. 막는 건 위 가로채기이고, 이건 헷갈리지 않게 하는 것이다.
+// «다시 읽기»·거르기 칩·찾기 칸은 남긴다. 글자로 가르는 건 어설프지만, 고치는 단추가 어느 화면에나
+// 흩어져 있어 하나씩 표시하는 것보다 낫다. 새 단추를 만들 때 이 말들을 피하면 읽기 계정에도 보인다.
+var RO_WORDS = /저장|지우|빼기|초기화|가져오|찾아오|보내기|만들기|추가|잇기|되돌리|편집|관리|고치|바꾸|끊기|넣기|채우기|읽히나|끝냄|완료|취소|잠금|잠그|풀기|다시 보내|재발송|올리기|내려받|＋|✓|✕|×/;
+function applyReadOnly() {
+  if (!S.ro) return;
+  $$(".card button, .card a.mini", root).forEach(function (b) {
+    if (b.hidden) return;
+    var t = (b.textContent || "").trim();
+    if (b.classList.contains("btn") || b.hasAttribute("data-ddel") || b.hasAttribute("data-sdel") || RO_WORDS.test(t)) b.hidden = true;
+  });
+  $$(".card input, .card textarea", root).forEach(function (i) {
+    var ty = (i.getAttribute("type") || "text").toLowerCase();
+    if (ty === "checkbox" || ty === "radio" || i.tagName === "TEXTAREA") { i.disabled = true; return; }
+    if (i.classList.contains("mini") || /찾기|검색/.test(i.getAttribute("placeholder") || "")) return;   // 거르기·찾기 칸은 둔다
+    if (ty === "text" || ty === "date" || ty === "number") i.readOnly = true;
+  });
+}
+if (typeof MutationObserver !== "undefined") new MutationObserver(function () { if (S.ro) applyReadOnly(); }).observe(root, { childList: true, subtree: true });
 function dashDoc(name) { return tdb.collection("dash").doc(name); }
 async function signOutAll() { try { await teamAuth.signOut(); } catch (e) {} try { await firebase.auth().signOut(); } catch (e) {} }
 
 var $ = function (s, el) { return (el || document).querySelector(s); };
 var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
+var root = $("#root");
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -397,7 +438,7 @@ var gradeRank = function (g) { var i = GRADES.indexOf(g); return i < 0 ? 99 : i;
 
 // ---------- 상태 ----------
 var S = {
-  claims: null, teachers: [], classes: [], students: [], term: "", schoolTerms: {},
+  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {},   // ro = 읽기만 하는 계정(선생님)
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
@@ -425,6 +466,7 @@ async function authApi(body) {
 // (학교 일정은 CORS 가 없어서 서버가 중계한다. 여기는 다르다)
 var CLASS_API = "https://climath-class.vercel.app/api/auth";
 async function classAuthApi(body) {
+  if (S.ro) throw new Error(RO_MSG);
   var u = firebase.auth().currentUser;
   if (!u) throw new Error("로그인이 풀렸다. 새로고침 해주세요");
   var idToken = await u.getIdToken();
@@ -450,7 +492,6 @@ async function sheetsApi(body) {
 }
 
 // ---------- 로그인 ----------
-var root = $("#root");
 // 로그인에 실패한 이유. 실패 직후 signOut 이 onAuthStateChanged 를 깨워 renderLogin 이
 // 한 번 더 돌기 때문에, 인자로만 넘기면 메시지가 지워진다. 다음 시도 때 비운다.
 var LOGIN_ERR = "";
@@ -462,7 +503,7 @@ function renderLogin(msg) {
     '<input id="lg-p" type="password" inputmode="numeric" placeholder="PIN" autocomplete="current-password">' +
     '<button class="btn" id="lg-go">들어가기</button>' +
     '<div class="err" id="lg-err">' + esc(msg || LOGIN_ERR || "") + '</div>' +
-    '<p class="muted" style="font-size:12px">수업관리 앱과 같은 계정이다. 관리자만 들어올 수 있다.</p></div></div>';
+    '<p class="muted" style="font-size:12px">수업관리 앱과 같은 계정·PIN 이다. 선생님은 읽기만 된다.</p></div></div>';
   authApi({ action: "teachers" }).then(function (r) {
     var ts = (r.teachers || []).filter(function (t) { return t.status !== "pending"; });
     $("#lg-t").innerHTML = ts.map(function (t) {
@@ -512,12 +553,13 @@ async function boot() {
   if (!u || !tu) { if (u || tu) await signOutAll(); renderLogin(); return; }
   var tr = await u.getIdTokenResult();
   var c = tr.claims || {};
-  if (c.role !== "owner") {
+  if (c.role !== "owner" && c.role !== "teacher") {
     await signOutAll();
-    renderLogin("관리자 계정만 들어올 수 있습니다 (" + (c.role || "역할 없음") + ")");
+    renderLogin("선생님 계정만 들어올 수 있습니다 (" + (c.role || "역할 없음") + ")");
     return;
   }
   S.claims = c;
+  S.ro = c.role !== "owner";
   renderShell();
   await loadCore();
   renderAll();
@@ -541,7 +583,9 @@ teamAuth.onAuthStateChanged(function () { authReady.t = true; scheduleBoot(); })
 // ---------- 뼈대 ----------
 function renderShell() {
   root.innerHTML =
-    '<div class="top"><h1>한민수의 <b>대시보드</b></h1><span class="date">' + fmtMD(TODAY) + '</span><span class="sp"></span>' +
+    '<div class="top"><h1>' + (S.ro ? '클라이매쓰 <b>대시보드</b>' : '한민수의 <b>대시보드</b>') + '</h1>' +
+    (S.ro ? '<span class="pill yellow" title="' + esc(RO_MSG) + '">' + esc(S.claims.name || S.claims.tid || "") + ' · 읽기만</span>' : "") +
+    '<span class="date">' + fmtMD(TODAY) + '</span><span class="sp"></span>' +
     '<button class="link" id="btn-reload">새로고침</button>' +
     '<button class="link" id="btn-out">로그아웃</button></div>' +
     '<div class="wrap"><div id="banner"></div><div class="nav">' +
@@ -619,10 +663,12 @@ function activeClasses() { return S.classes.filter(activeClass); }
 // ---------- 규칙 배너 ----------
 function renderBanner() {
   var el = $("#banner");
-  if (S.teamOk) { el.innerHTML = ""; return; }
+  var ro = S.ro ? '<div class="banner" style="background:#f5f7fb;border-color:var(--line)"><b>읽기만 하는 계정</b> — 보이는 것은 관리자와 같고, 고치는 단추는 감춰져 있다. ' +
+    '고칠 것이 있으면 한민수 팀장에게. 학생 명단·참여표·학교 일정은 수업관리 앱에서 여느 때처럼 고친다.</div>' : "";
+  if (S.teamOk) { el.innerHTML = ro; return; }
   el.innerHTML = '<div class="banner"><b>대시보드 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
     'Firebase 콘솔의 climath-team 프로젝트에서 Firestore가 켜져 있고 규칙이 게시됐는지 본다. 규칙은 저장소 <code>firestore.rules</code>. ' +
-    '나머지 상자(앱 데이터)는 그대로 돈다.</div>';
+    '나머지 상자(앱 데이터)는 그대로 돈다.</div>' + ro;
 }
 
 // ---------- 회의록 ----------

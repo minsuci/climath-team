@@ -1,7 +1,7 @@
 # climath-team — 한민수의 대시보드
 
-대치 클라이매쓰 고등부 교무팀장(한민수)이 **혼자** 쓰는 화면. 수업관리 앱(`climath-class`)과
-**별개의 앱**이다. 저장소·Vercel·Firebase 프로젝트가 따로 있고, 앱 DB는 **읽기만** 한다.
+대치 클라이매쓰 고등부 교무팀장(한민수)의 화면. **2026-09-05부터 선생님도 들어온다 — 전부 보되 읽기만.**
+수업관리 앱(`climath-class`)과 **별개의 앱**이다. 저장소·Vercel·Firebase 프로젝트가 따로 있고, 앱 DB는 **읽기만** 한다.
 
 ```
 repo/
@@ -11,7 +11,7 @@ repo/
 ├── api/github.js     # 깃허브 커밋·배포 이력 읽기 — «개발 현황» (5분 캐시)
 ├── tools/push-devlog.mjs  # 나스 허브의 도구보고·일지 개발 줄 → devtools·devlog (개발 현황의 나스 쪽)
 ├── api/_google.js    # 커스텀 토큰 발급 · ID 토큰 검증 · 구글 API 토큰
-├── firestore.rules   # climath-team DB 규칙 — owner 만. 콘솔에 붙여넣어 게시
+├── firestore.rules   # climath-team DB 규칙 — 읽기 owner·teacher, 쓰기 owner. 콘솔에 붙여넣어 게시 (tools/publish-rules.mjs 는 권한이 없어 403)
 └── vercel.json       # icn1
 ```
 
@@ -40,7 +40,39 @@ repo/
 > 인자로 넘긴 메시지를 지운다.
 
 PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. 이 앱은 그 서비스 계정 키를 갖지 않는다.
-앱이 `role: "owner"` 라고 답할 때만 teamToken 을 발급한다.
+앱이 답한 역할(owner·teacher)을 teamToken 에 그대로 싣는다. 학생이나 모르는 역할은 403.
+
+## 선생님은 읽기만 (2026-09-05)
+
+"다른 선생님들도 쓸 수 있게" → 셋 중 **«전부, 읽기만»** 을 골랐다. 보이는 것은 관리자와 같고 아무것도 못 고친다.
+
+- **쓰기는 한 군데서 막는다** — `guardWrites()` 가 Firestore `DocumentReference.set/update/delete`,
+  `CollectionReference.add`, `WriteBatch.commit` 을 가로채 `S.ro` 면 거절한다(`RO_MSG`).
+  쓰는 자리가 스물여섯 군데라 하나씩 막지 않았다. 서버로 가는 쓰기(`classAuthApi` = PIN 초기화)도 같이 막는다.
+  > [!warning] 앱 DB(climath-class)는 이 가로채기가 유일한 문턱이다
+  > 그쪽 규칙은 선생님 쓰기를 허용한다(앱에서 고치는 게 정상이니까). 팀 DB 는 규칙이 한 번 더 막지만
+  > 학생 명단·참여표·학교 일정은 앱 DB 라 **가로채기가 빠지면 선생님이 대시보드에서 지울 수 있다.** `tools/test-ro.js` 가 지킨다.
+- **고치는 단추는 감춘다** — `applyReadOnly()` 가 `.btn`, `data-ddel`/`data-sdel`, 그리고 글자가 `RO_WORDS`(저장·지우·빼기·초기화·가져오·관리…)에 걸리는 단추를 숨기고,
+  체크박스·textarea 는 잠그고, 찾기 칸이 아닌 text/date 칸은 readOnly. `MutationObserver` 가 화면이 바뀔 때마다 다시 건다.
+  글자로 가르는 건 어설프다 — **새 단추 이름에 저 말들이 들어가면 읽기 계정에서 사라진다**는 뜻이다. 막는 건 가로채기고 이건 헷갈리지 않게 하는 것.
+  «다시 읽기»·거르기 칩·찾기 칸·«앱 열기» 링크는 남는다.
+- 머리띠에 `이름 · 읽기만` 표, 위에 안내 배너. 로그인 화면은 앱 PIN 그대로.
+- 서버: `api/auth.js` 가 teacher 도 통과, `api/github.js` 는 읽기라 teacher 도 됨. `api/sheets.js`·`api/schedule.js` 는 owner 만(쓰기).
+- `firestore.rules`: 읽기 owner·teacher, 쓰기 owner. **콘솔에 붙여넣어 게시해야 선생님이 읽는다.**
+  `tools/publish-rules.mjs` 를 만들었지만 서비스 계정에 규칙 게시 권한이 없어 403 — IAM 에서 «Firebase Rules 관리자»를 주면 된다.
+
+> [!warning] String.replace 의 치환 문자열에서 `$$` 는 `$` 가 된다
+> 패치 스크립트로 `$$(".card button")` 을 넣었더니 `$(".card button")` 이 되어 `.forEach` 에서 터졌다.
+> 치환은 함수(`s.replace(a, () => b)`)나 `split/join` 으로. 되돌리려다 부분 일치로 `$$$(` 도 만들었다.
+
+### 시험
+
+```bash
+node tools/test-ro.js
+```
+
+24건. 프로토타입이 있는 가짜 Firestore 로 set/update/delete/add/commit 이 전부 거절되는지, 거절된 것이 SDK 까지 안 가는지,
+단추·칸이 맞게 감춰지는지(«다시 읽기»·칩·찾기·«앱 열기» 는 남는지).
 
 ## 학생 명단 — 이 앱이 근거지 (2026-09-04)
 

@@ -40,9 +40,12 @@ export default async function handler(req, res) {
       if (!tid || !pin) { res.status(400).json({ error: "입력이 부족합니다" }); return; }
       const r = await classApi({ action: "login", kind: "teacher", tid, pin });
       if (!r.ok) { res.status(r.status).json({ error: r.j.error || ("로그인 실패 (" + r.status + ")") }); return; }
-      if (r.j.role !== "owner") { res.status(403).json({ error: "관리자 계정만 들어올 수 있습니다" }); return; }
-      const teamToken = createCustomToken("t_" + tid, { role: "owner", tid });
-      res.status(200).json({ classToken: r.j.token, teamToken, tid, name: r.j.name });
+      // 2026-09-05 — 선생님도 들어온다(«전부, 읽기만»). 역할은 앱이 답한 그대로 토큰에 싣는다.
+      // 팀 DB 규칙이 role 로 읽기·쓰기를 가르고, 화면은 owner 가 아니면 쓰기를 막는다.
+      const role = r.j.role === "owner" ? "owner" : r.j.role === "teacher" ? "teacher" : "";
+      if (!role) { res.status(403).json({ error: "선생님 계정만 들어올 수 있습니다" }); return; }
+      const teamToken = createCustomToken("t_" + tid, { role, tid, name: String(r.j.name || "") });
+      res.status(200).json({ classToken: r.j.token, teamToken, tid, name: r.j.name, role });
       return;
     }
     res.status(400).json({ error: "알 수 없는 요청입니다" });

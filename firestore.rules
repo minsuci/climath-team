@@ -1,11 +1,15 @@
 rules_version = '2';
-// climath-team — 대시보드 전용 DB. 관리자(owner) 토큰만 읽고 쓴다.
-// /api/auth 가 수업관리 앱에서 owner 임을 확인한 뒤에만 이 프로젝트 토큰을 발급한다.
-// 적용은 Firebase 콘솔 → climath-team → Firestore Database → 규칙에 붙여넣고 게시.
+// climath-team — 대시보드 전용 DB.
+// 2026-09-05 «전부, 읽기만»: 선생님(teacher)도 읽는다. 쓰는 것은 관리자(owner)뿐이다.
+// /api/auth 가 수업관리 앱에서 역할을 확인한 뒤에만 이 프로젝트 토큰을 발급한다.
+// 적용은 `node tools/publish-rules.mjs` (서비스 계정으로 게시) 또는
+// Firebase 콘솔 → climath-team → Firestore Database → 규칙에 붙여넣고 게시.
 service cloud.firestore {
   match /databases/{database}/documents {
+    function role() { return request.auth != null ? request.auth.token.role : ""; }
     match /{document=**} {
-      allow read, write: if request.auth != null && request.auth.token.role == "owner";
+      allow read: if role() == "owner" || role() == "teacher";
+      allow write: if role() == "owner";
     }
   }
 }

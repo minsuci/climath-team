@@ -25,7 +25,8 @@ export default async function handler(req, res) {
 
   try {
     const claims = await verifyIdToken(body.idToken);
-    if (!claims || claims.role !== "owner") { res.status(403).json({ error: "관리자만 쓸 수 있습니다" }); return; }
+    // 읽기뿐이라 선생님도 된다 (2026-09-05). 깃허브 토큰은 서버에만 있고 응답에는 커밋 목록만 나간다.
+    if (!claims || (claims.role !== "owner" && claims.role !== "teacher")) { res.status(403).json({ error: "선생님만 쓸 수 있습니다" }); return; }
     if (body.action !== "repo") { res.status(400).json({ error: "알 수 없는 요청입니다" }); return; }
 
     const owner = String(body.owner || "").trim(), repo = String(body.repo || "").trim();
