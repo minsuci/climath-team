@@ -76,7 +76,7 @@ const cnt = run(`
 ok("기간 안만 센다", cnt === '[{"total":2,"feat":1,"fix":1,"docs":0,"chore":0},{"total":3,"feat":1,"fix":1,"docs":1,"chore":0}]', cnt);
 
 // ---- 저장소 목록 — 없으면 기본, 저장은 repos 만 merge ----
-ok("설정에 없으면 기본 둘", run("S.config={sources:{}}; return reposOf().length") === 2);
+ok("설정에 없으면 기본 목록 — 주소 있는 것은 내 둘", run("S.config={sources:{}}; return reposOf().filter(function(r){return !repoPending(r)}).length") === 2);
 ok("빈 배열이어도 기본", run("S.config={repos:[]}; return reposOf()[0].key") === "class");
 run(`saveRepos([{key:"a__b",app:"x",who:"y",owner:"a",repo:"b",url:""}])`);
 ok("저장은 repos 만 merge 로", SAVED.length === 1 && SAVED[0].repos && SAVED[0].repos.length === 1 && !("sources" in SAVED[0]), JSON.stringify(SAVED));
@@ -95,7 +95,26 @@ const row = (a) => run("S.devApp=''; return devRowHtml({msg:'x',kind:'feat',app:
 ok("주인 계정 커밋엔 이름 없음", row("minsuci").indexOf("minsuci ·") < 0);
 ok("남이 커밋하면 이름이 붙는다", row("someone").indexOf("someone ·") >= 0);
 
+// ---- 저장소 주소 없는 것 — 카드는 뜨되 깃허브는 안 부른다 ----
+ok("기본 목록에 주소 없는 것이 있다 (9/3 시연 도구)", run("S.config={}; return reposOf().filter(repoPending).length") >= 4);
+ok("주소 있는 건 pending 이 아니다", run("return repoPending({owner:'a',repo:'b'})") === false);
+ok("owner 만 있어도 pending", run("return repoPending({owner:'a',repo:''})") === true);
+const pend = run(`
+  S.config={repos:[{key:"p",app:"학생 관리",who:"박준성",owner:"",repo:""},{key:"q",app:"x",who:"y",owner:"a",repo:"b"}]};
+  var calls=0; githubApi=function(){ calls++; return Promise.reject(new Error("막힘")); };
+  return loadDev().then(function(out){ return JSON.stringify({calls:calls, p:out[0].pending, pe:out[0].err, q:!!out[1].pending, qe:out[1].err}); });
+`);
+return pend.then((j) => {
+  ok("주소 없는 건 깃허브를 안 부르고, 있는 것만 부른다", j === '{"calls":1,"p":true,"pe":"","q":false,"qe":"막힘"}', j);
+  const c = run(`return devCardHtml({cfg:{key:"p",app:"학생 관리",who:"박준성",owner:"",repo:"",note:"설명"},pending:true,err:"",commits:[],deploy:null},"")`);
+  ok("주소 없는 카드가 «저장소 주소 없음» 을 달고 div 를 다 닫는다", c.indexOf("저장소 주소 없음") >= 0 && (c.match(/<div/g) || []).length === (c.match(/<\/div>/g) || []).length);
+  ok("담당 후보에 앱 선생님과 적힌 이름이 다 든다", run(`S.teachers=[{name:"이현우"}]; S.config={}; var n=devWhoNames(); return n.indexOf("이현우")>=0 && n.indexOf("김효상")>=0 && n.indexOf("한민수")>=0`) === true);
+  finish();
+});
+
+function finish() {
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
 process.exit(bad ? 1 : 0);
+}
