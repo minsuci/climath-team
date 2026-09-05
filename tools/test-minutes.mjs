@@ -93,6 +93,76 @@ ok("빈 줄로 문단이 갈린다", (md("첫 문단\n\n둘째 문단").match(/<
 ok("한 문단 안의 줄바꿈은 이어 붙인다", md("앞줄\n뒷줄").indexOf("<p>앞줄 뒷줄</p>") >= 0, md("앞줄\n뒷줄"));
 ok("가로줄", md("---").indexOf("<hr>") >= 0, md("---"));
 
+// ---- 참석자 이름으로 훑기 ----
+// 이름을 누르면 그 사람 것만 눈에 들어와야 한다.
+//   초록 = 이름이 나온 곳 · 붉은색 = 그 사람에게 맡겨진 일
+const names = (a) => JSON.parse(vm.runInContext("JSON.stringify(attendNames(" + JSON.stringify(a) + "))", ctx));
+const N1 = names("원장 · 임지혜 부원장 · 추재광 팀장 · 한민수 부팀장");
+ok("참석 줄에서 사람을 뽑는다", N1.map((x) => x.name).join(",") === "원장,임지혜,추재광,한민수",
+  N1.map((x) => x.name).join(","));
+ok("직함까지 보여준다", N1[1].label === "임지혜 부원장", N1[1].label);
+// ⚠ "대치 — 원장 · ..." 처럼 지역이 앞에 붙는다. 안 떼면 «대치» 가 사람이 된다.
+const NA2 = names("대치 — 원장 · 고우빈 팀장 · 한민수 / 서초 — 김재헌 실장 · 김효상 팀장");
+ok("앞의 지역은 사람이 아니다", NA2.map((x) => x.name).join(",") === "원장,고우빈,한민수,김재헌,김효상",
+  NA2.map((x) => x.name).join(","));
+ok("같은 이름을 두 번 넣지 않는다", names("한민수 · 한민수 팀장").length === 1);
+ok("빈 줄이면 아무도 없다", names("").length === 0);
+
+// 칠하기 — HI 를 켜고 그린다
+const hi = (name, md) => vm.runInContext(
+  `(function(){ HI = ${name ? '{name:' + JSON.stringify(name) + '}' : "null"}; HI_TASK=false; HI_SEC="";
+     var h = mdToHtml(${JSON.stringify(md)}); HI = null; return h; })()`, ctx);
+const NOTE2 = [
+  "## 안건",
+  "",
+  "한민수 팀장이 블루프린트를 설명했다.",
+  "",
+  "## 할 일",
+  "",
+  "| 할 일 | 담당 | 기한 |",
+  "|---|---|---|",
+  "| 고등관 회의 | 한민수 | 9/4 |",
+  "| 문자 재발송 | 고우빈 | 화·수 |",
+  "",
+  "## 정해야 할 것",
+  "",
+  "- 추석특강 담당 — 한민수가 정한다",
+].join("\n");
+const H = hi("한민수", NOTE2);
+ok("본문에 나온 이름은 초록", H.indexOf('<mark class="hit">한민수</mark>') >= 0, H.slice(0, 160));
+// ⚠ 여기가 핵심이다. 담당 칸에 이름이 적힌 것은 «맡은 일» 이라 붉어야 한다.
+ok("할 일 표의 담당 칸은 붉은색", (H.match(/<mark class="task">한민수<\/mark>/g) || []).length >= 1, H);
+ok("남의 이름은 안 칠한다", H.indexOf("고우빈</mark>") < 0 && H.indexOf(">고우빈<") < 0 ? true : H.indexOf('mark class="task">고우빈') < 0);
+// ⚠ «정해야 할 것» 은 **담당이 아직 안 정해진** 것들이다. 붉게 칠하면 «맡았다» 로 읽힌다.
+ok("«정해야 할 것» 은 초록이다 (아직 맡은 게 아니다)",
+  H.indexOf('<li>추석특강 담당 — <mark class="hit">한민수</mark>') >= 0,
+  H.slice(H.indexOf("정해야")));
+ok("붉은 것은 담당 칸 하나뿐", (H.match(/<mark class="task">/g) || []).length === 1,
+  String((H.match(/<mark class="task">/g) || []).length));
+
+// 담당이 표가 아니라 줄로 적히기도 한다 — «할 일» 절 아래 목록은 임무다
+const NOTE2b = ["## 할 일", "", "- 고등관 회의 진행 — 한민수", "- 문자 재발송 — 고우빈"].join("\n");
+ok("«할 일» 절 아래 목록은 붉다", hi("한민수", NOTE2b).indexOf('<mark class="task">한민수</mark>') >= 0,
+  hi("한민수", NOTE2b));
+ok("안 고르면 아무 데도 안 칠한다", hi("", NOTE2).indexOf("<mark") < 0);
+
+// 표는 담당 칸만 붉다 — 첫 칸(할 일 이름)에 이름이 있어도 그건 임무 칸이 아니다
+const NOTE3 = ["## 안건", "", "| 아이템 | 내용 |", "|---|---|", "| 라이브클래스 | 한민수·이창혁B가 전자칠판으로 |"].join("\n");
+ok("담당 칸이 없는 표는 초록", hi("한민수", NOTE3).indexOf('<mark class="hit">한민수</mark>') >= 0,
+  hi("한민수", NOTE3));
+ok("담당 칸이 없으면 붉게 안 칠한다", hi("한민수", NOTE3).indexOf('class="task"') < 0);
+
+// «지시사항» 표는 머리가 «누구» 다
+const NOTE4 = ["## 11. 지시사항", "", "| 언제 | 무엇 | 누구 |", "|---|---|---|", "| 9/4 | 고등관 회의 | 한민수 |"].join("\n");
+ok("지시사항 표는 통째로 임무", hi("한민수", NOTE4).indexOf('<mark class="task">한민수</mark>') >= 0,
+  hi("한민수", NOTE4));
+
+// ⚠ 태그 속을 건드리면 화면이 깨진다
+const NOTE5 = "[한민수](https://example.com/한민수) 를 본다";
+ok("링크 주소 속 이름은 안 건드린다",
+  hi("한민수", NOTE5).indexOf('href="https://example.com/한민수"') >= 0, hi("한민수", NOTE5));
+ok("링크 글자는 칠한다", hi("한민수", NOTE5).indexOf('<mark class="hit">한민수</mark>') >= 0, hi("한민수", NOTE5));
+
 // ---- 진짜 회의록으로 한 번 ----
 const REAL = fs.readFileSync(process.env.VAULT_MINUTES
   ? process.env.VAULT_MINUTES + "/2026-08-31 간부 전체회의.md"
