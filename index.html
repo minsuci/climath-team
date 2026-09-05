@@ -3843,7 +3843,9 @@ function devEditHtml() {
 // 열쇠는 주소가 있으면 owner__repo, 없으면 원래 것을 지킨다 — 저장할 때마다 바뀌면 앱 거르기가 풀린다.
 function readRepoTable(el) {
   var out = [], bad = "";
-  $("[data-drow]", el).forEach(function (tr) {
+  // ⚠ $ 는 하나만 찾는다. 줄을 다 읽으려면 $$ 여야 한다 —
+  //    «$(...).forEach is not a function» 으로 저장이 통째로 막혔다.
+  $$("[data-drow]", el).forEach(function (tr) {
     var gh = $(".d-gh", tr).value.trim(), app = $(".d-app", tr).value.trim(), who = $(".d-who", tr).value.trim() || "?";
     var url = $(".d-url", tr).value.trim(), note = ($(".d-note", tr) || { value: "" }).value.trim();
     var oldKey = tr.getAttribute("data-dkey") || "";

@@ -92,6 +92,21 @@ Object.values(RENDER).forEach((f) => {
   ok("자료를 넣고 " + f + " 를 불러도 안 터진다", !err, err);
 });
 
+// ---- $ 와 $$ 를 헷갈린 자리 ----
+// 2026-09-05, 개발 현황의 저장소 목록이 저장이 안 됐다 — «$(...).forEach is not a function».
+// `$` 는 하나만 찾고 목록은 `$$` 다. **문법 검사도, 화면 그리기 검사도 이걸 못 잡는다** —
+// 단추를 눌러야 그 줄에 닿기 때문이다. 그래서 소스를 눈으로 훑는다.
+{
+  const hits = [];
+  src.split("\n").forEach((ln, i) => {
+    if (/^\s*\/\//.test(ln)) return;   // 주석에 적어둔 그 오류 문구까지 걸린다
+    // $(...) 뒤에 «목록에만 있는 것»이 붙으면 $$ 를 쓸 자리다
+    if (/(^|[^$\w.])\$\([^)]*\)\s*\.\s*(forEach|map|filter|some|every|length)\b/.test(ln))
+      hits.push((i + 1) + "행: " + ln.trim().slice(0, 90));
+  });
+  ok("$ 를 목록처럼 쓴 자리가 없다 ($$ 여야 한다)", !hits.length, hits.join(" | "));
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
