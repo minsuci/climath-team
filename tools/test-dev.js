@@ -8,7 +8,8 @@ const src = /<script>([\s\S]*?)<\/script>/.exec(fs.readFileSync("index.html", "u
 const SAVED = [];
 const teamDb = { collection: () => ({ doc: () => ({
   set: (d) => { SAVED.push(JSON.parse(JSON.stringify(d))); return Promise.resolve(); },
-  get: () => Promise.resolve({ exists: false }) }) }) };
+  get: () => Promise.resolve({ exists: false }) }),
+  get: () => Promise.resolve({ forEach() {} }) }) };
 const stub = `
 var firebase={initializeApp:function(c,n){return n?{t:1}:{};},firestore:function(app){return app?TEAMDB:CLASSDB;},
   auth:()=>({onAuthStateChanged(){},currentUser:null,signOut:()=>Promise.resolve()})};
@@ -109,6 +110,47 @@ return pend.then((j) => {
   const c = run(`return devCardHtml({cfg:{key:"p",app:"학생 관리",who:"박준성",owner:"",repo:"",note:"설명"},pending:true,err:"",commits:[],deploy:null},"")`);
   ok("주소 없는 카드가 «저장소 주소 없음» 을 달고 div 를 다 닫는다", c.indexOf("저장소 주소 없음") >= 0 && (c.match(/<div/g) || []).length === (c.match(/<\/div>/g) || []).length);
   ok("담당 후보에 앱 선생님과 적힌 이름이 다 든다", run(`S.teachers=[{name:"이현우"}]; S.config={repos:[{key:"k",app:"x",who:"김효상",owner:"",repo:""}]}; var n=devWhoNames(); return n.indexOf("이현우")>=0 && n.indexOf("김효상")>=0 && n.length===2`) === true);
+
+  // ---- 나스 쪽 합치기 (devAssemble) — 깃허브 카드 + 도구보고 + 일지 줄 ----
+  const asm = (code) => JSON.parse(run(`
+    var results = [
+      { cfg:{key:"class",app:"수업관리 앱",who:"한민수",owner:"minsuci",repo:"climath-class",tool:"2026-09-04_한민수_학생앱",alias:"학생앱"}, err:"",
+        commits:[{sha:"a1",short:"a1",date:"2026-09-05",msg:"학생 PIN 초기화",author:"minsuci",url:"u"}], deploy:null },
+      { cfg:{key:"team",app:"한민수 대시보드",who:"한민수",owner:"minsuci",repo:"climath-team",tool:"",alias:"대시보드"}, err:"", commits:[], deploy:null },
+    ];
+    var tools = [
+      { id:"2026-09-04_한민수_학생앱", who:"한민수", app:"CLIMATH 수업관리 (학생용 웹앱)", date:"2026-09-04", title:"도구보고 — 한민수 학생용 앱" },
+      { id:"2026-09-11_정찬준_학생관리", who:"정찬준", app:"학생 관리 + 문제은행", date:"2026-09-11", title:"" },
+    ];
+    var logs = [
+      { id:"l1", date:"2026-09-05", who:"한민수", app:"학생앱", msg:"운영DB 보내기 화면을 붙임", file:"업무기록/2026/2026-09-05_한민수.md" },
+      { id:"l2", date:"2026-09-05", who:"한민수", app:"대시보드", msg:"개발 현황 메뉴", file:"업무기록/2026/2026-09-05_한민수.md" },
+      { id:"l3", date:"2026-09-12", who:"정찬준", app:"학생관리", msg:"주간 리포트가 안 나가던 것", file:"업무기록/2026/2026-09-12_정찬준.md" },
+      { id:"l4", date:"2026-09-12", who:"이현우", app:"질문앱", msg:"첫 화면", file:"업무기록/2026/2026-09-12_이현우.md" },
+    ];
+    var cards = devAssemble(results, tools, logs);
+    ${code}
+  `));
+  const cards = asm("return JSON.stringify(cards.map(function(c){ return { key:c.cfg.key, who:c.cfg.who, app:c.cfg.app, nas:!!c.nas, tool:c.tool?c.tool.id:'', n:c.commits.length, srcs:c.commits.map(function(x){return x.src}).join(',') }; }))");
+  const by = (k) => cards.filter((c) => c.key === k)[0];
+  ok("도구보고가 설정의 tool 로 깃허브 카드에 붙는다", by("class") && by("class").tool === "2026-09-04_한민수_학생앱", JSON.stringify(by("class")));
+  ok("일지 줄이 별칭으로 깃허브 카드에 붙는다 (학생앱 → 수업관리 앱)", by("class").n === 2 && by("class").srcs === "github,nas");
+  ok("대시보드 별칭도 붙는다", by("team").n === 1 && by("team").srcs === "nas");
+  const jcj = cards.filter((c) => c.who === "정찬준");
+  ok("도구보고만 있는 사람은 «나스로만» 카드 하나", jcj.length === 1 && jcj[0].nas && jcj[0].tool === "2026-09-11_정찬준_학생관리", JSON.stringify(jcj));
+  ok("일지 줄이 도구보고 파일 이름 꼬리(학생관리)로 그 카드에 붙는다", jcj[0].n === 1);
+  const lhw = cards.filter((c) => c.who === "이현우");
+  ok("도구보고도 없이 일지 줄만 있으면 그 이름으로 카드가 생긴다", lhw.length === 1 && lhw[0].nas && lhw[0].app === "질문앱" && lhw[0].n === 1);
+  ok("카드는 넷", cards.length === 4, String(cards.length));
+  ok("나스 줄도 종류가 갈린다", asm("return JSON.stringify(cards.filter(function(c){return c.cfg.who==='정찬준'})[0].commits[0].kind)") === "fix");
+  ok("같은 사람이 아니면 별칭이 같아도 안 붙는다", JSON.stringify(asm(`
+    var c2 = devAssemble([{cfg:{key:"x",app:"학생앱",who:"박준성",owner:"a",repo:"b"},err:"",commits:[],deploy:null}], [], [{id:"z",date:"2026-09-05",who:"한민수",app:"학생앱",msg:"m",file:"f"}]);
+    return JSON.stringify(c2.map(function(c){return c.cfg.who+":"+c.commits.length}))`)) === '["박준성:0","한민수:1"]');
+  const nasCard = run(`return devCardHtml({cfg:{key:"nas:a",app:"질문앱",who:"이현우",owner:"",repo:"",url:"",note:""},nas:true,err:"",commits:[{src:"nas",date:"2026-09-12",kind:"feat",msg:"첫 화면"}],deploy:null},"")`);
+  ok("나스로만 카드가 «나스로만» 을 달고 div 를 다 닫는다", nasCard.indexOf("나스로만") >= 0 && (nasCard.match(/<div/g) || []).length === (nasCard.match(/<\/div>/g) || []).length);
+  const nasRow = run(`S.devApp=''; return devRowHtml({src:"nas",msg:"첫 화면 — 설명",kind:"feat",app:"질문앱",who:"이현우",file:"업무기록/2026/2026-09-12_이현우.md",short:"",url:""})`);
+  ok("나스 줄은 링크 없이 일지 파일 이름이 붙는다", nasRow.indexOf("<a ") < 0 && nasRow.indexOf("2026-09-12_이현우") >= 0 && nasRow.indexOf("설명") >= 0);
+  ok("앱 이름 대조는 띄어쓰기·기호를 무시한다", run(`return normApp("학생 앱") === normApp("학생앱") && normApp("CLIMATH 수업관리 (학생용 웹앱)") === "climath수업관리학생용웹앱"`) === true);
   finish();
 });
 

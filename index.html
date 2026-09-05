@@ -404,6 +404,7 @@ var S = {
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
   dev: null, devLoading: false, devErr: "", devWho: "", devApp: "", devKindPick: "", devDays: 14, devQ: "", devEdit: false,
+  devTools: [], devLogs: [],   // 나스 허브에서 올라온 도구보고·일지 개발 줄 (tools/push-devlog.mjs)
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
@@ -3658,9 +3659,9 @@ function bindSources() {
 // 어떤 앱이 있는지는 볼트 «40 팀장업무/팀 도구 목록»이 들고 있다. 여기 미리 앉히지 않는다.
 var REPOS_DEFAULT = [
   { key: "class", app: "수업관리 앱", who: "한민수", owner: "minsuci", repo: "climath-class", url: "https://climath-class.vercel.app",
-    note: "출결·질문 번호·점수 추이·내신 참여표·결석 예고·영상→강의노트" },
+    note: "출결·질문 번호·점수 추이·내신 참여표·결석 예고·영상→강의노트", tool: "2026-09-04_한민수_학생앱", alias: "학생앱" },
   { key: "team", app: "한민수 대시보드", who: "한민수", owner: "minsuci", repo: "climath-team", url: "https://climath-team1.vercel.app",
-    note: "교무팀장 화면. 업무 달력·회의록·학생 명단·학교 일정·참여표·성적" },
+    note: "교무팀장 화면. 업무 달력·회의록·학생 명단·학교 일정·참여표·성적", tool: "", alias: "대시보드" },
 ];
 function repoPending(rp) { return !(rp.owner && rp.repo); }
 // 담당 이름 후보 — 앱의 선생님 명단 + 이미 적힌 이름. 손으로 쳐도 되지만 표기가 갈리면 사람 거르기가 둘로 쪼개진다.
@@ -3714,17 +3715,62 @@ async function githubApi(body) {
   return j || {};
 }
 // 저장소마다 따로 받는다. 하나가 막혀도(비공개·한도) 나머지는 뜬다.
+// 나스 쪽(도구보고·일지 개발 줄)은 tools/push-devlog.mjs 가 이 앱 DB 에 올려 둔 것을 읽는다 — 브라우저는 나스를 못 본다.
 async function loadDev(fresh) {
   var list = reposOf();
-  var out = await Promise.all(list.map(function (rp) {
+  var jobs = list.map(function (rp) {
     if (repoPending(rp)) return Promise.resolve({ cfg: rp, pending: true, err: "", commits: [], deploy: null });
     return githubApi({ action: "repo", owner: rp.owner, repo: rp.repo, fresh: !!fresh })
       .then(function (d) { return Object.assign({ cfg: rp, err: "" }, d); })
       .catch(function (e) { return { cfg: rp, err: e.message, commits: [], deploy: null }; });
-  }));
-  out.forEach(function (r) { r.commits.forEach(function (c) { c.kind = devKind(c.msg); c.app = r.cfg.app; c.who = r.cfg.who; c.key = r.cfg.key; c.owner = r.cfg.owner; }); });
-  S.dev = out;
-  return out;
+  });
+  var nas = Promise.all([tdb.collection("devtools").get(), tdb.collection("devlog").get()]).then(function (ss) {
+    var t = [], l = [];
+    ss[0].forEach(function (d) { t.push(Object.assign({ id: d.id }, d.data())); });
+    ss[1].forEach(function (d) { l.push(Object.assign({ id: d.id }, d.data())); });
+    return [t, l];
+  }).catch(function () { return [[], []]; });          // 나스 쪽이 비어 있거나 못 읽어도 깃허브 쪽은 뜬다
+  var results = await Promise.all(jobs);
+  var pair = await nas;
+  S.devTools = pair[0]; S.devLogs = pair[1];
+  S.dev = devAssemble(results, S.devTools, S.devLogs);
+  return S.dev;
+}
+// 앱 이름 대조 — 띄어쓰기·기호·대소문자를 무시한다. "학생앱" 과 "학생 앱" 은 같은 것이다.
+function normApp(s) { return String(s || "").toLowerCase().replace(/[\s\-_·()（）\[\]«»]/g, ""); }
+// 이 카드가 그 앱 이름을 받는가 — 앱 이름·저장소 이름·별칭·도구보고의 도구 이름·도구보고 파일 이름 꼬리(날짜_이름_꼬리).
+function cardMatchesApp(card, app) {
+  var n = normApp(app); if (!n) return false;
+  var names = [card.cfg.app, card.cfg.repo, card.tool && card.tool.app, card.tool && card.tool.id.split("_").slice(2).join("_")]
+    .concat(String(card.cfg.alias || "").split(/[,·、]/));
+  return names.some(function (x) { return x && normApp(x) === n; });
+}
+// 깃허브 결과 + 도구보고 + 일지 줄 → 카드 목록. 순수 함수라 시험이 그대로 부른다.
+//   도구보고는 설정의 tool 로 잇거나, 같은 사람·같은 앱 이름이면 잇는다. 못 이으면 제 카드가 생긴다(나스로만 아는 앱).
+//   일지 줄은 같은 사람의 카드 중 앱 이름이 맞는 데 붙는다. 없으면 «나스로만» 카드를 만든다.
+function devAssemble(results, tools, logs) {
+  var cards = results.map(function (r) {
+    r.commits.forEach(function (c) { c.src = "github"; c.kind = devKind(c.msg); c.app = r.cfg.app; c.who = r.cfg.who; c.key = r.cfg.key; c.owner = r.cfg.owner; });
+    return r;
+  });
+  (tools || []).forEach(function (t) {
+    var c = cards.filter(function (x) { return x.cfg.tool && x.cfg.tool === t.id; })[0] ||
+      cards.filter(function (x) { return !x.tool && x.cfg.who === t.who && normApp(x.cfg.app) === normApp(t.app); })[0];
+    if (c) { c.tool = t; return; }
+    cards.push({ cfg: { key: "tool:" + t.id, app: t.app, who: t.who, owner: "", repo: "", url: "", note: t.title || "" }, tool: t, nas: true, err: "", commits: [], deploy: null });
+  });
+  (logs || []).forEach(function (l) {
+    var c = cards.filter(function (x) { return x.cfg.who === l.who && cardMatchesApp(x, l.app); })[0];
+    if (!c) {
+      var key = "nas:" + l.who + ":" + normApp(l.app);
+      c = cards.filter(function (x) { return x.cfg.key === key; })[0];
+      if (!c) { c = { cfg: { key: key, app: l.app, who: l.who, owner: "", repo: "", url: "", note: "" }, nas: true, err: "", commits: [], deploy: null }; cards.push(c); }
+    }
+    c.commits.push({ src: "nas", date: l.date || "", msg: l.msg || "", who: l.who, app: c.cfg.app, key: c.cfg.key, owner: "",
+      kind: devKind(l.msg), file: l.file || "", sha: "", short: "", url: "" });
+  });
+  cards.forEach(function (c) { c.commits.sort(function (a, b) { return b.date < a.date ? -1 : b.date > a.date ? 1 : 0; }); });
+  return cards;
 }
 // 기간 안의 커밋을 종류별로 센다. 화면 카드와 시험이 같이 쓴다.
 function devCount(commits, since) {
@@ -3770,6 +3816,8 @@ function renderDev() {
     '<button class="mini" id="dv-re">다시 읽기</button>' +
     '<button class="mini ' + (S.devEdit ? "on" : "") + '" id="dv-edit">저장소 관리</button></h2>' +
     (S.devEdit ? devEditHtml() : "") +
+    (!S.devTools.length && !S.devLogs.length ? '<div class="muted" style="font-size:12px;margin-bottom:8px">나스 허브에서 올라온 것이 아직 없다. ' +
+      '<code>node tools/push-devlog.mjs</code> 를 돌리면 도구보고와 일지의 «개발 [앱]» 줄이 여기 붙는다.</div>' : "") +
     '<div class="srcs" style="margin-bottom:12px">' + S.dev.map(function (r) { return devCardHtml(r, since); }).join("") + '</div>' +
     '<div class="chips">' +
       (whos.length > 1 ? chip("dwho", "", S.devWho, "전원") + whos.map(function (w) { return chip("dwho", w, S.devWho, esc(w)); }).join("") + '<span class="muted">·</span>' : "") +
@@ -3788,7 +3836,20 @@ function renderDev() {
   bindDev(el);
 }
 function devCardHtml(r, since) {
-  var cfg = r.cfg, n = devCount(r.commits, since), last = r.commits[0];
+  var cfg = r.cfg, n = devCount(r.commits, since);
+  var gh = r.commits.filter(function (c) { return c.src !== "nas"; }), last = gh[0], nasN = r.commits.length - gh.length;
+  var kinds = Object.keys(DEV_KINDS).filter(function (k) { return n[k]; }).map(function (k) {
+    return '<span class="pill ' + DEV_KINDS[k][1] + '">' + DEV_KINDS[k][0] + ' ' + n[k] + '</span>';
+  }).join(" ");
+  if (r.nas) {
+    return '<div class="src"><div class="sh"><b>' + esc(cfg.app) + '</b><span class="pill">' + esc(cfg.who) + '</span>' +
+      '<span class="pill yellow">나스로만</span><span class="sp" style="flex:1"></span>' +
+      (cfg.url ? '<a class="mini" href="' + esc(cfg.url) + '" target="_blank">앱 열기</a>' : "") + '</div>' +
+      '<div style="font-size:13px">' + (since ? '최근 ' + S.devDays + '일 ' : '') + '<b>' + n.total + '건</b> ' + kinds +
+      (r.tool ? ' <span class="muted">· 도구보고 ' + esc(fmtMD(r.tool.date)) + '</span>' : ' <span class="muted">· 도구보고 없음</span>') + '</div>' +
+      (cfg.note ? '<div class="muted" style="font-size:12px">' + esc(cfg.note) + '</div>' : "") +
+      '<div class="muted" style="font-size:12px">일지의 «개발 [' + esc(cfg.app) + ']» 줄만 보인다. 깃허브 주소를 받으면 «저장소 관리»에서 이 도구에 잇는다.</div></div>';
+  }
   if (r.pending) {
     return '<div class="src"><div class="sh"><b>' + esc(cfg.app) + '</b><span class="pill">' + esc(cfg.who) + '</span>' +
       '<span class="pill red">저장소 주소 없음</span><span class="sp" style="flex:1"></span>' +
@@ -3796,9 +3857,6 @@ function devCardHtml(r, since) {
       (cfg.note ? '<div style="font-size:13px">' + esc(cfg.note) + '</div>' : "") +
       '<div class="muted" style="font-size:12px">깃허브 주소를 받으면 «저장소 관리»에서 넣는다. 로컬에만 있으면 먼저 올려 달라고 한다.</div></div>';
   }
-  var kinds = Object.keys(DEV_KINDS).filter(function (k) { return n[k]; }).map(function (k) {
-    return '<span class="pill ' + DEV_KINDS[k][1] + '">' + DEV_KINDS[k][0] + ' ' + n[k] + '</span>';
-  }).join(" ");
   return '<div class="src on"><div class="sh"><b>' + esc(cfg.app) + '</b>' +
     '<span class="pill">' + esc(cfg.who) + '</span>' +
     (r.err ? '<span class="pill red">못 읽음</span>' : r.private ? '<span class="pill yellow">비공개</span>' : "") +
@@ -3808,17 +3866,23 @@ function devCardHtml(r, since) {
     (r.err ? '<div class="err">' + esc(r.err) + '</div>' :
       '<div style="font-size:13px">' + (since ? '최근 ' + S.devDays + '일 ' : '') + '<b>' + n.total + '건</b> ' + kinds +
       (last ? ' <span class="muted">· 마지막 커밋 ' + esc(fmtMD(last.date)) + '</span>' : "") +
+      (nasN ? ' <span class="muted">· 일지 ' + nasN + '줄</span>' : "") +
+      (r.tool ? ' <span class="muted">· 도구보고 ' + esc(fmtMD(r.tool.date)) + '</span>' : "") +
       (r.deploy ? ' <span class="muted">· 마지막 배포 ' + esc(fmtMD(r.deploy.date)) + ' <code>' + esc(r.deploy.short) + '</code>' +
         (last && r.deploy.sha !== last.sha ? ' <span class="pill yellow">마지막 커밋과 다름</span>' : "") + '</span>' : "") + '</div>' +
       (cfg.note || r.description ? '<div class="muted" style="font-size:12px">' + esc(cfg.note || r.description) + '</div>' : "")) + '</div>';
 }
 function devRowHtml(c) {
   var p = devSplit(c.msg), k = DEV_KINDS[c.kind] || DEV_KINDS.feat;
+  var tail = c.src === "nas" ?
+    '일지 · ' + esc(String(c.file || "").split("/").pop().replace(/\.md$/, "")) :
+    esc(c.author && c.author !== c.owner && c.author !== c.who ? c.author + " · " : "") + esc(c.short);
   return '<div class="dvrow"><span class="pill ' + k[1] + '">' + k[0] + '</span>' +
     (S.devApp ? "" : '<span class="pill">' + esc(c.app) + '</span>') +
-    '<a href="' + esc(c.url) + '" target="_blank" class="dvmsg">' + esc(p[0]) + '</a>' +
+    (c.src === "nas" ? '<span class="dvmsg">' + esc(p[0]) + '</span>' :
+      '<a href="' + esc(c.url) + '" target="_blank" class="dvmsg">' + esc(p[0]) + '</a>') +
     (p[1] ? '<span class="muted"> — ' + esc(p[1]) + '</span>' : "") +
-    '<span class="muted dvsha">' + esc(c.author && c.author !== c.owner && c.author !== c.who ? c.author + " · " : "") + esc(c.short) + '</span></div>';
+    '<span class="muted dvsha">' + tail + '</span></div>';
 }
 function devEditHtml() {
   var list = reposOf();
@@ -3829,11 +3893,16 @@ function devEditHtml() {
       '<td><input type="text" class="d-gh" value="' + esc(r.owner ? r.owner + "/" + r.repo : "") + '" placeholder="github.com/… 또는 owner/repo. 아직 없으면 비워 둔다"></td>' +
       '<td><input type="text" class="d-url" value="' + esc(r.url || "") + '" placeholder="https://…"></td>' +
       '<td><input type="text" class="d-note" value="' + esc(r.note || "") + '" placeholder="무엇을 하는 도구인지"></td>' +
+      '<td><select class="d-tool"><option value="">없음</option>' + S.devTools.map(function (t) {
+        return '<option value="' + esc(t.id) + '"' + (r.tool === t.id ? " selected" : "") + '>' + esc(t.who + " · " + t.app) + '</option>';
+      }).join("") + '</select></td>' +
+      '<td><input type="text" class="d-alias" value="' + esc(r.alias || "") + '" placeholder="일지에 쓰는 이름" style="width:90px"></td>' +
       '<td>' + (i === "new" ? "" : '<button class="mini" data-ddel="' + i + '">빼기</button>') + '</td></tr>';
   };
-  return '<div class="banner" style="background:#fff;margin-bottom:12px"><b>저장소 목록</b> <span class="muted" style="font-size:12px">선생님이 주소를 주면 그 줄에 적는다. 주소가 비면 «저장소 주소 없음»으로 뜬다. 비공개 저장소는 Vercel 에 <code>GITHUB_TOKEN</code> 이 있어야 읽힌다.</span>' +
+  return '<div class="banner" style="background:#fff;margin-bottom:12px"><b>저장소 목록</b> <span class="muted" style="font-size:12px">선생님이 주소를 주면 그 줄에 적는다. 주소가 비면 «저장소 주소 없음»으로 뜬다. 비공개 저장소는 Vercel 에 <code>GITHUB_TOKEN</code> 이 있어야 읽힌다. ' +
+    '«도구보고»는 나스에 올라온 것을 잇고, «일지 별칭»은 일지의 <code>개발 [이름]</code> 에 쓰는 이름이다(쉼표로 여럿).</span>' +
     '<datalist id="dv-whos">' + devWhoNames().map(function (n) { return '<option value="' + esc(n) + '">'; }).join("") + '</datalist>' +
-    '<table style="width:100%;margin-top:6px;font-size:13px"><tr><th>앱 이름</th><th>담당</th><th>깃허브 주소</th><th>배포 주소</th><th>설명</th><th></th></tr>' +
+    '<table style="width:100%;margin-top:6px;font-size:13px"><tr><th>앱 이름</th><th>담당</th><th>깃허브 주소</th><th>배포 주소</th><th>설명</th><th>도구보고</th><th>일지 별칭</th><th></th></tr>' +
     list.map(row).join("") + row({}, "new") +
     '</table><div class="row"><button class="btn" id="dv-save">저장하고 다시 읽기</button><button class="mini" id="dv-cancel">닫기</button></div>' +
     '<div class="err" id="dv-err"></div></div>';
@@ -3848,12 +3917,13 @@ function readRepoTable(el) {
   $$("[data-drow]", el).forEach(function (tr) {
     var gh = $(".d-gh", tr).value.trim(), app = $(".d-app", tr).value.trim(), who = $(".d-who", tr).value.trim() || "?";
     var url = $(".d-url", tr).value.trim(), note = ($(".d-note", tr) || { value: "" }).value.trim();
+    var tool = ($(".d-tool", tr) || { value: "" }).value, alias = ($(".d-alias", tr) || { value: "" }).value.trim();
     var oldKey = tr.getAttribute("data-dkey") || "";
     if (!gh && !app) return;
     var p = gh ? repoFrom(gh) : null;
     if (gh && !p) { bad = "깃허브 주소를 못 읽었다: " + gh; return; }
     out.push({ key: p ? p.owner + "__" + p.repo : (oldKey || "p_" + newId()), app: app || (p && p.repo) || "?", who: who,
-      owner: p ? p.owner : "", repo: p ? p.repo : "", url: url, note: note });
+      owner: p ? p.owner : "", repo: p ? p.repo : "", url: url, note: note, tool: tool, alias: alias });
   });
   if (bad) throw new Error(bad);
   return out;
