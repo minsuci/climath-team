@@ -108,7 +108,7 @@ return pend.then((j) => {
   ok("주소 없는 건 깃허브를 안 부르고, 있는 것만 부른다", j === '{"calls":1,"p":true,"pe":"","q":false,"qe":"막힘"}', j);
   const c = run(`return devCardHtml({cfg:{key:"p",app:"학생 관리",who:"박준성",owner:"",repo:"",note:"설명"},pending:true,err:"",commits:[],deploy:null},"")`);
   ok("주소 없는 카드가 «저장소 주소 없음» 을 달고 div 를 다 닫는다", c.indexOf("저장소 주소 없음") >= 0 && (c.match(/<div/g) || []).length === (c.match(/<\/div>/g) || []).length);
-  ok("담당 후보에 앱 선생님과 적힌 이름이 다 든다", run(`S.teachers=[{name:"이현우"}]; S.config={repos:[{key:"k",app:"x",who:"김효상",owner:"",repo:""}]}; var n=devWhoNames(); return n.indexOf("이현우")>=0 && n.indexOf("김효상")>=0 && n.indexOf("한민수")>=0`) === true);
+  ok("담당 후보에 앱 선생님과 적힌 이름이 다 든다", run(`S.teachers=[{name:"이현우"}]; S.config={repos:[{key:"k",app:"x",who:"김효상",owner:"",repo:""}]}; var n=devWhoNames(); return n.indexOf("이현우")>=0 && n.indexOf("김효상")>=0 && n.length===2`) === true);
   finish();
 });
 
