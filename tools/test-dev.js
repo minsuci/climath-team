@@ -85,6 +85,16 @@ ok("저장 뒤 목록이 바뀐다", run("return reposOf()[0].key") === "a__b");
 run(`saveConfig()`);
 ok("근거 자료 저장이 repos 를 안 건드린다", SAVED.length === 2 && !("repos" in SAVED[1]), JSON.stringify(SAVED[1]));
 
+// ---- 카드가 div 를 닫는다 — 안 닫으면 다음 카드가 안으로 들어가 위아래 관계처럼 보인다 (2026-09-05에 그랬다) ----
+const card = run(`S.devDays=14; return devCardHtml({cfg:{key:"t",app:"앱",who:"한민수",owner:"minsuci",repo:"r",url:"https://x"},err:"",commits:[{sha:"a",short:"a",date:"2026-09-05",kind:"feat"}],deploy:{sha:"a",short:"a",date:"2026-09-05"},description:"d"},"2026-08-22")`);
+ok("카드가 연 div 를 다 닫는다", (card.match(/<div/g) || []).length === (card.match(/<\/div>/g) || []).length);
+const cardErr = run(`return devCardHtml({cfg:{key:"t",app:"앱",who:"한민수",owner:"a",repo:"r"},err:"못 읽음",commits:[],deploy:null},"")`);
+ok("못 읽은 카드도 다 닫는다", (cardErr.match(/<div/g) || []).length === (cardErr.match(/<\/div>/g) || []).length);
+// ---- 저장소 주인이 커밋한 건 이름을 안 적는다 ----
+const row = (a) => run("S.devApp=''; return devRowHtml({msg:'x',kind:'feat',app:'앱',who:'한민수',owner:'minsuci',author:" + JSON.stringify(a) + ",short:'abc',url:'u'})");
+ok("주인 계정 커밋엔 이름 없음", row("minsuci").indexOf("minsuci ·") < 0);
+ok("남이 커밋하면 이름이 붙는다", row("someone").indexOf("someone ·") >= 0);
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
