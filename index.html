@@ -97,6 +97,10 @@
   .src .row { margin: 6px 0 4px; }
   .src input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
   .src .err:empty { display: none; }
+  .dvday { margin: 12px 0 4px; font-size: 13px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+  .dvrow { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 3px 0; font-size: 13px; }
+  .dvrow .dvmsg { color: inherit; text-decoration: none; }  .dvrow .dvmsg:hover { text-decoration: underline; }
+  .dvrow .dvsha { font-size: 11px; margin-left: auto; font-family: monospace; }
 
   /* 회의록 */
   .mdoc { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 14px 18px; margin-top: 10px; }
@@ -119,6 +123,16 @@
   .mdoc blockquote > b { display: block; margin-bottom: 3px; }
   .mdoc blockquote p:first-child { margin-top: 0; }
   .mdoc .tbl { margin: 8px 0; }
+  .atts { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .hlkey { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px;
+    background: #f7f8fb; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; }
+  .hlkey .k { border-radius: 10px; padding: 1px 8px; font-weight: 700; }
+  .hlkey .k.task { background: #fbd5d5; color: #7f1d1d; }
+  .hlkey .k.hit { background: #cdeed7; color: #14532d; }
+  .mdoc mark { border-radius: 3px; padding: 0 2px; }
+  .mdoc mark.hit { background: #cdeed7; color: #14532d; }
+  .mdoc mark.task { background: #fbd5d5; color: #7f1d1d; font-weight: 700;
+    box-shadow: 0 0 0 1px #f0a8a8; }
   .mmeta { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 10px; font-size: 13px; }
 
   /* 학년 업무 달력 */
@@ -377,7 +391,8 @@ var S = {
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
   calGrade: "전체", calAnchor: "", calAdd: "",
-  minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "",
+  minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
+  dev: null, devLoading: false, devErr: "", devWho: "", devApp: "", devKindPick: "", devDays: 14, devQ: "", devEdit: false,
   filterWho: "", stFilter: "", stQuery: "", stView: "grid", stOpen: "", stJump: "", byPid: {}, notes: {},
   exGrade: "", exEntry: null, exForm: {}, exDays: [], exMonth: "", exMode: "exam", exAnchor: "", exSort: null,
   tests: [], testPick: "", testScores: {}, tsForm: false, tsSort: null, tsPaste: false,
@@ -528,7 +543,7 @@ function renderShell() {
   showPage(currentPage());
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
-var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["minutes", "회의록"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
 function isPage(id) { return PAGES.some(function (p) { return p[0] === id; }); }
 function currentPage() {
@@ -548,6 +563,12 @@ function showPage(id) {
     loadMinutes().then(function () { S.minutesLoading = false; renderMinutes(); })
       .catch(function (e) { S.minutesLoading = false; S.minutesErr = e.message; renderMinutes(); });
   }
+  // 개발 현황은 깃허브를 부른다. 이것도 그 메뉴를 열 때만.
+  if (id === "dev" && S.dev === null && !S.devLoading) {
+    S.devLoading = true;
+    loadDev().then(function () { S.devLoading = false; renderDev(); })
+      .catch(function (e) { S.devLoading = false; S.devErr = e.message; renderDev(); });
+  }
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", function () { if (S.claims) showPage(currentPage()); });
@@ -556,7 +577,7 @@ function navBadge(id, n, red) {
   var el = $("#nb-" + id); if (!el) return;
   el.hidden = !n; el.textContent = n; el.className = "b" + (red ? " red" : "");
 }
-function renderAll() { renderBanner(); renderCal(); renderTasks(); renderMinutes(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
+function renderAll() { renderBanner(); renderCal(); renderTasks(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
 // ---------- 불러오기 ----------
 async function loadCore() {
@@ -607,6 +628,43 @@ async function loadMinutes() {
 }
 // 마크다운을 화면에 그린다. 볼트 노트에 실제로 쓰는 것만 다룬다 —
 // 제목·굵게·목록·표·인용(콜아웃)·코드·취소선·링크. 라이브러리를 안 쓴다(CDN 하나가 늘면 그게 죽을 때 같이 죽는다).
+// 참석 줄에서 사람을 뽑는다. "대치 — 원장 · 고우빈 팀장 · 한민수" 처럼 적혀 있다.
+// 이름만 쥐어야 본문에서 찾을 수 있다 — 본문은 «고우빈 팀장» 이라고도 «고우빈» 이라고도 쓴다.
+function attendNames(attend) {
+  var out = [], seen = {};
+  String(attend || "").split(/[·,\/]/).forEach(function (t) {
+    t = t.trim().replace(/^[^\s—]+\s*—\s*/, "").trim();     // 앞의 «대치 —» 를 뗀다
+    if (!t) return;
+    var name = t.split(/\s+/)[0];
+    if (name.length < 2) name = t;                          // «원장» 처럼 직함이 곧 이름인 경우
+    if (!name || seen[name]) return;
+    seen[name] = 1;
+    out.push({ name: name, label: t });
+  });
+  return out;
+}
+// 지금 칠하는 사람. 표를 그리는 동안에는 HI_TASK 가 켜져 «맡은 일» 로 칠해진다.
+var HI = null, HI_TASK = false, HI_SEC = "";
+// ⚠ 태그 안은 건드리지 않는다. 이름을 통째로 바꾸면 href·class 속으로도 들어가 화면이 깨진다.
+function markName(html) {
+  if (!HI || !HI.name) return html;
+  var cls = HI_TASK ? "task" : "hit";
+  return html.split(/(<[^>]*>)/).map(function (part, i) {
+    if (i % 2) return part;
+    if (part.indexOf(HI.name) < 0) return part;
+    return part.split(HI.name).join('<mark class="' + cls + '">' + HI.name + '</mark>');
+  }).join("");
+}
+// 이 표가 «누가 무엇을 맡았는가» 를 적는 표인가.
+//  (1) 머리에 담당·누구·담당자 칸이 있거나
+//  (2) 바로 위 제목이 «할 일»·«지시» 면 그 표는 통째로 임무다
+function taskTable(head) {
+  if (/할 일|지시/.test(HI_SEC)) return { all: true, cols: [] };
+  var cols = [];
+  head.forEach(function (c, i) { if (/^(담당|담당자|누구)$/.test(String(c).trim())) cols.push(i); });
+  return { all: false, cols: cols };
+}
+
 function mdInline(t) {
   return esc(t)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -616,12 +674,13 @@ function mdInline(t) {
     .replace(/\[\[([^\]]+)\]\]/g, "$1")                  // 볼트 링크는 여기서 갈 곳이 없다
     .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
 }
+function mdInlineHi(t) { return markName(mdInline(t)); }
 var CALLOUT = { note: ["알림", "blue"], warning: ["주의", "yellow"], important: ["중요", "yellow"],
                 tip: ["도움말", "green"], quote: ["", ""] };
 function mdToHtml(md) {
   var lines = String(md || "").split(/\r?\n/), out = [], i = 0;
   var para = [];
-  var flush = function () { if (para.length) { out.push("<p>" + mdInline(para.join(" ")) + "</p>"); para = []; } };
+  var flush = function () { if (para.length) { out.push("<p>" + mdInlineHi(para.join(" ")) + "</p>"); para = []; } };
   while (i < lines.length) {
     var L = lines[i];
     // 코드 덩어리
@@ -641,10 +700,16 @@ function mdToHtml(md) {
       i += 2;
       var body = [];
       while (i < lines.length && /^\s*\|/.test(lines[i])) body.push(cells(lines[i++]));
+      var tt = taskTable(head);
       out.push('<div class="tbl" style="max-height:none"><table><thead><tr>' +
         head.map(function (c) { return "<th>" + mdInline(c) + "</th>"; }).join("") + "</tr></thead><tbody>" +
         body.map(function (r) {
-          return "<tr>" + r.map(function (c) { return '<td class="wrapc">' + mdInline(c) + "</td>"; }).join("") + "</tr>";
+          return "<tr>" + r.map(function (c, ci) {
+            HI_TASK = tt.all || tt.cols.indexOf(ci) >= 0;
+            var cell = '<td class="wrapc">' + mdInlineHi(c) + "</td>";
+            HI_TASK = false;
+            return cell;
+          }).join("") + "</tr>";
         }).join("") + "</tbody></table></div>");
       continue;
     }
@@ -657,13 +722,13 @@ function mdToHtml(md) {
       var m0 = /^\[!(\w+)\]\s*(.*)$/.exec(q[0] || "");
       if (m0) { kind = m0[1].toLowerCase(); title = m0[2] || (CALLOUT[kind] ? CALLOUT[kind][0] : ""); q.shift(); }
       var cls = (CALLOUT[kind] || CALLOUT.quote)[1];
-      out.push('<blockquote class="' + cls + '">' + (title ? "<b>" + mdInline(title) + "</b>" : "") +
+      out.push('<blockquote class="' + cls + '">' + (title ? "<b>" + mdInlineHi(title) + "</b>" : "") +
         mdToHtml(q.join("\n")) + "</blockquote>");
       continue;
     }
     // 제목
     var h = /^(#{1,6})\s+(.*)$/.exec(L);
-    if (h) { flush(); var lv = Math.min(h[1].length + 1, 6); out.push("<h" + lv + ">" + mdInline(h[2]) + "</h" + lv + ">"); i++; continue; }
+    if (h) { flush(); HI_SEC = h[2]; var lv = Math.min(h[1].length + 1, 6); out.push("<h" + lv + ">" + mdInlineHi(h[2]) + "</h" + lv + ">"); i++; continue; }
     // 목록
     if (/^\s*([-*]|\d+\.)\s+/.test(L)) {
       flush();
@@ -674,7 +739,10 @@ function mdToHtml(md) {
         while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*]|\d+\.)\s+/.test(lines[i])) it += " " + lines[i++].trim();
         items.push(it);
       }
-      out.push("<" + (ord ? "ol" : "ul") + ">" + items.map(function (x) { return "<li>" + mdInline(x) + "</li>"; }).join("") + "</" + (ord ? "ol" : "ul") + ">");
+      // 목록도 «할 일»·«지시» 절 아래면 임무로 본다 — 담당이 표가 아니라 줄로 적히기도 한다.
+      HI_TASK = /할 일|지시/.test(HI_SEC);
+      out.push("<" + (ord ? "ol" : "ul") + ">" + items.map(function (x) { return "<li>" + mdInlineHi(x) + "</li>"; }).join("") + "</" + (ord ? "ol" : "ul") + ">");
+      HI_TASK = false;
       continue;
     }
     if (/^\s*---+\s*$/.test(L)) { flush(); out.push("<hr>"); i++; continue; }
@@ -713,11 +781,34 @@ function renderMinutes() {
     }).join("") + (q && !list.length ? '<span class="muted">찾는 것이 없다.</span>' : "") + '</div>' +
     (cur ? '<div class="mdoc">' +
       '<div class="mmeta">' + (cur.kind ? '<b>' + esc(cur.kind) + '</b>' : "") +
-      (cur.attend ? '<div class="muted">참석 · ' + esc(cur.attend) + '</div>' : "") +
+      (cur.attend ? '<div class="atts"><span class="muted">참석</span>' +
+        attendNames(cur.attend).map(function (a) {
+          return '<button class="mini ' + (S.minName === a.name ? "on" : "") + '" data-att="' + esc(a.name) + '" title="' + esc(a.label) + '">' + esc(a.label) + '</button>';
+        }).join("") +
+        (S.minName ? '<button class="mini" data-att="">지우기</button>' : "") + '</div>' : "") +
       (cur.decisions ? '<span class="pill blue">결정 ' + esc(cur.decisions) + '</span>' : "") +
       (cur.updated ? '<span class="muted" style="font-size:12px"> · 올린 때 ' + esc(fmtMD(String(cur.updated).slice(0, 10))) + '</span>' : "") +
-      '</div>' + mdToHtml(cur.md || "") + '</div>' : "");
+      '</div>' +
+      (function () {
+        HI = S.minName ? { name: S.minName } : null; HI_TASK = false; HI_SEC = "";
+        var body = mdToHtml(cur.md || "");
+        HI = null;
+        if (!S.minName) return body;
+        var task = (body.match(/<mark class="task">/g) || []).length;
+        var hit = (body.match(/<mark class="hit">/g) || []).length;
+        return '<div class="hlkey"><b>' + esc(S.minName) + '</b>' +
+          '<span class="k task">맡은 일 ' + task + '</span>' +
+          '<span class="k hit">나온 곳 ' + hit + '</span>' +
+          '<span class="muted">— 붉은 것은 «할 일·지시» 표나 담당 칸에 이름이 적힌 것이다</span></div>' + body;
+      })() + '</div>' : "");
 
+  $$("[data-att]", el).forEach(function (b) {
+    b.onclick = function () {
+      var n = b.getAttribute("data-att");
+      S.minName = (S.minName === n || !n) ? "" : n;
+      keepScrollIn("#sec-minutes", renderMinutes);
+    };
+  });
   $$("[data-mn]", el).forEach(function (b) {
     b.onclick = function () { S.minPick = b.getAttribute("data-mn"); keepScrollIn("#sec-minutes", renderMinutes); };
   });
@@ -3454,6 +3545,224 @@ function bindSources() {
     };
   });
 }
+
+// ---------- 개발 현황 (2026-09-05) ----------
+//
+// 선생님들이 각자 만든 앱에 **무엇을 넣고 무엇을 고쳤는지**를 한 화면에 모은다.
+// 근거는 깃허브 커밋 이력뿐이다 — 로컬에만 있는 앱은 자동으로 볼 방법이 없다.
+// 9/3 전체회의 결정 "각자 만든 도구 공개·공유·통합"의 실행안. 지금은 내 앱 둘로 시작한다.
+//
+// 저장소 목록은 `dash/config.repos` 에 둔다. 화면에서 더한다 — 선생님이 주소를 주면 코드를 안 고친다.
+//   { key, app, who, owner, repo, url(배포) }
+// 커밋 한 줄을 기능·고침·문서·손질로 가른다(`devKind`). 메시지가 뭉뚱그려져 있으면 못 가른다 —
+// 그래서 자동 분류와 함께 **커밋 메시지 한 줄 규칙**을 공유 자리에서 정해야 한다.
+
+var REPOS_DEFAULT = [
+  { key: "class", app: "수업관리 앱", who: "한민수", owner: "minsuci", repo: "climath-class", url: "https://climath-class.vercel.app" },
+  { key: "team", app: "한민수 대시보드", who: "한민수", owner: "minsuci", repo: "climath-team", url: "https://climath-team1.vercel.app" },
+];
+function reposOf() { var r = S.config && S.config.repos; return (r && r.length) ? r : REPOS_DEFAULT; }
+async function saveRepos(list) {
+  S.config.repos = list;
+  await dashDoc("config").set({ repos: list, updated: Date.now() }, { merge: true });
+}
+// 깃허브 주소에서 owner/repo 를 뽑는다. `owner/repo` 만 적어도 된다.
+function repoFrom(s) {
+  s = String(s || "").trim();
+  var m = /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[\/#?].*)?$/.exec(s) || /^([\w.-]+)\/([\w.-]+)$/.exec(s);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+// 커밋 한 줄 → 종류. 순서가 곧 우선순위다 — 문서 > 고침 > 손질 > 기능(기본).
+// 이 저장소들의 메시지가 한국어 한 줄이라 한국어 표지를 본다. 영어(fix/feat/docs)도 받는다.
+var DEV_KINDS = { feat: ["기능", "blue"], fix: ["고침", "red"], docs: ["문서", ""], chore: ["손질", "yellow"] };
+var DEV_RX = {
+  docs: /CLAUDE\.md|README|\bdocs?\b|^문서|노하우|주석/i,
+  fix: /\bfix|\bbug|버그|오류|막히|막힌|안 되|안 가|안 뜨|안 보이|안 읽|안 잡|안 남|못 [가-힣]+던|틀리|틀린|잘림|잘리|밀리|밀려|새는|샜|깨지|깨진|잘못|던 것|헛|풀린|풀리|빠지던|걸리던|어긋|유령|되던|되게$|있게$|없게$|없어도|않게$/,
+  chore: /뺀다$|지운다$|정리|이름을 바꾼|이름 바꿈|옮긴다$|넘긴다$|되돌|접어|줄인다$|없앤다$|refactor|rename|cleanup|chore/i,
+};
+function devKind(msg) {
+  var m = String(msg || "").trim();
+  if (DEV_RX.docs.test(m)) return "docs";
+  if (DEV_RX.fix.test(m)) return "fix";
+  if (DEV_RX.chore.test(m)) return "chore";
+  return "feat";
+}
+// "제목 — 덧붙임" 을 가른다. 이 저장소들의 커밋이 그렇게 생겼다.
+function devSplit(msg) {
+  var i = String(msg || "").indexOf(" — ");
+  return i < 0 ? [msg, ""] : [msg.slice(0, i), msg.slice(i + 3)];
+}
+
+async function githubApi(body) {
+  var u = teamAuth.currentUser;
+  if (!u) throw new Error("로그인이 필요합니다");
+  var idToken = await u.getIdToken();
+  var r = await fetch("/api/github", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ idToken: idToken }, body)) });
+  var j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || ("요청 실패 (" + r.status + ")"));
+  return j || {};
+}
+// 저장소마다 따로 받는다. 하나가 막혀도(비공개·한도) 나머지는 뜬다.
+async function loadDev(fresh) {
+  var list = reposOf();
+  var out = await Promise.all(list.map(function (rp) {
+    return githubApi({ action: "repo", owner: rp.owner, repo: rp.repo, fresh: !!fresh })
+      .then(function (d) { return Object.assign({ cfg: rp, err: "" }, d); })
+      .catch(function (e) { return { cfg: rp, err: e.message, commits: [], deploy: null }; });
+  }));
+  out.forEach(function (r) { r.commits.forEach(function (c) { c.kind = devKind(c.msg); c.app = r.cfg.app; c.who = r.cfg.who; c.key = r.cfg.key; }); });
+  S.dev = out;
+  return out;
+}
+// 기간 안의 커밋을 종류별로 센다. 화면 카드와 시험이 같이 쓴다.
+function devCount(commits, since) {
+  var o = { total: 0, feat: 0, fix: 0, docs: 0, chore: 0 };
+  commits.forEach(function (c) { if (!since || c.date >= since) { o.total++; o[c.kind] = (o[c.kind] || 0) + 1; } });
+  return o;
+}
+function devSince() { return S.devDays ? addDays(TODAY, -S.devDays) : ""; }
+
+function renderDev() {
+  var el = $("#sec-dev");
+  if (!el) return;
+  if (S.dev === null) {
+    navBadge("dev", 0, false);
+    el.innerHTML = '<h2>개발 현황</h2><div class="empty">' +
+      (S.devErr ? '<span class="red">' + esc(S.devErr) + '</span>' : "깃허브에서 읽는 중...") + '</div>';
+    return;
+  }
+  var since = devSince();
+  var all = [];
+  S.dev.forEach(function (r) { all = all.concat(r.commits); });
+  var recent = all.filter(function (c) { return !since || c.date >= since; });
+  navBadge("dev", recent.length, false);
+
+  var whos = []; S.dev.forEach(function (r) { if (whos.indexOf(r.cfg.who) < 0) whos.push(r.cfg.who); });
+  var q = (S.devQ || "").trim();
+  var list = recent.filter(function (c) {
+    return (!S.devWho || c.who === S.devWho) && (!S.devApp || c.key === S.devApp) && (!S.devKindPick || c.kind === S.devKindPick) &&
+      (!q || c.msg.indexOf(q) >= 0);
+  });
+  var byDate = {}; var dates = [];
+  list.forEach(function (c) { if (!byDate[c.date]) { byDate[c.date] = []; dates.push(c.date); } byDate[c.date].push(c); });
+  dates.sort().reverse();
+
+  var chip = function (attr, val, cur, label) {
+    return '<button class="mini ' + (cur === val ? "on" : "") + '" data-' + attr + '="' + esc(val) + '">' + label + '</button>';
+  };
+  el.innerHTML = '<h2>개발 현황 <span class="n">앱 ' + S.dev.length + '개 · 최근 ' + (S.devDays ? S.devDays + '일 ' : '') + recent.length + '건</span>' +
+    '<span class="sp"></span>' +
+    '<input type="text" id="dv-q" class="mini" placeholder="커밋에서 찾기" value="' + esc(q) + '" style="min-width:140px">' +
+    '<button class="mini" id="dv-re">다시 읽기</button>' +
+    '<button class="mini ' + (S.devEdit ? "on" : "") + '" id="dv-edit">저장소 관리</button></h2>' +
+    (S.devEdit ? devEditHtml() : "") +
+    '<div class="srcs" style="margin-bottom:12px">' + S.dev.map(function (r) { return devCardHtml(r, since); }).join("") + '</div>' +
+    '<div class="chips">' +
+      (whos.length > 1 ? chip("dwho", "", S.devWho, "전원") + whos.map(function (w) { return chip("dwho", w, S.devWho, esc(w)); }).join("") + '<span class="muted">·</span>' : "") +
+      chip("dapp", "", S.devApp, "모든 앱") + S.dev.map(function (r) { return chip("dapp", r.cfg.key, S.devApp, esc(r.cfg.app)); }).join("") +
+      '<span class="muted">·</span>' +
+      chip("dkind", "", S.devKindPick, "모든 종류") + Object.keys(DEV_KINDS).map(function (k) { return chip("dkind", k, S.devKindPick, DEV_KINDS[k][0]); }).join("") +
+      '<span class="muted">·</span>' +
+      chip("ddays", "14", String(S.devDays), "2주") + chip("ddays", "30", String(S.devDays), "한 달") + chip("ddays", "0", String(S.devDays), "받아온 전부") +
+    '</div>' +
+    (dates.length ? dates.map(function (d) {
+      return '<div class="dvday"><b>' + esc(fmtMD(d)) + '</b> <span class="muted">' + byDate[d].length + '건</span></div>' +
+        byDate[d].map(devRowHtml).join("");
+    }).join("") : '<div class="empty">' + (all.length ? "이 조건에 맞는 커밋이 없다." : "커밋을 못 받아왔다. 위 상자의 이유를 본다.") + '</div>') +
+    (S.dev.some(function (r) { return r.more; }) && !S.devDays ?
+      '<div class="muted" style="font-size:12px;margin-top:8px">저장소당 최근 200건까지만 받아온다. 그 앞은 저장소에서 본다.</div>' : "");
+  bindDev(el);
+}
+function devCardHtml(r, since) {
+  var cfg = r.cfg, n = devCount(r.commits, since), last = r.commits[0];
+  var kinds = Object.keys(DEV_KINDS).filter(function (k) { return n[k]; }).map(function (k) {
+    return '<span class="pill ' + DEV_KINDS[k][1] + '">' + DEV_KINDS[k][0] + ' ' + n[k] + '</span>';
+  }).join(" ");
+  return '<div class="src on"><div class="sh"><b>' + esc(cfg.app) + '</b>' +
+    '<span class="pill">' + esc(cfg.who) + '</span>' +
+    (r.err ? '<span class="pill red">못 읽음</span>' : r.private ? '<span class="pill yellow">비공개</span>' : "") +
+    '<span class="sp" style="flex:1"></span>' +
+    (cfg.url ? '<a class="mini" href="' + esc(cfg.url) + '" target="_blank">앱 열기</a>' : "") +
+    '<a class="mini" href="' + esc(r.url || ("https://github.com/" + cfg.owner + "/" + cfg.repo)) + '" target="_blank">저장소</a></div>' +
+    (r.err ? '<div class="err">' + esc(r.err) + '</div>' :
+      '<div style="font-size:13px">' + (since ? '최근 ' + S.devDays + '일 ' : '') + '<b>' + n.total + '건</b> ' + kinds +
+      (last ? ' <span class="muted">· 마지막 커밋 ' + esc(fmtMD(last.date)) + '</span>' : "") +
+      (r.deploy ? ' <span class="muted">· 마지막 배포 ' + esc(fmtMD(r.deploy.date)) + ' <code>' + esc(r.deploy.short) + '</code>' +
+        (last && r.deploy.sha !== last.sha ? ' <span class="pill yellow">마지막 커밋과 다름</span>' : "") + '</span>' : "") + '</div>' +
+      (r.description ? '<div class="muted" style="font-size:12px">' + esc(r.description) + '</div>' : ""));
+}
+function devRowHtml(c) {
+  var p = devSplit(c.msg), k = DEV_KINDS[c.kind] || DEV_KINDS.feat;
+  return '<div class="dvrow"><span class="pill ' + k[1] + '">' + k[0] + '</span>' +
+    (S.devApp ? "" : '<span class="pill">' + esc(c.app) + '</span>') +
+    '<a href="' + esc(c.url) + '" target="_blank" class="dvmsg">' + esc(p[0]) + '</a>' +
+    (p[1] ? '<span class="muted"> — ' + esc(p[1]) + '</span>' : "") +
+    '<span class="muted dvsha">' + esc(c.who !== c.author ? c.author + " · " : "") + esc(c.short) + '</span></div>';
+}
+function devEditHtml() {
+  var list = reposOf();
+  return '<div class="banner" style="background:#fff;margin-bottom:12px"><b>저장소 목록</b> <span class="muted" style="font-size:12px">선생님이 주소를 주면 여기 더한다. 비공개 저장소는 Vercel 에 <code>GITHUB_TOKEN</code> 이 있어야 읽힌다.</span>' +
+    '<table style="width:100%;margin-top:6px;font-size:13px"><tr><th>앱 이름</th><th>담당</th><th>깃허브 주소</th><th>배포 주소</th><th></th></tr>' +
+    list.map(function (r, i) {
+      return '<tr data-drow="' + i + '"><td><input type="text" class="d-app" value="' + esc(r.app) + '"></td>' +
+        '<td><input type="text" class="d-who" value="' + esc(r.who) + '" style="width:70px"></td>' +
+        '<td><input type="text" class="d-gh" value="' + esc(r.owner + "/" + r.repo) + '"></td>' +
+        '<td><input type="text" class="d-url" value="' + esc(r.url || "") + '"></td>' +
+        '<td><button class="mini" data-ddel="' + i + '">빼기</button></td></tr>';
+    }).join("") +
+    '<tr data-drow="new"><td><input type="text" class="d-app" placeholder="새 앱"></td><td><input type="text" class="d-who" placeholder="담당" style="width:70px"></td>' +
+    '<td><input type="text" class="d-gh" placeholder="github.com/… 또는 owner/repo"></td><td><input type="text" class="d-url" placeholder="https://…"></td><td></td></tr>' +
+    '</table><div class="row"><button class="btn" id="dv-save">저장하고 다시 읽기</button><button class="mini" id="dv-cancel">닫기</button></div>' +
+    '<div class="err" id="dv-err"></div></div>';
+}
+// 편집 표를 읽어 목록으로. 새 줄은 깃허브 주소가 있을 때만 들어간다.
+function readRepoTable(el) {
+  var out = [], bad = "";
+  $$("[data-drow]", el).forEach(function (tr) {
+    var gh = $(".d-gh", tr).value.trim(), isNew = tr.getAttribute("data-drow") === "new";
+    if (isNew && !gh) return;
+    var p = repoFrom(gh);
+    if (!p) { bad = "깃허브 주소를 못 읽었다: " + gh; return; }
+    var app = $(".d-app", tr).value.trim() || p.repo, who = $(".d-who", tr).value.trim() || "?";
+    out.push({ key: p.owner + "__" + p.repo, app: app, who: who, owner: p.owner, repo: p.repo, url: $(".d-url", tr).value.trim() });
+  });
+  if (bad) throw new Error(bad);
+  return out;
+}
+function bindDev(el) {
+  var pick = function (attr, field, conv) {
+    $$("[data-" + attr + "]", el).forEach(function (b) {
+      b.onclick = function () { S[field] = conv ? conv(b.getAttribute("data-" + attr)) : b.getAttribute("data-" + attr); keepScrollIn("#sec-dev", renderDev); };
+    });
+  };
+  pick("dwho", "devWho"); pick("dapp", "devApp"); pick("dkind", "devKindPick"); pick("ddays", "devDays", Number);
+  $("#dv-q").oninput = function () {
+    S.devQ = this.value; var keep = this.value;
+    renderDev();
+    var again = $("#dv-q"); if (again) { again.value = keep; again.focus(); again.setSelectionRange(keep.length, keep.length); }
+  };
+  $("#dv-re").onclick = function () { S.dev = null; S.devErr = ""; renderDev(); loadDev(true).then(renderDev).catch(function (e) { S.devErr = e.message; renderDev(); }); };
+  $("#dv-edit").onclick = function () { S.devEdit = !S.devEdit; renderDev(); };
+  var cancel = $("#dv-cancel"); if (cancel) cancel.onclick = function () { S.devEdit = false; renderDev(); };
+  $$("[data-ddel]", el).forEach(function (b) {
+    b.onclick = function () { var tr = b.closest("tr"); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); };
+  });
+  var save = $("#dv-save");
+  if (save) save.onclick = async function () {
+    var err = $("#dv-err");
+    try {
+      var list = readRepoTable(el);
+      if (!list.length) { err.textContent = "저장소가 하나도 없다. 하나는 남겨야 한다."; return; }
+      save.disabled = true;
+      await saveRepos(list);
+      S.devEdit = false; S.dev = null; S.devApp = ""; renderDev();
+      loadDev(true).then(renderDev).catch(function (e) { S.devErr = e.message; renderDev(); });
+    } catch (e) { save.disabled = false; err.textContent = e.message; }
+  };
+}
+
 </script>
 </body>
 </html>

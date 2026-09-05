@@ -8,6 +8,7 @@ repo/
 ├── index.html        # 대시보드 전체. 순수 JS, 빌드 없음
 ├── api/auth.js       # 로그인 — 수업관리 앱 /api/auth 에 PIN 확인을 맡기고 토큰 둘을 준다
 ├── api/sheets.js     # 구글시트 읽기 (서비스 계정, 읽기 전용)
+├── api/github.js     # 깃허브 커밋·배포 이력 읽기 — «개발 현황» (5분 캐시)
 ├── api/_google.js    # 커스텀 토큰 발급 · ID 토큰 검증 · 구글 API 토큰
 ├── firestore.rules   # climath-team DB 규칙 — owner 만. 콘솔에 붙여넣어 게시
 └── vercel.json       # icn1
@@ -16,7 +17,7 @@ repo/
 - 배포: https://climath-team1.vercel.app — Vercel 프로젝트 `climath-team1` (GitHub `minsuci/climath-team` main → 자동 배포)
 - Firebase: `climath-team` (Firestore 서울, Authentication은 커스텀 토큰만 — 익명 켜지 말 것)
 - 환경변수: `TEAM_SERVICE_ACCOUNT` = climath-team 서비스 계정 JSON 한 줄. Production/Preview/Development 셋 다.
-  선택: `CLASS_API_URL` (기본 `https://climath-class.vercel.app/api/auth`)
+  선택: `CLASS_API_URL` (기본 `https://climath-class.vercel.app/api/auth`) · `GITHUB_TOKEN` (비공개 저장소를 읽거나 한도를 올릴 때)
 
 ## 구조 — Firebase 프로젝트 둘
 
@@ -24,7 +25,7 @@ repo/
 |---|---|---|---|
 | `firebase.app()` 기본 | climath-class | teachers · classes · appConfig · exams · scores | 읽기만 |
 | 〃 | 〃 | **students · classes.roster** | **쓴다** — 학생 명단이 이 앱에서 관리된다 |
-| `teamApp` | climath-team | `dash/tasks`(할 일) · `dash/config`(시트) · `dash/students`(메모) | 여기만 |
+| `teamApp` | climath-team | `dash/tasks`(할 일) · `dash/config`(시트·저장소) · `dash/students`(메모) | 여기만 |
 
 브라우저가 두 프로젝트에 따로 로그인한다. `/api/auth login` 이 `classToken`(수업관리 앱이 발급)과
 `teamToken`(이 프로젝트 서비스 계정이 서명)을 함께 주고, 각각 `signInWithCustomToken` 한다.
@@ -448,3 +449,40 @@ node tools/test-cal.js
 ## 볼트
 
 작업 노트: `민수의 뇌/20 작업/한민수 대시보드.md` — 켜는 순서, 연동 후보 시트 목록.
+
+## 개발 현황 (2026-09-05)
+
+선생님들이 각자 만든 앱에 **무엇을 넣고 무엇을 고쳤는지**를 한 화면에 모은다.
+9/3 전체회의 결정 "각자 만든 도구 공개·공유·통합"의 실행안. 지금은 내 앱 둘(`climath-class`·`climath-team`)로 시작한다.
+
+**근거는 깃허브 커밋 이력뿐이다.** 로컬에만 있는 앱은 자동으로 볼 방법이 없다 — 그 선생님은 저장소 주소를 받아야 한다.
+
+```
+dash/config.repos[]   { key, app, who, owner, repo, url }   ← 화면 «저장소 관리»에서 더한다. 코드를 안 고친다
+```
+
+- 서버 `api/github.js` 가 저장소마다 최근 200건(100 × 2쪽)과 마지막 deployment 를 받아온다. owner 만.
+  브라우저가 api.github.com 을 바로 불러도 되지만 **비공개 저장소의 토큰을 브라우저에 둘 수 없어서** 서버를 거친다.
+- 토큰 없이는 IP 당 시간당 60번이다. 서버에 **5분 캐시**를 두고, 화면도 «다시 읽기» 전에는 다시 안 부른다.
+  걸리면 몇 분 뒤에 풀리는지 화면에 나온다. `GITHUB_TOKEN`(fine-grained, Contents:read)을 넣으면 5000번.
+- 저장소마다 **따로** 부른다(`loadDev`). 하나가 막혀도(비공개·한도) 나머지는 뜬다. 막힌 것은 카드에 이유가 나온다.
+- 커밋 한 줄을 `devKind` 가 **기능·고침·문서·손질**로 가른다. 순서가 우선순위다(문서 > 고침 > 손질 > 기능).
+  한국어 표지(막히·안 되·되게·던 것…)와 영어(fix/docs)를 본다. 기본값은 기능.
+
+> [!warning] 분류는 커밋 메시지만큼만 맞는다
+> "Update index.html" 은 전부 기능으로 간다. 이 저장소들은 한 줄을 제대로 쓰고 있어 잘 갈리지만
+> 다른 선생님 저장소는 다를 수 있다. **자동 분류와 함께 커밋 한 줄 규칙을 공유 자리에서 정해야 한다.**
+> `못 …` 은 `못 …던` 일 때만 고침이다 — "못 찾은 이유를 보여준다"는 기능인데 처음엔 고침으로 갈렸다.
+
+- "제목 — 덧붙임" 꼴이면 제목만 진하게, 덧붙임은 흐리게(`devSplit`).
+- 카드에 **마지막 배포**가 마지막 커밋과 다르면 노란 표시 — 푸시했는데 배포가 안 된 것을 잡는다.
+  climath-class 의 deployment 는 `github-pages` 로 찍힌다(버셀이 아니라 Pages 연동이 기록을 남긴다). 날짜와 sha 만 본다.
+- 이 메뉴도 회의록처럼 **처음 열 때만** 받아온다(`showPage`).
+
+### 시험
+
+```bash
+node tools/test-dev.js
+```
+
+37건. **진짜 커밋 메시지 20건**으로 분류를 보고, 주소 읽기·기간 세기·저장소 목록 저장(`repos` 만 merge, 근거 자료 저장이 이걸 안 지우는지)을 본다.
