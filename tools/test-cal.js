@@ -141,6 +141,32 @@ ok("학년으로 거른다", R("고1").every((x) => x.text.indexOf("2학기 중�
 ok("학년 없는 종강은 어느 학년에서나 보인다", R("고2").some((x) => x.kind === "class"),
   R("고2").map((x) => x.text).join(" | "));
 
+// ---- 내신 시작에 붙는 학생 이름 ----
+// "누가 언제 안 오나"가 «앞으로 2주» 의 물음이다. 학교 이름만 뜨면 매번 명단을 다시 뒤진다.
+run(`
+  S.students=[{pid:"p1",name:"김서진",school:"중대부고",grade:"고1"},
+              {pid:"p2",name:"박준서",school:"중대부고",grade:"고1"},
+              {pid:"p3",name:"임서윤",school:"중대부고",grade:"고2"},
+              {pid:"p4",name:"설민준",school:"봉은중",grade:"중3"},
+              {pid:"p5",name:"반없는",school:"중대부고",grade:"고1"}];
+  S.classes=[{id:"c1",name:"고1S",roster:[{id:"r1",pid:"p1",name:"김서진"},{id:"r2",pid:"p2",name:"박준서"}]},
+             {id:"c2",name:"고1T",roster:[{id:"r3",pid:"p2",name:"박준서"}]}];
+`);
+const WHO = JSON.parse(run(`return JSON.stringify(studentsAt("중대부고","고1"))`));
+ok("그 학교·학년 학생만 고른다", WHO.map((x) => x.name).join(",") === "김서진,박준서,반없는",
+  WHO.map((x) => x.name).join(","));
+ok("다른 학년은 안 섞인다", !WHO.some((x) => x.name === "임서윤"));
+ok("다른 학교도 안 섞인다", !WHO.some((x) => x.name === "설민준"));
+ok("이름 가나다 차례", WHO.map((x) => x.name).join(",") === WHO.map((x) => x.name).slice().sort((a, b) => a.localeCompare(b, "ko")).join(","));
+ok("어느 반인지 같이 준다", WHO.filter((x) => x.name === "김서진")[0].cls === "고1S",
+  JSON.stringify(WHO.filter((x) => x.name === "김서진")[0]));
+ok("반이 둘이면 둘 다", WHO.filter((x) => x.name === "박준서")[0].cls === "고1S, 고1T",
+  WHO.filter((x) => x.name === "박준서")[0].cls);
+// ⚠ 반이 없는 학생도 빼면 안 된다 — 그 학생도 시험 때 안 온다.
+ok("반이 없어도 빠지지 않는다", WHO.filter((x) => x.name === "반없는")[0].cls === "",
+  JSON.stringify(WHO.filter((x) => x.name === "반없는")));
+ok("학생이 없으면 빈 목록", JSON.parse(run(`return JSON.stringify(studentsAt("없는고","고1"))`)).length === 0);
+
 // ---- 이레에 눕히기 ----
 // 막대 눕히는 규칙은 자료가 어디서 오든 같아야 한다. 손으로 만든 기간으로 시험한다.
 // 그 주는 8/31(월) ~ 9/6(일). 칸 번호는 0부터 여섯까지.

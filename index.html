@@ -82,6 +82,13 @@
   .pill.green { background: #e3f5ea; color: #1f7a45; }
   .pill.yellow { background: #fff4d6; color: #8a5a00; }
   .pill.blue { background: #e4ecfb; color: #234e9e; }
+  /* 앞으로 2주 — 내신 시작에 붙는 학생 이름 */
+  .whoat { margin: 3px 0 2px; line-height: 1.9; }
+  .whoat .nm { display: inline-block; background: #f1f3f7; border-radius: 10px; padding: 1px 8px;
+    margin: 0 3px 2px 0; font-size: 12px; }
+  .whoat .nm i { font-style: normal; color: var(--muted); font-size: 11px; margin-left: 4px; }
+  .whoat .nm i.none { color: var(--red); }
+
   /* 근거 자료 */
   .srcs { display: flex; flex-direction: column; gap: 8px; }
   .src { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fafbfc; }
@@ -1184,6 +1191,17 @@ function parseDueText(s) {
 }
 
 // ---------- 이번 주 ----------
+// 그 학교·학년에 다니는 우리 학생. 어느 반인지도 같이 — "누가 언제 안 오나"가 이 화면의 물음이다.
+function studentsAt(school, grade) {
+  var inCls = {};
+  activeClasses().forEach(function (c) {
+    rosterStudents(c).forEach(function (r) { if (r.pid) (inCls[r.pid] = inCls[r.pid] || []).push(c.name); });
+  });
+  return S.students.filter(function (x) { return x.school === school && x.grade === grade; })
+    .map(function (x) { return { name: x.name, cls: (inCls[x.pid] || []).join(", ") }; })
+    .sort(function (a, b) { return String(a.name).localeCompare(String(b.name), "ko"); });
+}
+
 function renderWeek() {
   var el = $("#sec-week");
   var items = [];
@@ -1192,7 +1210,9 @@ function renderWeek() {
     var v = S.schoolTerms[k]; if (!v || v.term !== S.term) return;
     [["start", "내신 시작"], ["math", "수학시험"], ["back", "복귀"]].forEach(function (p) {
       var n = daysFromToday(v[p[0]]); if (n === null || n < -1 || n > 14) return;
-      items.push({ date: v[p[0]], text: v.school + " " + v.grade + " " + p[1] + (v.label ? " (" + v.label + ")" : ""), kind: "school" });
+      items.push({ date: v[p[0]], text: v.school + " " + v.grade + " " + p[1] + (v.label ? " (" + v.label + ")" : ""), kind: "school",
+        // 내신이 시작하면 **누가 안 오는지**가 바로 필요하다. 그 자리에 이름을 같이 띄운다.
+        who: p[0] === "start" ? studentsAt(v.school, v.grade) : null });
     });
   });
   // 할 일 기한
@@ -1211,7 +1231,15 @@ function renderWeek() {
     (dates.length ? '<div class="tbl"><table><tbody>' + dates.map(function (d) {
       var n = daysFromToday(d);
       return '<tr><td style="width:110px"><b class="' + (n < 0 ? "red" : n === 0 ? "orange" : "") + '">' + fmtMD(d) + '</b><br><span class="muted">' + dday(d) + '</span></td><td class="wrapc">' +
-        grouped[d].map(function (i) { return '<span class="pill ' + (i.kind === "task" ? "blue" : i.kind === "school" ? "yellow" : "") + '">' + { task: "할 일", school: "학교", class: "반" }[i.kind] + '</span>' + esc(i.text); }).join("<br>") + '</td></tr>';
+        grouped[d].map(function (i) {
+          return '<span class="pill ' + (i.kind === "task" ? "blue" : i.kind === "school" ? "yellow" : "") + '">' +
+            { task: "할 일", school: "학교", class: "반" }[i.kind] + '</span>' + esc(i.text) +
+            (i.who ? (i.who.length
+              ? '<div class="whoat"><b>' + i.who.length + '명</b> ' + i.who.map(function (x) {
+                  return '<span class="nm">' + esc(x.name) + (x.cls ? '<i>' + esc(x.cls) + '</i>' : '<i class="none">반 없음</i>') + '</span>';
+                }).join("") + '</div>'
+              : '<div class="whoat muted">이 학교·학년에 다니는 학생이 명단에 없다</div>') : "");
+        }).join("<br>") + '</td></tr>';
     }).join("") + '</tbody></table></div>' : '<div class="empty">2주 안에 걸린 일정이 없다.</div>');
 }
 
