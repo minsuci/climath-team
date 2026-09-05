@@ -180,6 +180,77 @@ ok("링크 주소 속 이름은 안 건드린다",
   hi("한민수", NOTE5).indexOf('href="https://example.com/한민수"') >= 0, hi("한민수", NOTE5));
 ok("링크 글자는 칠한다", hi("한민수", NOTE5).indexOf('<mark class="hit">한민수</mark>') >= 0, hi("한민수", NOTE5));
 
+// ---- 이름 말고 소속으로도 ----
+// 회의록은 사람을 이름으로만 부르지 않는다. «예비고1 담당 강사»·«담임 전원»·«전원» 도 그 사람이다.
+// 이름만 찾으면 정작 자기가 맡은 일을 놓친다.
+vm.runInContext(`
+  S.teachers = [
+    { tid:"T1", name:"한민수", classIds:["c1"] },
+    { tid:"T2", name:"이현우", classIds:["c2"] },
+    { tid:"T3", name:"이창혁A", classIds:["c1b","c2b"] }
+  ];
+  S.classes = [
+    { id:"c1",  name:"고1S (201호)" },
+    { id:"c2",  name:"예비고1S 월금" },
+    { id:"c1b", name:"고1T (402호)" },
+    { id:"c2b", name:"예비고1T 화목" }
+  ];
+`, ctx);
+const grp = (n, note) => JSON.parse(vm.runInContext(
+  "JSON.stringify(personGroups(" + JSON.stringify(n) + "," + JSON.stringify(note || null) + "))", ctx));
+
+const G_HYU = grp("이현우");
+ok("예비고1 선생님은 «예비고1 담당 강사» 로도 불린다", G_HYU.indexOf("예비고1 담당 강사") >= 0, G_HYU.join(" · "));
+ok("반이 있으면 «담임 전원» 도 그 사람", G_HYU.indexOf("담임 전원") >= 0);
+ok("우리 팀이면 «고등부» 도 그 사람", G_HYU.indexOf("고등부") >= 0);
+ok("«전원» 은 늘 그 사람", G_HYU.indexOf("전원") >= 0);
+// ⚠ 맨 «예비고1» 은 안 넣는다 — "예비고1 D등급 명단" 은 선생님 일이 아니라 학생 이야기다.
+ok("맨 학년 이름은 소속으로 안 쓴다", G_HYU.indexOf("예비고1") < 0, G_HYU.join(" · "));
+
+const G_HAN = grp("한민수");
+ok("고1 선생님은 «고1 담당»", G_HAN.indexOf("고1 담당") >= 0, G_HAN.join(" · "));
+ok("고1 선생님에게 «예비고1 담당 강사» 는 안 붙는다", G_HAN.indexOf("예비고1 담당 강사") < 0, G_HAN.join(" · "));
+ok("두 학년을 맡으면 둘 다", grp("이창혁A").indexOf("고1 담당") >= 0 && grp("이창혁A").indexOf("예비고1 담당") >= 0,
+  grp("이창혁A").join(" · "));
+ok("우리 팀이 아니면 «전원» 뿐", grp("원장").join(",") === "전원", grp("원장").join(","));
+// «간부» 는 회의마다 다르다 — 그 회의 참석 줄에 있어야 한다
+ok("간부회의에 앉은 사람은 «간부»",
+  grp("한민수", { kind: "간부 전체회의", attend: "원장 · 한민수 부팀장" }).indexOf("간부") >= 0);
+ok("다른 회의에서는 «간부» 가 아니다",
+  grp("한민수", { kind: "클라이매쓰 전체회의", attend: "한민수" }).indexOf("간부") < 0);
+
+// 칠하기 — 소속을 켜고
+const hig = (name, md) => vm.runInContext(
+  `(function(){ HI = { name: ${JSON.stringify(name)}, groups: personGroups(${JSON.stringify(name)}, null) };
+     HI_TASK=false; HI_SEC=""; var h = mdToHtml(${JSON.stringify(md)}); HI = null; return h; })()`, ctx);
+const YT = ["### 7. 유튜브", "", "예비고1 담당 강사 중심, 2~3주에 1편 5분.", "",
+  "## 할 일", "", "| 할 일 | 담당 | 기한 |", "|---|---|---|",
+  "| 유튜브 촬영 2~3주 1편 | 예비고1 담당 강사 | 세부 공지 후 |",
+  "| 9월 CLT 실시 | 고등부 | 9월 |",
+  "| 담임별 올케어 | 담임 전원 | 상시 |"].join("\n");
+
+const YH = hig("이현우", YT);
+ok("본문의 «예비고1 담당 강사» 가 초록으로 걸린다",
+  YH.indexOf('<p class="hl-hit">') >= 0 && YH.indexOf('예비고1 담당 강사</mark>') >= 0, YH.slice(0, 220));
+// ⚠ 여기가 마왕님이 짚은 자리다 — 이름이 없어도 그 사람 일이다.
+ok("할 일 표의 «예비고1 담당 강사» 줄이 붉다",
+  YH.indexOf('<tr class="hl-task"><td class="wrapc">유튜브 촬영') >= 0,
+  YH.slice(YH.indexOf("<tbody>"), YH.indexOf("</tbody>")));
+ok("소속으로 걸린 것은 따로 표시한다", YH.indexOf('class="task g"') >= 0, YH.slice(YH.indexOf("유튜브 촬영")));
+
+const YHan = hig("한민수", YT);
+// ⚠ «예비고1 담당 강사» 안에 «고1 담당» 이 들어 있다. 앞 글자를 안 보면 고1 선생님까지 걸린다.
+ok("고1 선생님은 유튜브 줄에 안 걸린다",
+  YHan.indexOf('<tr class="hl-task"><td class="wrapc">유튜브 촬영') < 0,
+  YHan.slice(YHan.indexOf("유튜브 촬영") - 60, YHan.indexOf("유튜브 촬영") + 40));
+ok("«고등부»·«담임 전원» 줄은 누구에게나 붉다",
+  YHan.indexOf("고등부</mark>") >= 0 && YHan.indexOf("담임 전원</mark>") >= 0, YHan.slice(YHan.indexOf("CLT")));
+
+// 긴 말을 짧은 말로 잘라 먹지 않는다
+ok("«예비고1 담당 강사» 를 통째로 칠한다",
+  hig("이현우", "예비고1 담당 강사 중심").indexOf(">예비고1 담당 강사</mark>") >= 0,
+  hig("이현우", "예비고1 담당 강사 중심"));
+
 // ---- 진짜 회의록으로 한 번 ----
 const REAL = fs.readFileSync(process.env.VAULT_MINUTES
   ? process.env.VAULT_MINUTES + "/2026-08-31 간부 전체회의.md"

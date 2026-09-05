@@ -142,6 +142,8 @@
   .mdoc mark.hit { background: #cdeed7; color: #14532d; }
   .mdoc mark.task { background: #fbd5d5; color: #7f1d1d; font-weight: 700;
     box-shadow: 0 0 0 1px #f0a8a8; }
+  /* 소속으로 걸린 것 — 이름이 아니라 «담임 전원» 같은 말에 걸렸다는 표시 */
+  .mdoc mark.g { border-bottom: 2px dotted currentColor; font-weight: 600; }
   .mmeta { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 10px; font-size: 13px; }
 
   /* 학년 업무 달력 */
@@ -652,16 +654,74 @@ function attendNames(attend) {
   });
   return out;
 }
+// 회의록은 사람을 **이름으로만 부르지 않는다.** "예비고1 담당 강사", "담임 전원", "고등부", "전원" —
+// 이런 자리도 그 사람 것이다. 이름만 찾으면 정작 자기가 맡은 일을 놓친다.
+//
+// 소속은 **앱이 아는 것으로만** 판단한다 — 그 선생님이 맡은 반 이름에서 학년을 읽는다.
+// 반 이름이 "예비고1S 월금" 이면 «예비고1» 이 그 사람의 학년이다.
+var GRADE_TOKENS = ["예비고1", "예비고2", "예비고3", "고3", "고2", "고1", "중3", "중2", "중1"];
+function gradeTokenOf(nm) {
+  for (var i = 0; i < GRADE_TOKENS.length; i++) if (String(nm).indexOf(GRADE_TOKENS[i]) >= 0) return GRADE_TOKENS[i];
+  return "";
+}
+// ⚠ 사람을 가리키는 말만 넣는다. 맨 «예비고1» 은 학생 이야기에도 나오므로 넣지 않는다
+//   ("예비고1 D등급 명단" 은 선생님 일이 아니다).
+var ROLE_WORDS = ["담당 강사", "담당 선생님", "담당 교사", "담당", "강사", "선생님", "담임"];
+function personGroups(name, note) {
+  var out = ["전원"];
+  var t = S.teachers.filter(function (x) { return x.name === name; })[0];
+  if (t) {
+    out.push("고등부");
+    var cls = (t.classIds || []).map(function (id) { return className(id); });
+    if (cls.length) { out.push("담임 전원"); out.push("담임"); }
+    var toks = {};
+    cls.forEach(function (n) { var g = gradeTokenOf(n); if (g) toks[g] = 1; });
+    Object.keys(toks).forEach(function (g) {
+      ROLE_WORDS.forEach(function (w) { out.push(g + " " + w); });
+    });
+  }
+  // «간부» 는 그 회의에 앉은 사람들이다. 회의마다 다르므로 참석 줄로 본다.
+  if (note && /간부/.test(String(note.kind || "")) && String(note.attend || "").indexOf(name) >= 0) out.push("간부");
+  return out;
+}
+
 // 지금 칠하는 사람. 표를 그리는 동안에는 HI_TASK 가 켜져 «맡은 일» 로 칠해진다.
 var HI = null, HI_TASK = false, HI_SEC = "";
-// ⚠ 태그 안은 건드리지 않는다. 이름을 통째로 바꾸면 href·class 속으로도 들어가 화면이 깨진다.
+function hiTerms() {
+  if (!HI) return [];
+  var out = [HI.name].concat(HI.groups || []).filter(Boolean);
+  // 긴 것부터 — «예비고1 담당 강사» 를 «예비고1 담당» 으로 잘라 먹으면 안 된다
+  return out.sort(function (a, b) { return b.length - a.length; });
+}
+// ⚠ 앞 글자가 한글·숫자·영문이면 딴 낱말의 꼬리다. «예비고1 담당» 안의 «고1 담당» 을 잡으면 안 된다.
+function findTerm(text, term, from) {
+  var at = text.indexOf(term, from || 0);
+  while (at > 0 && /[0-9A-Za-z가-힣]/.test(text.charAt(at - 1))) at = text.indexOf(term, at + 1);
+  return at;
+}
+// ⚠ 태그 안은 건드리지 않는다. 통째로 바꾸면 href·class 속으로도 들어가 화면이 깨진다.
 function markName(html) {
-  if (!HI || !HI.name) return html;
+  var terms = hiTerms();
+  if (!terms.length) return html;
   var cls = HI_TASK ? "task" : "hit";
   return html.split(/(<[^>]*>)/).map(function (part, i) {
     if (i % 2) return part;
-    if (part.indexOf(HI.name) < 0) return part;
-    return part.split(HI.name).join('<mark class="' + cls + '">' + HI.name + '</mark>');
+    var out = "", rest = part;
+    while (rest) {
+      var best = -1, bestT = "";
+      for (var k = 0; k < terms.length; k++) {
+        var at = findTerm(rest, terms[k]);
+        if (at < 0) continue;
+        if (best < 0 || at < best || (at === best && terms[k].length > bestT.length)) { best = at; bestT = terms[k]; }
+      }
+      if (best < 0) { out += rest; break; }
+      var grp = bestT !== HI.name;
+      out += rest.slice(0, best) +
+        '<mark class="' + cls + (grp ? " g" : "") + '"' + (grp ? ' title="' + esc(HI.name) + " — " + esc(bestT) + '"' : "") +
+        '>' + bestT + '</mark>';
+      rest = rest.slice(best + bestT.length);
+    }
+    return out;
   }).join("");
 }
 // 이 표가 «누가 무엇을 맡았는가» 를 적는 표인가.
@@ -671,8 +731,9 @@ function markName(html) {
 // 붉은 것이 하나라도 있으면 그 덩어리는 임무다 — 초록보다 세다.
 function hiClass(html) {
   if (!HI) return "";
-  if (html.indexOf('<mark class="task"') >= 0) return " hl-task";
-  if (html.indexOf('<mark class="hit"') >= 0) return " hl-hit";
+  // ⚠ 닫는 따옴표까지 보면 안 된다. 소속으로 걸린 것은 class="task g" 라 안 잡힌다.
+  if (html.indexOf('<mark class="task') >= 0) return " hl-task";
+  if (html.indexOf('<mark class="hit') >= 0) return " hl-hit";
   return "";
 }
 function hiAttr(html) { var c = hiClass(html); return c ? ' class="' + c.trim() + '"' : ""; }
@@ -819,16 +880,22 @@ function renderMinutes() {
       (cur.updated ? '<span class="muted" style="font-size:12px"> · 올린 때 ' + esc(fmtMD(String(cur.updated).slice(0, 10))) + '</span>' : "") +
       '</div>' +
       (function () {
-        HI = S.minName ? { name: S.minName } : null; HI_TASK = false; HI_SEC = "";
+        HI = S.minName ? { name: S.minName, groups: personGroups(S.minName, cur) } : null;
+        HI_TASK = false; HI_SEC = "";
         var body = mdToHtml(cur.md || "");
         HI = null;
         if (!S.minName) return body;
-        var task = (body.match(/<mark class="task">/g) || []).length;
-        var hit = (body.match(/<mark class="hit">/g) || []).length;
+        var task = (body.match(/<mark class="task/g) || []).length;
+        var hit = (body.match(/<mark class="hit/g) || []).length;
+        // 화면에 «무엇으로 걸렸는지» 를 적어 준다 — 안 그러면 왜 칠해졌는지 알 수 없다
+        var HI_GROUPS = S.minName ? personGroups(S.minName, cur).filter(function (g) {
+          return (cur.md || "").indexOf(g) >= 0;
+        }) : [];
         return '<div class="hlkey"><b>' + esc(S.minName) + '</b>' +
           '<span class="k task">맡은 일 ' + task + '</span>' +
           '<span class="k hit">나온 곳 ' + hit + '</span>' +
-          '<span class="muted">— 이름이 든 줄을 통째로 칠한다. 붉은 것은 «할 일·지시» 표나 담당 칸에 이름이 적힌 것</span></div>' + body;
+          (HI_GROUPS.length ? '<span class="muted">— 이름 말고 <b>' + esc(HI_GROUPS.join(" · ")) + '</b> 로 적힌 자리도 함께</span>' : "") +
+          '<span class="muted">· 붉은 것은 «할 일·지시» 표나 담당 칸에 적힌 것</span></div>' + body;
       })() + '</div>' : "");
 
   $$("[data-att]", el).forEach(function (b) {
