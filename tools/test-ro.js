@@ -87,6 +87,9 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   const check = mk("BUTTON", "읽히나 확인", ["mini"]);
   const open = mk("A", "앱 열기", ["mini"]);
   const pin = mk("BUTTON", "PIN 초기화", ["mini"]);
+  // «내 완료» — 읽기 계정도 눌러야 하는 단 하나의 단추.
+  // data-keep 이 없으면 «완료»·«✓» 글자에 걸려 감춰지고, 선생님은 끝냈다는 표시를 할 데가 없어진다.
+  const mine = mk("BUTTON", "✓ 내가 함 9/6", ["mini", "mk"], { "data-keep": "", "data-mk": "a" });
   const search = mk("INPUT", "", ["mini"], { type: "text", placeholder: "커밋에서 찾기" });
   const dateIn = mk("INPUT", "", [], { type: "date" });
   const chk = mk("INPUT", "", [], { type: "checkbox" });
@@ -100,6 +103,7 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   ok("«읽히나 확인» 은 감춘다 (서버 쓰기)", check.hidden);
   ok("«앱 열기» 링크는 남는다 (a.mini 이지만 열기)", !open.hidden);
   ok("«PIN 초기화» 는 감춘다", pin.hidden);
+  ok("«내 완료» 는 읽기 계정에도 남는다 (data-keep)", !mine.hidden);
   ok("찾기 칸은 남는다", !search.readOnly && !search.disabled);
   ok("날짜 칸은 읽기만", dateIn.readOnly);
   ok("체크박스는 못 누른다", chk.disabled);

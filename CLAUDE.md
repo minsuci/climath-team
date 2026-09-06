@@ -11,7 +11,7 @@ repo/
 ├── api/github.js     # 깃허브 커밋·배포 이력 읽기 — «개발 현황» (5분 캐시)
 ├── tools/push-devlog.mjs  # 나스 허브의 도구보고·일지 개발 줄 → devtools·devlog (개발 현황의 나스 쪽)
 ├── api/_google.js    # 커스텀 토큰 발급 · ID 토큰 검증 · 구글 API 토큰
-├── firestore.rules   # climath-team DB 규칙 — 읽기 owner·teacher, 쓰기 owner. 콘솔에 붙여넣어 게시 (tools/publish-rules.mjs 는 권한이 없어 403)
+├── firestore.rules   # climath-team DB 규칙 — 읽기 owner·teacher, 쓰기 owner (+ marks/<tid> 는 본인). 콘솔에 붙여넣어 게시 (tools/publish-rules.mjs 는 권한이 없어 403)
 └── vercel.json       # icn1
 ```
 
@@ -27,6 +27,7 @@ repo/
 | `firebase.app()` 기본 | climath-class | teachers · classes · appConfig · exams · scores | 읽기만 |
 | 〃 | 〃 | **students · classes.roster** | **쓴다** — 학생 명단이 이 앱에서 관리된다 |
 | `teamApp` | climath-team | `dash/tasks`(할 일) · `dash/config`(시트·저장소) · `dash/students`(메모) | 여기만 |
+| 〃 | 〃 | **`marks/<tid>`** — 할 일의 «내가 끝냈다» 표시 | **선생님도 자기 것만** |
 
 브라우저가 두 프로젝트에 따로 로그인한다. `/api/auth login` 이 `classToken`(수업관리 앱이 발급)과
 `teamToken`(이 프로젝트 서비스 계정이 서명)을 함께 주고, 각각 `signInWithCustomToken` 한다.
@@ -71,8 +72,49 @@ PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. �
 node tools/test-ro.js
 ```
 
-24건. 프로토타입이 있는 가짜 Firestore 로 set/update/delete/add/commit 이 전부 거절되는지, 거절된 것이 SDK 까지 안 가는지,
-단추·칸이 맞게 감춰지는지(«다시 읽기»·칩·찾기·«앱 열기» 는 남는지).
+25건. 프로토타입이 있는 가짜 Firestore 로 set/update/delete/add/commit 이 전부 거절되는지, 거절된 것이 SDK 까지 안 가는지,
+단추·칸이 맞게 감춰지는지(«다시 읽기»·칩·찾기·«앱 열기»·«내 완료» 는 남는지).
+
+## 팀 할 일 — 내 것과 자기 체크 (2026-09-06)
+
+혼자 쓰던 것을 팀으로 돌리는 첫 걸음. 없던 것은 **끝냈다고 표시할 자리**였다 —
+회의록에서 자기 임무를 찾는 것까지는 됐는데 그 다음이 없었다.
+
+**둘로 나눈다. 하나로 합치면 «선생님은 완료라는데 팀장은 아니라고 본다» 를 가릴 데가 없다.**
+
+| | 무엇 | 누가 쓰나 |
+|---|---|---|
+| `dash/tasks` 의 `status` | 열림·진행·완료 — 목록의 공식 상태 | 팀장만 |
+| `marks/<tid>.done[할일id]` | «내가 끝냈다» + 표시한 날 | 그 사람만 |
+
+- 화면: 내 줄에 **내 완료** 단추, 여럿이 걸린 줄에 `2/3`(누가 했고 누가 남았는지는 툴팁).
+  거르기 칩에 «@내 것», 통계에 «내 것». 선생님이 열면 `S.filterWho` 가 «@내 것» 으로 시작한다.
+- 담당 글자가 누구인지는 회의록 칠하기와 **같은 `personGroups()`** 로 본다 — 두 군데가 다르게 판단하면 안 된다.
+  `whoHasTerm()` 이 담당 칸을 `·` 로 쪼개 **조각 앞에서부터** 맞춘다.
+  > [!warning] 그냥 `indexOf` 로 찾으면 남의 일을 떠안는다
+  > «담임 전원» 안에 «전원» 이 있어 반도 없는 사람이 담임 일을 받고,
+  > «예비고1 담당 강사» 안에 «고1 담당» 이 있어 고1 선생님이 예비고1 일을 받는다.
+  > 뒤도 봐야 한다 — «이창혁A» 를 «이창혁» 으로 읽으면 안 된다.
+- 읽기 계정의 쓰기 가로채기(`guardWrites`)에 **문 하나**를 냈다: `passWrite()` 가 `RO_PASS` 를 켜는 동안만 지나간다.
+  `toggleMyMark()` 하나뿐이고 부르자마자 끈다. **여기를 넓히면 «전부 읽기만» 이 무너진다.**
+  단추에는 `data-keep` — 없으면 `applyReadOnly` 가 «완료»·«✓» 글자를 보고 감춘다.
+- 저장에 실패하면 화면도 되돌린다. 안 그러면 «했다고 눌렀는데 팀장에게는 안 보인다» 가 된다.
+- `firestore.rules` 에 `match /marks/{tid}` — 선생님은 `tid == request.auth.token.tid` 인 자기 문서만 쓴다.
+  **콘솔에 붙여넣어 게시해야 선생님의 «내 완료» 가 저장된다.** 그 전에는 거절되고 표시가 되돌아간다(관리자는 그냥 된다).
+
+### 시험
+
+```bash
+node tools/test-tasks.js
+```
+
+42건. 담당 글자 맞추기(위 함정 전부), 몇 명이 걸렸나, «@내 것» 거르기,
+자기 문서에만 쓰는지, **체크가 끝나면 문이 다시 닫히는지**, 실패하면 되돌리는지, 줄에 그려지는 것.
+
+> [!warning] 같은 이름의 함수를 또 만들면 나중 것이 조용히 이긴다
+> `markOf()` 를 새로 만들었는데 내신 달력에 이미 있었다. 문법 검사도 화면 그리기도 통과했고
+> 체크가 그냥 안 보였다. 4000행이 한 파일이라 눈으로는 못 본다 —
+> `tools/test-wiring.js` 가 이제 중복 선언을 훑는다.
 
 ## 학생 명단 — 이 앱이 근거지 (2026-09-04)
 
@@ -323,7 +365,7 @@ node tools/test-sources.js
 node tools/test-wiring.js
 ```
 
-18건. 주소에서 id 뽑기, 메뉴별 근거 표, 옛 자리 읽어주기, 저장·끊기, 시험 성적이 그걸 그대로 쓰는지.
+18건(test-sources). 주소에서 id 뽑기, 메뉴별 근거 표, 옛 자리 읽어주기, 저장·끊기, 시험 성적이 그걸 그대로 쓰는지.
 
 > [!warning] 함수를 지우면 부르는 데가 남는다 — 문법 검사는 못 잡는다
 > 이 화면을 갈아엎으며 `loadSheetsAll` 을 지웠는데 `boot()` 이 계속 부르고 있었다.

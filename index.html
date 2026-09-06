@@ -313,6 +313,8 @@
   .task .m { font-size: 12px; color: var(--muted); }
   .task .m .over { color: var(--red); font-weight: 600; }
   .task .m .soon { color: #b35d00; font-weight: 600; }
+  .task .mk { flex: 0 0 auto; align-self: center; white-space: nowrap; }
+  .task .mk.on { background: #e3f5ea; color: #1f7a45; border-color: #b7e0c6; }
   .task .x { color: var(--muted); background: none; border: 0; font-size: 14px; padding: 0 4px; }
   .task .x:hover { color: var(--red); }
   .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -378,13 +380,19 @@ var teamAuth = firebase.auth(teamApp);
 // **한 군데서** 가로채 S.ro 면 거절한다. 팀 DB 는 규칙(firestore.rules)이 한 번 더 막고,
 // 앱 DB(climath-class)는 그쪽 규칙이 선생님 쓰기를 허용하므로 이 가로채기가 유일한 문턱이다.
 var RO_MSG = "읽기만 하는 계정이다. 고치는 것은 관리자(한민수)만 한다";
+// ⚠ 딱 한 자리만 이 문을 지나간다 — 선생님이 **자기 체크**를 적을 때다 (`marks/<자기 tid>`).
+//   팀으로 쓰려면 «누가 끝냈나»가 있어야 하는데, 공용 목록에 쓰게 하면 남의 줄까지 열린다.
+//   그래서 사람마다 자기 문서에만 쓴다. firestore.rules 도 자기 tid 문서만 연다.
+//   **여기를 넓히면 «전부 읽기만» 이 무너진다.** 쓰기를 부르는 동안만 켜고 바로 끈다.
+var RO_PASS = false;
+function passWrite(fn) { RO_PASS = true; try { return fn(); } finally { RO_PASS = false; } }
 function guardWrites() {
   var FS = firebase.firestore;
   if (!FS || !FS.DocumentReference) return;
   var wrap = function (proto, m) {
     var orig = proto[m];
     if (typeof orig !== "function") return;
-    proto[m] = function () { if (S.ro) return Promise.reject(new Error(RO_MSG)); return orig.apply(this, arguments); };
+    proto[m] = function () { if (S.ro && !RO_PASS) return Promise.reject(new Error(RO_MSG)); return orig.apply(this, arguments); };
   };
   ["set", "update", "delete"].forEach(function (m) { wrap(FS.DocumentReference.prototype, m); });
   if (FS.CollectionReference) wrap(FS.CollectionReference.prototype, "add");
@@ -400,10 +408,12 @@ function applyReadOnly() {
   if (!S.ro) return;
   $$(".card button, .card a.mini", root).forEach(function (b) {
     if (b.hidden) return;
+    if (b.hasAttribute("data-keep")) return;   // 읽기 계정도 누르는 것 — 지금은 «내 완료» 뿐이다
     var t = (b.textContent || "").trim();
     if (b.classList.contains("btn") || b.hasAttribute("data-ddel") || b.hasAttribute("data-sdel") || RO_WORDS.test(t)) b.hidden = true;
   });
   $$(".card input, .card textarea", root).forEach(function (i) {
+    if (i.hasAttribute("data-keep")) return;
     var ty = (i.getAttribute("type") || "text").toLowerCase();
     if (ty === "checkbox" || ty === "radio" || i.tagName === "TEXTAREA") { i.disabled = true; return; }
     if (i.classList.contains("mini") || /찾기|검색/.test(i.getAttribute("placeholder") || "")) return;   // 거르기·찾기 칸은 둔다
@@ -442,6 +452,7 @@ var S = {
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
+  marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
   dev: null, devLoading: false, devErr: "", devWho: "", devApp: "", devKindPick: "", devDays: 14, devQ: "", devEdit: false,
@@ -560,6 +571,7 @@ async function boot() {
   }
   S.claims = c;
   S.ro = c.role !== "owner";
+  if (S.ro) S.filterWho = MINE;   // 선생님이 열면 자기 것부터. 전체는 칩 한 번이면 된다
   renderShell();
   await loadCore();
   renderAll();
@@ -646,6 +658,8 @@ async function loadCore() {
     dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
     dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
+    tdb.collection("marks").get().then(function (s2) { S.marks = {}; s2.forEach(function (d) { S.marks[d.id] = d.data() || {}; }); })
+      .catch(function () { S.marks = {}; }),
     loadTests(),
     db.collection("appConfig").doc("studentLog").get()
       .then(function (d) { S.stLog = (d.exists && d.data().items) || []; }).catch(function () { S.stLog = []; }),
@@ -1308,6 +1322,79 @@ function drawCalAdd() {
 
 // ---------- 팀 할 일 ----------
 var STATUS = { open: "열림", doing: "진행", done: "완료", hold: "보류" };
+
+// ---------- 내 것 · 자기 체크 ----------
+//
+// 팀으로 쓰는 데 없던 것은 **끝냈다고 표시할 자리**였다. 회의록에서 자기 임무를 찾는 것까지는 됐는데
+// 그 다음이 없었다. 그렇다고 선생님에게 공용 목록(dash/tasks)을 열어 주면 남의 줄까지 고칠 수 있다.
+//
+// 그래서 둘로 나눈다.
+//   * 공용 목록의 `status`(열림·진행·완료) — **팀장 것.** 지금까지와 같다
+//   * `marks/<tid>.done[할일id]` — **자기 것.** 그 사람만 쓴다. 규칙이 자기 tid 문서만 연다
+// 하나로 합치면 «선생님이 완료로 바꿨는데 팀장은 아니라고 본다» 를 가릴 데가 없다.
+var MINE = "@내 것";
+function myTid() { return (S.claims && S.claims.tid) || ""; }
+function myName() { return (S.claims && S.claims.name) || teacherName(myTid()); }
+
+// 담당 글자가 그 사람을 가리키나. 이름만이 아니라 «담임 전원»·«고1 담당» 같은 소속도 본다
+// (회의록 칠하기와 같은 personGroups 를 쓴다 — 두 군데가 다르게 판단하면 안 된다).
+// ⚠ 앞뒤 글자를 봐야 한다. «예비고1 담당 강사» 안에 «고1 담당» 이 들어 있어서,
+//   그냥 찾으면 고1 선생님이 예비고1 일을 떠안는다. «담임 전원» 안의 «전원» 도 마찬가지다.
+// 담당 칸은 «이현우 · 이창혁A» 처럼 가운뎃점으로 나뉜다. 조각마다 **앞에서부터** 맞춰 본다.
+// ⚠ 앞에서부터여야 한다 — 그냥 찾으면 «담임 전원» 안의 «전원» 이 걸려 반도 없는 사람이
+//   담임 일을 떠안고, «예비고1 담당» 안의 «고1 담당» 이 걸려 고1 선생님이 예비고1 일을 떠안는다.
+// ⚠ 뒤도 봐야 한다 — «이창혁A» 를 «이창혁» 으로 읽으면 안 된다(명단 표기가 이창혁A 다).
+function whoHasTerm(who, term) {
+  if (!term) return false;
+  return String(who || "").split(/[·,\/]/).some(function (part) {
+    var p = part.trim();
+    if (p.indexOf(term) !== 0) return false;
+    return !/[0-9A-Za-z가-힣]/.test(p.charAt(term.length) || "");
+  });
+}
+function taskIsFor(t, name) {
+  var who = t.who || "";
+  if (!name || !who) return false;
+  if (whoHasTerm(who, name)) return true;
+  return personGroups(name, null).some(function (g) { return whoHasTerm(who, g); });
+}
+function taskIsMine(t) { return taskIsFor(t, myName()); }
+// 이 할 일이 걸린 사람들. «담임 전원» 이면 담임이 다 걸린다 — 그래서 3/5 가 나온다.
+function taskTids(t) {
+  return S.teachers.filter(function (x) { return taskIsFor(t, x.name); }).map(function (x) { return x.tid; });
+}
+// ⚠ 이름을 markOf 로 지었다가 조용히 덮였다 — 내신 달력에 같은 이름이 이미 있었다(아래 2500행대).
+//   나중 선언이 이긴다. 문법도 화면도 멀쩡했고, 체크가 그냥 안 보였다.
+function markDate(tid, id) { var m = S.marks[tid]; return (m && m.done && m.done[id]) || ""; }
+function taskDoneBy(t) { return taskTids(t).filter(function (tid) { return !!markDate(tid, t.id); }); }
+async function toggleMyMark(id) {
+  var tid = myTid();
+  if (!tid) throw new Error("누구인지 알 수 없다");
+  var cur = S.marks[tid] || {}, done = Object.assign({}, cur.done || {});
+  if (done[id]) delete done[id]; else done[id] = TODAY;
+  var doc = { done: done, name: myName(), updated: Date.now() };
+  S.marks[tid] = doc;                       // 화면은 바로 바뀐다
+  try { await passWrite(function () { return tdb.collection("marks").doc(tid).set(doc); }); }
+  catch (e) { S.marks[tid] = cur; throw e; }   // 못 썼으면 되돌린다 — 안 그러면 표시만 되고 남이 못 본다
+}
+// 내가 눌러야 하는 줄이면 단추, 여럿이 걸린 줄이면 «몇 명 했나»
+function myMarkBtn(t) {
+  if (!taskIsMine(t) || t.status === "done") return "";
+  var d = markDate(myTid(), t.id);
+  return '<button class="mini mk' + (d ? " on" : "") + '" data-keep data-mk="' + esc(t.id) + '"' +
+    ' title="내가 끝냈다고 표시한다. 목록의 상태를 바꾸는 건 팀장이다">' +
+    (d ? "✓ 내가 함 " + esc(fmtMD(d)) : "내 완료") + "</button>";
+}
+function markPill(t) {
+  var all = taskTids(t), done = taskDoneBy(t);
+  if (!all.length) return "";
+  var names = done.map(function (tid) { return teacherName(tid) + " " + fmtMD(markDate(tid, t.id)); });
+  if (all.length === 1) return done.length ? '<span class="pill green" title="' + esc(names[0]) + '">✓ ' + esc(teacherName(done[0])) + "</span>" : "";
+  var cls = done.length === all.length ? "green" : done.length ? "blue" : "";
+  var left = S.teachers.filter(function (x) { return all.indexOf(x.tid) >= 0 && done.indexOf(x.tid) < 0; }).map(function (x) { return x.name; });
+  return '<span class="pill ' + cls + '" title="' + esc((names.join(" · ") || "아직 아무도") + (left.length ? "  |  남은 사람: " + left.join(" · ") : "")) +
+    '">' + done.length + "/" + all.length + "</span>";
+}
 async function saveTasks() {
   if (!S.teamOk) return;
   await dashDoc("tasks").set({ items: S.tasks, updated: Date.now() });
@@ -1321,14 +1408,15 @@ function whoChips() {
 }
 function taskMatchesWho(t, who) {
   if (!who) return true;
-  var w = t.who || "";
-  return w.indexOf(who) >= 0;
+  if (who === MINE) return taskIsMine(t);
+  return (t.who || "").indexOf(who) >= 0;
 }
 function renderTasks() {
   var el = $("#sec-tasks");
   var open = S.tasks.filter(function (t) { return t.status !== "done"; });
   var overdue = open.filter(function (t) { var n = daysFromToday(t.due); return n !== null && n < 0; });
   var week = open.filter(function (t) { var n = daysFromToday(t.due); return n !== null && n >= 0 && n <= 7; });
+  var mine = open.filter(taskIsMine);
   var list = (S.showDone ? S.tasks : open).filter(function (t) { return taskMatchesWho(t, S.filterWho); });
   list.sort(function (a, b) {
     var ad = a.status === "done", bd = b.status === "done"; if (ad !== bd) return ad ? 1 : -1;
@@ -1342,9 +1430,12 @@ function renderTasks() {
     '<button id="tk-import">볼트에서 붙여넣기</button></h2>' +
     '<div class="stat"><div class="' + (overdue.length ? "bad" : "") + '"><b>' + overdue.length + '</b><span>기한 지남</span></div>' +
     '<div><b>' + week.length + '</b><span>이번 주</span></div>' +
+    '<div><b>' + mine.length + '</b><span>내 것</span></div>' +
     '<div><b>' + open.filter(function (t) { return !t.who; }).length + '</b><span>담당 없음</span></div></div>' +
     '<div class="chips"><button class="mini ' + (!S.filterWho ? "on" : "") + '" data-who="">전체</button>' +
+    '<button class="mini ' + (S.filterWho === MINE ? "on" : "") + '" data-who="' + esc(MINE) + '">' + esc(MINE) + " " + mine.length + "</button>" +
     chips.map(function (w) { return '<button class="mini ' + (S.filterWho === w ? "on" : "") + '" data-who="' + esc(w) + '">' + esc(w) + '</button>'; }).join("") + '</div>' +
+    (S.ro ? '<div class="muted" style="margin:4px 0 8px">내 것은 <b>내 완료</b> 를 눌러 표시한다. 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.</div>' : "") +
     '<div id="tk-list">' + (list.length ? list.map(taskRow).join("") : '<div class="empty">' + (S.teamOk ? "할 일이 없다. 아래에 적거나 볼트에서 붙여넣는다." : "규칙을 게시하면 여기 저장된다.") + '</div>') + '</div>' +
     '<div class="row"><input type="text" id="tk-text" placeholder="새 할 일">' +
     '<input type="text" id="tk-who" placeholder="담당" style="flex:0 0 90px" list="who-list">' +
@@ -1366,6 +1457,14 @@ function renderTasks() {
     await saveTasks(); renderTasks();
     $("#tk-imp").hidden = false; $("#tk-imp-msg").textContent = n + "건 가져왔다";
   };
+  $$("[data-mk]", el).forEach(function (b) {
+    b.onclick = async function () {
+      b.disabled = true;
+      try { await toggleMyMark(b.getAttribute("data-mk")); }
+      catch (e) { alert("표시하지 못했다: " + e.message); }
+      keepScrollIn("#sec-tasks", renderTasks);
+    };
+  });
   $$(".task", el).forEach(function (row) {
     var id = row.getAttribute("data-id");
     var t = S.tasks.filter(function (x) { return x.id === id; })[0];
@@ -1392,8 +1491,8 @@ function taskRow(t) {
     '<div class="m">' + (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
     (t.repeat ? '<span class="pill blue">매주 ' + t.repeat.dow.map(function (i) { return DOW_KO[i]; }).join("·") + '</span>' : "") +
     (t.who ? '<span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
-    '<span class="pill ' + stCls + ' st" title="눌러서 바꾸기">' + STATUS[t.status || "open"] + '</span>' + dueHtml +
-    (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div>' +
+    '<span class="pill ' + stCls + ' st" title="눌러서 바꾸기">' + STATUS[t.status || "open"] + '</span>' + markPill(t) + dueHtml +
+    (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div>' + myMarkBtn(t) +
     '<button class="x" title="지우기">×</button></div>';
 }
 // 볼트 「할 일 추적」 표 → 항목. 셀 순서는 할 일 | 담당 | 기한 | 출처 | 상태 (완료 표는 마지막이 완료일).

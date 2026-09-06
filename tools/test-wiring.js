@@ -107,6 +107,21 @@ Object.values(RENDER).forEach((f) => {
   ok("$ 를 목록처럼 쓴 자리가 없다 ($$ 여야 한다)", !hits.length, hits.join(" | "));
 }
 
+// ---- 같은 이름을 두 번 만든 자리 ----
+// 2026-09-06, 팀 할 일에 markOf() 를 새로 만들었는데 내신 달력에 이미 같은 이름이 있었다.
+// **나중 선언이 이긴다 — 조용히.** 문법 검사도 화면 그리기도 통과했고, 체크가 그냥 안 보였다.
+// 4000행이 한 파일이라 이름이 겹치는 것은 눈으로 못 본다.
+{
+  const seen = {}, dup = [];
+  src.split("\n").forEach((ln, i) => {
+    const m = /^function\s+([A-Za-z_$][\w$]*)\s*\(/.exec(ln);
+    if (!m) return;
+    if (seen[m[1]]) dup.push(m[1] + " (" + seen[m[1]] + "행, " + (i + 1) + "행)");
+    else seen[m[1]] = i + 1;
+  });
+  ok("같은 이름의 함수를 두 번 만들지 않았다", !dup.length, dup.join(" | "));
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

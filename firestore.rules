@@ -1,12 +1,23 @@
 rules_version = '2';
 // climath-team — 대시보드 전용 DB.
 // 2026-09-05 «전부, 읽기만»: 선생님(teacher)도 읽는다. 쓰는 것은 관리자(owner)뿐이다.
+// 2026-09-06 한 가지 예외: 선생님이 **자기 체크**를 적는 `marks/<자기 tid>`.
 // /api/auth 가 수업관리 앱에서 역할을 확인한 뒤에만 이 프로젝트 토큰을 발급한다.
 // 적용은 `node tools/publish-rules.mjs` (서비스 계정으로 게시) 또는
 // Firebase 콘솔 → climath-team → Firestore Database → 규칙에 붙여넣고 게시.
 service cloud.firestore {
   match /databases/{database}/documents {
     function role() { return request.auth != null ? request.auth.token.role : ""; }
+    function myTid() { return request.auth != null ? request.auth.token.tid : ""; }
+
+    // 팀 할 일의 «내가 끝냈다» 표시. 사람마다 자기 문서 하나다.
+    // ⚠ 공용 목록(dash/tasks)은 여전히 관리자만 쓴다. 선생님에게 그걸 열면 남의 줄까지 열린다.
+    //   문서 이름이 곧 누구인지라, 자기 tid 가 아니면 못 쓴다.
+    match /marks/{tid} {
+      allow read: if role() == "owner" || role() == "teacher";
+      allow write: if role() == "owner" || (role() == "teacher" && tid == myTid());
+    }
+
     match /{document=**} {
       allow read: if role() == "owner" || role() == "teacher";
       allow write: if role() == "owner";
