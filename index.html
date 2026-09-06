@@ -420,13 +420,16 @@ function applyReadOnly() {
     if (ty === "text" || ty === "date" || ty === "number") i.readOnly = true;
   });
 }
-if (typeof MutationObserver !== "undefined") new MutationObserver(function () { if (S.ro) applyReadOnly(); }).observe(root, { childList: true, subtree: true });
 function dashDoc(name) { return tdb.collection("dash").doc(name); }
 async function signOutAll() { try { await teamAuth.signOut(); } catch (e) {} try { await firebase.auth().signOut(); } catch (e) {} }
 
 var $ = function (s, el) { return (el || document).querySelector(s); };
 var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
 var root = $("#root");
+// ⚠ 이 줄은 **root 를 만든 뒤**여야 한다. 위(applyReadOnly 옆)에 두면 var 끌어올림 때문에
+//   root 가 undefined 인 채로 observe() 에 들어가 «parameter 1 is not of type 'Node'» 로 터지고,
+//   그 아래 스크립트가 통째로 안 돌아 **화면이 하얗게 뜬다** (2026-09-06에 이걸로 앱이 안 켜졌다).
+if (typeof MutationObserver !== "undefined") new MutationObserver(function () { if (S.ro) applyReadOnly(); }).observe(root, { childList: true, subtree: true });
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];

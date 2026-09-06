@@ -47,7 +47,13 @@ const stub = {
   document: { querySelector: (s) => (s === "#root" ? rootEl : null), querySelectorAll: () => [], addEventListener() {} },
   window: { addEventListener() {}, scrollTo() {} }, location: { hash: "" }, history: { replaceState() {} },
   localStorage: { getItem: () => null, setItem() {} },
-  MutationObserver: function () { observed = true; return { observe() {} }; },
+  // ⚠ 흉내는 브라우저보다 너그러우면 안 된다. 2026-09-06에 이 `observe(){}` 가
+  //   **아무 것이나 받아 주는 바람에** root 가 undefined 인 채로 감시를 거는 줄을 놓쳤다.
+  //   브라우저에서는 «parameter 1 is not of type 'Node'» 로 터지고 앱이 통째로 안 켜졌다.
+  MutationObserver: function () {
+    observed = true;
+    return { observe(t) { if (!t) throw new TypeError("observe: 대상이 Node 가 아니다 (root 가 아직 없다)"); } };
+  },
   fetch: () => Promise.reject(new Error("no net")), alert() {}, confirm: () => true, prompt: () => null,
   console, setTimeout, clearTimeout, Date, Math, JSON, Object, Array, String, Number, Promise, RegExp, isNaN, parseInt,
 };

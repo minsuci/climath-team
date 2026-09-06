@@ -32,6 +32,10 @@ var document={querySelector:()=>EL(),querySelectorAll:()=>[],addEventListener(){
 var window={addEventListener(){},scrollTo(){},scrollY:0};
 var location={hash:""},history={replaceState(){}},localStorage={getItem:()=>null,setItem(){}};
 var fetch=()=>Promise.reject(new Error("no net")); var alert=function(){},confirm=()=>true,prompt=()=>null;
+// ⚠ 없으면 «typeof MutationObserver !== "undefined"» 가 거짓이 되어 그 줄을 통째로 건너뛴다.
+//   브라우저처럼 **대상이 없으면 터져야** 한다 — 2026-09-06에 그걸 놓쳐 앱이 하얗게 떴다.
+var MutationObserver=function(){return{observe:function(t){
+  if(!t) throw new TypeError("observe: 대상이 Node 가 아니다 (root 가 아직 없다)"); }};};
 `;
 const ctx = vm.createContext({ console, setTimeout, clearTimeout, Date, Math, JSON, Object, Array, String, Number,
   Promise, RegExp, isNaN, parseInt, EL: el });
