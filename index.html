@@ -314,6 +314,12 @@
   .task .m { font-size: 12px; color: var(--muted); }
   .task .m .over { color: var(--red); font-weight: 600; }
   .task .m .soon { color: #b35d00; font-weight: 600; }
+  /* 회의록에서 온 할 일 — 넣기 전에 눈으로 보는 자리 */
+  .fmlist { margin-top: 8px; }
+  .fmrow { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-top: 1px solid #c7d8f5; }
+  .fmrow .t { flex: 1; min-width: 0; }
+  .fmrow .m { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .fmrow button { flex: 0 0 auto; align-self: center; white-space: nowrap; }
   .task .mk { flex: 0 0 auto; align-self: center; white-space: nowrap; }
   .task .mk.on { background: #e3f5ea; color: #1f7a45; border-color: #b7e0c6; }
   .task .x { color: var(--muted); background: none; border: 0; font-size: 14px; padding: 0 4px; }
@@ -458,6 +464,7 @@ var S = {
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
   marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
+  fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
   dev: null, devLoading: false, devErr: "", devWho: "", devApp: "", devKindPick: "", devDays: 14, devQ: "", devEdit: false,
@@ -636,10 +643,11 @@ function showPage(id) {
   try { localStorage.setItem("dash.page", id); } catch (e) {}
   if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
   // 회의록 본문은 길다. 그 메뉴를 처음 열 때만 받아온다.
-  if (id === "minutes" && S.minutes === null && !S.minutesLoading) {
+  // 할 일 화면도 회의록이 있어야 «아직 안 들어온 할 일»을 찾는다 — 팀장일 때만.
+  if ((id === "minutes" || (id === "tasks" && !S.ro)) && S.minutes === null && !S.minutesLoading) {
     S.minutesLoading = true;
-    loadMinutes().then(function () { S.minutesLoading = false; renderMinutes(); })
-      .catch(function (e) { S.minutesLoading = false; S.minutesErr = e.message; renderMinutes(); });
+    var done = function () { S.minutesLoading = false; renderMinutes(); renderTasks(); };
+    loadMinutes().then(done).catch(function (e) { S.minutesErr = e.message; done(); });
   }
   // 개발 현황은 깃허브를 부른다. 이것도 그 메뉴를 열 때만.
   if (id === "dev" && S.dev === null && !S.devLoading) {
@@ -1478,6 +1486,7 @@ function renderTasks() {
     '<button class="mini ' + (S.filterWho === MINE ? "on" : "") + '" data-who="' + esc(MINE) + '">' + esc(MINE) + " " + mine.length + "</button>" +
     chips.map(function (w) { return '<button class="mini ' + (S.filterWho === w ? "on" : "") + '" data-who="' + esc(w) + '">' + esc(w) + '</button>'; }).join("") + '</div>' +
     (S.ro ? '<div class="muted" style="margin:4px 0 8px">내 것은 <b>내 완료</b> 를 눌러 표시한다. 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.</div>' : "") +
+    fromMinutesBox() +
     '<div id="tk-list">' + (list.length ? list.map(taskRow).join("") : '<div class="empty">' + (S.teamOk ? "할 일이 없다. 아래에 적거나 볼트에서 붙여넣는다." : "규칙을 게시하면 여기 저장된다.") + '</div>') + '</div>' +
     '<div class="row"><input type="text" id="tk-text" placeholder="새 할 일">' +
     '<input type="text" id="tk-who" placeholder="담당" style="flex:0 0 90px" list="who-list">' +
@@ -1486,6 +1495,7 @@ function renderTasks() {
     '<div id="tk-imp" hidden><textarea id="tk-md" rows="6" style="width:100%" placeholder="볼트 「할 일 추적」의 표를 그대로 붙여넣기 (| 할 일 | 담당 | 기한 | 출처 | 상태 |)"></textarea>' +
     '<div class="row"><button class="btn o" id="tk-imp-go">가져오기</button><span class="muted" id="tk-imp-msg">같은 글자의 할 일은 건너뛴다</span></div></div>';
   $$("[data-who]", el).forEach(function (b) { b.onclick = function () { S.filterWho = b.getAttribute("data-who"); renderTasks(); }; });
+  wireFromMinutes(el);
   $("#tk-done").onclick = function () { S.showDone = !S.showDone; renderTasks(); };
   $("#tk-import").onclick = function () { var d = $("#tk-imp"); d.hidden = !d.hidden; };
   $("#tk-add").onclick = async function () {
@@ -1538,6 +1548,122 @@ function taskRow(t) {
     (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div>' + myMarkBtn(t) +
     '<button class="x" title="지우기">×</button></div>';
 }
+// ---------- 회의록에서 할 일 끌어오기 (2026-09-07) ----------
+//
+// 회의록마다 «## 할 일» 표가 있다 (할 일 | 담당 | 기한). 그것을 그대로 읽어
+// **아직 안 들어온 것**을 찾아 준다.
+//
+// ⚠ 찾아만 주고 **넣는 것은 팀장이 누른다.** 회의록의 할 일은 그대로 옮기면 안 되는 것이 섞인다 —
+//   데스크 회의록의 «전부 데스크 몫이라 할 일 추적에는 안 넣는다» 같은 것이 그렇고,
+//   이미 볼트에서 손질해 들어온 것도 글자가 조금 달라 겹쳐 들어온다.
+//   자동으로 밀어 넣으면 목록이 쓰레기가 되고, 그러면 아무도 안 본다.
+// ⚠ 선생님은 할 일을 못 쓴다. 이 기능은 통째로 팀장 것이다.
+function mdSection(md, name) {
+  var lines = String(md || "").split(/\r?\n/), out = [], on = false;
+  for (var i = 0; i < lines.length; i++) {
+    var h = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+    if (h) { on = h[2].trim().indexOf(name) === 0; continue; }
+    if (on) out.push(lines[i]);
+  }
+  return out.join("\n");
+}
+// 회의록 표는 «할 일 | 담당 | 기한» 세 칸이다 (볼트 「할 일 추적」과 달리 출처·상태가 없다).
+function parseMinuteTable(md) {
+  var rows = [];
+  md.split(/\r?\n/).forEach(function (line) {
+    if (!/^\s*\|/.test(line)) return;
+    var cells = line.split("|").slice(1, -1).map(function (c) { return c.replace(/\[\[|\]\]|\*\*|~~/g, "").trim(); });
+    if (cells.length < 2) return;
+    if (/^-+$/.test(cells[0]) || cells[0] === "할 일") return;
+    if (!cells[0]) return;
+    rows.push({ text: cells[0], who: cells[1] || "", dueText: cells[2] || "" });
+  });
+  return rows;
+}
+function minuteTasks(m) {
+  return parseMinuteTable(mdSection(m.md || "", "할 일")).map(function (r) {
+    return { text: r.text, who: r.who, dueText: r.dueText, due: parseDueText(r.dueText),
+             src: m.title || m.id, from: m.id };
+  });
+}
+function taskSkipped() { return (S.config && S.config.taskSkip) || []; }
+// 아직 안 들어온 것. 이미 있는 할 일과 «안 넣기로 한 것»은 뺀다.
+function newFromMinutes() {
+  if (S.ro || !S.minutes) return [];
+  var have = {}, skip = {};
+  S.tasks.forEach(function (t) { have[t.text] = 1; });
+  taskSkipped().forEach(function (k) { skip[k] = 1; });
+  var out = [], seen = {};
+  S.minutes.forEach(function (m) {
+    minuteTasks(m).forEach(function (r) {
+      var key = r.from + "|" + r.text;
+      if (have[r.text] || skip[key] || seen[key]) return;
+      seen[key] = 1; out.push(r);
+    });
+  });
+  return out;
+}
+async function addFromMinutes(rows) {
+  rows.forEach(function (r) {
+    S.tasks.push({ id: newId(), text: r.text, who: r.who, due: r.due, dueText: r.dueText,
+      src: r.src, from: r.from, status: "open", created: TODAY });
+  });
+  await saveTasks();
+}
+// «안 넣기»는 기억해 둔다. 안 그러면 누를 때마다 도로 올라와서 결국 안내를 무시하게 된다.
+async function skipFromMinutes(keys) {
+  var list = taskSkipped().concat(keys);
+  S.config.taskSkip = list;
+  await dashDoc("config").set({ taskSkip: list, updated: Date.now() }, { merge: true });
+}
+
+// 화면 — 접혀 있다가 «보기» 를 누르면 줄이 나온다. 한 줄씩 넣거나 무시할 수 있다.
+function fromMinutesBox() {
+  if (S.ro) return "";
+  if (S.minutes === null) return S.minutesLoading
+    ? '<div class="muted" style="margin:4px 0 8px">회의록에서 할 일을 찾는 중...</div>' : "";
+  var rows = newFromMinutes();
+  if (!rows.length) return "";
+  return '<div class="banner" style="background:#eef4ff;border-color:#c7d8f5">' +
+    '<b>회의록에서 온 할 일 ' + rows.length + '건</b> 이 아직 목록에 없다.' +
+    '<span class="sp"></span><button class="mini" id="fm-see">' + (S.fmOpen ? "접기" : "보기") + '</button>' +
+    '<button class="mini" id="fm-all">전부 넣기</button>' +
+    (S.fmOpen ? '<div class="fmlist">' + rows.map(function (r, i) {
+      return '<div class="fmrow"><div class="t">' + esc(r.text) +
+        '<div class="m">' + (r.who ? '<span class="pill">' + esc(r.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
+        (r.dueText ? '<span class="pill yellow">' + esc(r.dueText) + '</span>' : "") +
+        ' <span class="muted">· ' + esc(r.src) + '</span></div></div>' +
+        '<button class="mini" data-fmadd="' + i + '">넣기</button>' +
+        '<button class="mini" data-fmskip="' + i + '" title="다시 안 올라온다">안 넣기</button></div>';
+    }).join("") + '</div>' : "") + '</div>';
+}
+function wireFromMinutes(el) {
+  if (S.ro) return;
+  var rows = S.minutes ? newFromMinutes() : [];
+  var see = $("#fm-see", el);
+  if (see) see.onclick = function () { S.fmOpen = !S.fmOpen; keepScrollIn("#sec-tasks", renderTasks); };
+  var all = $("#fm-all", el);
+  if (all) all.onclick = async function () {
+    if (!confirm(rows.length + "건을 전부 넣을까? 넣은 뒤에도 줄마다 고치거나 지울 수 있다.")) return;
+    try { await addFromMinutes(rows); } catch (e) { alert("넣지 못했다: " + e.message); }
+    keepScrollIn("#sec-tasks", renderTasks);
+  };
+  $$("[data-fmadd]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var r = rows[+b.getAttribute("data-fmadd")]; if (!r) return;
+      try { await addFromMinutes([r]); } catch (e) { alert("넣지 못했다: " + e.message); }
+      keepScrollIn("#sec-tasks", renderTasks);
+    };
+  });
+  $$("[data-fmskip]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var r = rows[+b.getAttribute("data-fmskip")]; if (!r) return;
+      try { await skipFromMinutes([r.from + "|" + r.text]); } catch (e) { alert("적어 두지 못했다: " + e.message); }
+      keepScrollIn("#sec-tasks", renderTasks);
+    };
+  });
+}
+
 // 볼트 「할 일 추적」 표 → 항목. 셀 순서는 할 일 | 담당 | 기한 | 출처 | 상태 (완료 표는 마지막이 완료일).
 function importMarkdown(md) {
   var n = 0, have = {};

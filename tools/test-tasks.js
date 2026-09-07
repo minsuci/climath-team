@@ -204,6 +204,73 @@ ok("이름이 닮은 팀 밖 사람에게 속지 않는다", !shared("g"), "이�
   run(`S.tasks.push({ id:"z", text:"끝난 것", who:"이현우", status:"done" });`);
   ok("팀장이 완료로 바꾼 줄에는 단추가 없다", btn("z") === "", btn("z"));
 
+  // ---- 회의록에서 할 일 끌어오기 ----
+  // 볼트 회의록의 «## 할 일» 표를 그대로 읽는다. 실제 회의록 생김새로 시험한다 —
+  // 표 앞에 산문 한 줄이 있고, 다음 «## » 에서 끊겨야 한다.
+  const MD = [
+    "## 지난 회의에서 넘어온 것", "", "없음.", "",
+    "## 할 일", "", "[[할 일 추적]]에 옮겼다.", "",
+    "| 할 일 | 담당 | 기한 |",
+    "|---|---|---|",
+    "| 고등관 회의 진행 | 고등부 (한민수 진행) | 9/4 (목) |",
+    "| 9월 CLT 실시 | 고등부 | 9월 |",
+    "| 담당 없는 일 | | |",
+    "",
+    "## 정해야 할 것", "",
+    "| 이건 할 일이 아니다 | 아무개 | 9/9 |",
+  ].join("\n");
+  run(`S.ro = false; S.minutes = [{ id:"2026-08-31 간부 전체회의", title:"2026-08-31 간부 전체회의", md:` +
+      JSON.stringify(MD) + ` }]; S.config = { sources:{} }; S.tasks = [];`);
+
+  const sec = run("return mdSection(S.minutes[0].md, '할 일')");
+  ok("«## 할 일» 다음 제목에서 끊는다", sec.indexOf("고등관 회의") >= 0 && sec.indexOf("이건 할 일이 아니다") < 0, sec.slice(-60));
+  ok("앞 절은 안 딸려온다", sec.indexOf("지난 회의") < 0);
+
+  const rows0 = JSON.parse(vm.runInContext("JSON.stringify(minuteTasks(S.minutes[0]))", ctx));
+  ok("표에서 세 줄을 읽는다", rows0.length === 3, JSON.stringify(rows0.map((r) => r.text)));
+  ok("머리글·구분선·산문은 안 읽는다", !rows0.some((r) => /^-+$/.test(r.text) || r.text === "할 일" || r.text.indexOf("옮겼다") >= 0));
+  ok("담당을 읽는다", rows0[0].who === "고등부 (한민수 진행)", rows0[0].who);
+  ok("기한 글자를 날짜로", rows0[0].due === "2026-09-04", rows0[0].due + " / " + rows0[0].dueText);
+  ok("못 읽는 기한은 글자를 그대로", rows0[1].due === "9월", rows0[1].due);
+  ok("담당이 비어도 줄은 살린다", rows0[2].text === "담당 없는 일" && rows0[2].who === "");
+  ok("어느 회의에서 왔는지 붙는다", rows0[0].from === "2026-08-31 간부 전체회의" && rows0[0].src.indexOf("간부") >= 0);
+
+  const news = () => JSON.parse(vm.runInContext("JSON.stringify(newFromMinutes().map(function(r){return r.text}))", ctx));
+  ok("아직 안 들어온 것이 셋", news().length === 3, news().join(","));
+  run(`S.tasks = [{ id:"x", text:"9월 CLT 실시", who:"고등부", status:"open" }];`);
+  ok("이미 있는 것은 빠진다", news().join(",") === "고등관 회의 진행,담당 없는 일", news().join(","));
+
+  // ⚠ 선생님은 할 일을 못 쓴다. 이 기능은 통째로 팀장 것이다 —
+  //   선생님 화면에 «넣기» 단추가 뜨면 눌러도 거절만 당한다.
+  run("S.ro = true");
+  ok("선생님에게는 아무것도 안 뜬다", news().length === 0);
+  ok("선생님에게는 상자도 안 그린다", run("return fromMinutesBox()") === "");
+  run("S.ro = false");
+  // 회의록을 아직 안 받아왔으면 조용히 아무것도 안 한다
+  run("S.__m = S.minutes; S.minutes = null;");
+  ok("회의록이 없으면 빈 손", news().length === 0);
+  run("S.minutes = S.__m;");
+
+  // ---- 넣기 ----
+  WROTE.length = 0;
+  run("S.teamOk = true");
+  await run("return addFromMinutes(newFromMinutes())");
+  ok("목록에 들어간다", val("S.tasks.length") === 3, String(val("S.tasks.length")));
+  ok("출처에 회의록 이름이 남는다",
+    val("S.tasks.filter(function(t){return t.text==='고등관 회의 진행'})[0].src").indexOf("간부") >= 0);
+  ok("넣으면 저장까지 간다", WROTE.some((w) => w.path === "dash/tasks"), WROTE.map((w) => w.path).join(","));
+  ok("넣은 뒤에는 다시 안 올라온다", news().length === 0, news().join(","));
+
+  // ---- 안 넣기 ----
+  // ⚠ 기억해 두지 않으면 누를 때마다 도로 올라와서 결국 안내를 통째로 무시하게 된다.
+  run(`S.tasks = []; S.config = { sources:{} };`);
+  ok("지우면 도로 올라온다", news().length === 3);
+  WROTE.length = 0;
+  await run("return skipFromMinutes(['2026-08-31 간부 전체회의|담당 없는 일'])");
+  ok("«안 넣기» 한 것은 빠진다", news().indexOf("담당 없는 일") < 0 && news().length === 2, news().join(","));
+  ok("«안 넣기» 도 저장한다", WROTE.some((w) => w.path === "dash/config"), WROTE.map((w) => w.path).join(","));
+  ok("남은 것은 그대로 올라온다", news().indexOf("고등관 회의 진행") >= 0);
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
