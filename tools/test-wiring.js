@@ -156,6 +156,21 @@ Object.values(RENDER).forEach((f) => {
   ok("같은 이름의 함수를 두 번 만들지 않았다", !dup.length, dup.join(" | "));
 }
 
+// ---- 자료가 오기 전에 그리는 자리 ----
+// 2026-09-07, 개발 현황에서 박준성 선생님 앱이 «사라졌다».
+// showPage("dev") 가 renderShell 안에서 도는데 그게 loadCore 보다 빨라서,
+// loadDev 가 `dash/config` 없이 **코드 기본값(내 앱 둘)** 만 읽고 끝났다. S.dev 는 다시 안 읽는다.
+// 기본값과 저장된 목록이 같던 동안에는 아무 표시도 없었다 — 셋째 줄이 들어와서야 드러났다.
+{
+  const dev = /async function loadDev\([\s\S]*?\n}/.exec(src);
+  ok("loadDev 는 기본 자료(CORE_READY)를 기다린다", !!dev && /await\s+CORE_READY/.test(dev[0]));
+  const boot = /async function boot\(\)[\s\S]*?\n}/.exec(src);
+  const iSet = boot ? boot[0].indexOf("CORE_READY = loadCore()") : -1;
+  const iShell = boot ? boot[0].indexOf("renderShell()") : -1;
+  ok("boot 은 renderShell 앞에서 loadCore 를 걸어 둔다", iSet >= 0 && iShell >= 0 && iSet < iShell,
+    iSet < 0 ? "CORE_READY 를 안 건다" : "");
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

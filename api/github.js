@@ -7,8 +7,9 @@
 // 요청: POST { idToken, action: "repo", owner, repo }
 // 응답: { full, url, description, pushed, commits: [{sha, short, date, msg, author, url}], deploy: {sha, date, env} | null }
 //
-// 환경변수 `GITHUB_TOKEN`(선택) — 비공개 저장소를 읽거나 제한을 시간당 5000번으로 올린다.
-// 개인 토큰(fine-grained) 에 Contents:read 만 주면 된다. 없으면 공개 저장소만 읽는다.
+// 환경변수 `GITHUB_TOKEN`(선택) — 비공개 저장소를 읽거나 제한을 시간당 5000번으로 올린다. 없으면 공개 저장소만 읽는다.
+// ⚠ **fine-grained 토큰은 자기가 «가진» 저장소만 범위에 넣는다.** 남의 저장소는 협업자로 초대받았어도 못 고른다.
+//    다른 선생님의 비공개 저장소까지 읽으려면 classic 토큰 `repo` 범위이거나, 그 주인이 만들어 준 fine-grained 라야 한다.
 
 import { verifyIdToken } from "./_google.js";
 
@@ -103,7 +104,16 @@ function explain(r, j) {
     return "깃허브 읽기 한도(토큰 없이 시간당 60번)에 걸렸다. " + min + "분 뒤에 풀린다. " +
       "Vercel 환경변수 GITHUB_TOKEN 을 넣으면 5000번으로 늘고 비공개 저장소도 읽는다.";
   }
-  if (r.status === 404) return "저장소를 찾을 수 없다. 주소를 확인하거나, 비공개 저장소면 GITHUB_TOKEN 이 있어야 한다.";
+  // 404 는 «없다» 와 «너에게는 안 보인다» 를 구별해 주지 않는다. 그래서 서버에 토큰이 있는지를 같이 말해 준다 —
+  // 넣었는데도 404 면 토큰 문제고, 안 넣었으면 그냥 안 넣은 것이다. (토큰 값 자체는 절대 안 찍는다)
+  if (r.status === 404) {
+    return process.env.GITHUB_TOKEN
+      ? "저장소를 못 봤다. 서버에 토큰은 있다 — 그 토큰이 이 저장소를 못 보는 것이다. " +
+        "fine-grained 토큰은 «자기가 가진» 저장소만 범위에 넣을 수 있어 남의 저장소는 협업자여도 못 읽는다. " +
+        "classic 토큰 repo 범위로 바꾸거나, 저장소 주인에게 fine-grained 를 받는다. 협업자 초대를 수락했는지도 본다."
+      : "저장소를 찾을 수 없다. 주소가 맞다면 비공개 저장소인 것이다 — 서버에 GITHUB_TOKEN 이 없다. " +
+        "Vercel 환경변수에 넣고 **다시 배포**해야 반영된다.";
+  }
   if (r.status === 401) return "GITHUB_TOKEN 이 잘못됐거나 만료됐다.";
   return "깃허브 오류 " + r.status + ": " + msg;
 }
