@@ -3118,6 +3118,8 @@ function renderExams() {
   el.innerHTML = '<h2>내신 참여표 <span class="n">' + esc(S.term) + '</span><span class="sp"></span>' +
     '<button class="mini" id="ex-edit-term">회차 바꾸기</button>' +
     '<button class="mini" id="ex-re">다시 읽기</button>' +
+    // 팀장만. 선생님 계정은 못 읽는 반이 있을 수 있어 «안 냈다»가 섞인 파일이 나간다
+    (S.ro ? "" : '<button class="mini" id="ex-mid3">중3 내신관리 HTML</button>') +
     '</h2>' +
     '<div class="chips">' + GRADES.map(function (g) {
       return '<button class="mini ' + (g === S.exGrade ? "on" : "") + '" data-eg="' + g + '">' +
@@ -3189,6 +3191,9 @@ function renderExams() {
     };
   });
   $("#ex-re").onclick = function () { S.exams = {}; loadExams().then(renderExams); };
+  if ($("#ex-mid3")) $("#ex-mid3").onclick = function () {
+    try { downloadMid3(); } catch (e) { alert("굽지 못했다: " + e.message); }
+  };
   // 학교 일정으로 채우기. 덮어쓰는 쪽은 몇 명인지 이름까지 보여주고 묻는다.
   if ($("#ex-fill")) $("#ex-fill").onclick = function () {
     var t = window.__FILL;
@@ -3434,6 +3439,171 @@ function bindEntry() {
       renderExams();
     } catch (ex) { this.disabled = false; this.textContent = "저장"; err.textContent = "저장 실패: " + ex.message; }
   };
+}
+
+// ---------- 중3 내신관리 — 한 장짜리 HTML 로 굽는다 (2026-09-07) ----------
+//
+// 학교 일정과 내신 참여표에서 **중3만** 골라, 로그인 없이 그냥 열리는 파일 하나로 굽는다.
+// 팀체크 계정이 없는 사람에게 중3 내신만 건네려는 것이다.
+//
+// ⚠ **규칙은 안 굽는다. 결과만 굽는다.**
+//   띠 색·등원 회차·직보 날짜를 여기서 다 계산해서, 파일에는 «무슨 색 칸 · 몇 회» 만 넣는다.
+//   파일이 규칙을 들고 있으면 이 앱을 고쳐도 그 파일은 옛 규칙으로 남는다 — 두 벌이 갈리는 자리가 거기다.
+//   그래서 구운 파일에는 자바스크립트가 한 줄도 없다.
+// ⚠ **구운 순간의 사본이다.** 자료가 바뀌면 다시 굽는다. 그래서 머리에 구운 시각을 크게 적는다.
+//   보는 사람이 언제 것인지 모르면 «틀린 표»가 아니라 «믿을 수 없는 표»가 된다.
+
+function mid3Stamp() {
+  var d = new Date();
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " +
+    pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
+// 화면과 **같은 함수**로 계산한다 (markOf · attendCount · termRows). 여기서 다시 만들면 그때부터 갈린다.
+function mid3Build() {
+  var rows = examRows().filter(function (x) { return x.grade === "중3"; });
+  var startsAll = [], endsAll = [];
+  rows.forEach(function (x) {
+    if (!x.v) return;
+    if (x.v.start) startsAll.push(x.v.start);
+    if (x.v.back) endsAll.push(x.v.back); else if (x.v.end) endsAll.push(x.v.end);
+  });
+  startsAll.sort(); endsAll.sort();
+  // 띠는 화면과 같은 잣대 — 시험 있는 달 1일부터 가장 늦은 복귀일까지
+  var examMonth = startsAll.length ? monthOf(startsAll[0]) : "";
+  var strip = [];
+  if (startsAll.length) {
+    var to = endsAll.length ? endsAll[endsAll.length - 1] : startsAll[startsAll.length - 1];
+    var d = examMonth + "-01";
+    while (d <= to && strip.length < 120) { strip.push(d); d = addDays(d, 1); }
+  }
+  var monthDays = examMonth ? daysOfMonth(examMonth) : [];
+  var people = rows.map(function (x) {
+    var v = x.v || {};
+    var cnt = x.v ? attendCount(x.cls, x.st, v, monthDays, examMonth) : null;
+    return {
+      name: x.st.name || "", cls: (x.cls && x.cls.name) || "", homeroom: homeroomOf(x.st),
+      school: x.school || "", has: !!x.v,
+      start: v.start || "", end: v.end || "", math: v.math || "", prep: v.prep || "", back: v.back || "",
+      note: v.note || "", come: cnt ? cnt.come : 0, total: cnt ? cnt.total : 0,
+      cells: strip.map(function (dd) { return x.v ? markOf(v, dd) : null; }),
+    };
+  });
+  people.sort(function (a, b) {
+    return String(a.cls).localeCompare(String(b.cls), "ko") || String(a.name).localeCompare(String(b.name), "ko");
+  });
+  return {
+    term: S.term || "", stamp: mid3Stamp(), strip: strip, examMonth: examMonth, people: people,
+    terms: termRows().filter(function (r) { return r.grade === "중3"; }),
+    // 못 읽은 반이 있으면 그 사실을 파일에도 적는다. «안 냈다»와 «못 봤다»는 다르다.
+    denied: Object.keys(S.examsDenied || {}).filter(function (k) { return S.examsDenied[k]; }).length,
+  };
+}
+var MID3_CSS = 'body{margin:0;padding:18px;background:#f7f8fa;color:#1d2430;' +
+  'font:14px/1.5 "Malgun Gothic","맑은 고딕",system-ui,sans-serif}' +
+  'h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;margin:22px 0 6px}' +
+  '.sub{color:#6b7480;font-size:12px;margin:0 0 4px}' +
+  '.stamp{display:inline-block;background:#fff3cd;border:1px solid #e3d08a;border-radius:6px;padding:4px 8px;font-size:12px;margin:6px 0 0}' +
+  '.wrap{max-width:1200px;margin:0 auto}.box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:12px;margin-bottom:14px;overflow-x:auto}' +
+  'table{border-collapse:collapse;font-size:13px;white-space:nowrap}th,td{border:1px solid #e3e7ec;padding:4px 7px;text-align:left}' +
+  'th{background:#f2f4f7;font-weight:600;font-size:12px}td.c,th.c{text-align:center;padding:3px 2px}' +
+  '.stat{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}' +
+  '.stat div{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:6px 12px;font-size:12px;color:#6b7480}' +
+  '.stat b{display:block;font-size:18px;color:#1d2430}.stat .bad b{color:#c0392b}' +
+  '.wend{background:#fafbfc;color:#98a2ad}.miss{color:#c0392b;font-weight:600}' +
+  '.legend{font-size:12px;color:#6b7480;margin:6px 0 0}.legend span{display:inline-block;padding:1px 7px;border-radius:4px;margin-right:6px}' +
+  '.note{color:#6b7480;font-size:12px;white-space:normal;max-width:280px}' +
+  '.warn{background:#fdecea;border:1px solid #e4b4ae;border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:12px}' +
+  '@media print{body{background:#fff;padding:0}.box{border:0;padding:0}}';
+
+function mid3Html(d) {
+  var day = function (s) { var t = parseYmd(s); return t ? DAY_NAMES[t.getDay()] : ""; };
+  var isWend = function (s) { var t = parseYmd(s); return t && (t.getDay() === 0 || t.getDay() === 6); };
+  var md = function (s) { return s ? fmtMD(s) : '<span class="miss">—</span>'; };
+
+  var stat = '<div class="stat">' +
+    '<div><b>' + d.people.length + '</b>학생</div>' +
+    '<div class="' + (d.people.filter(function (p) { return !p.has; }).length ? "bad" : "") + '"><b>' +
+      d.people.filter(function (p) { return !p.has; }).length + '</b>참여표 안 냄</div>' +
+    '<div><b>' + d.terms.length + '</b>학교</div>' +
+    '<div class="' + (d.terms.filter(function (t) { return !t.start || !t.end; }).length ? "bad" : "") + '"><b>' +
+      d.terms.filter(function (t) { return !t.start || !t.end; }).length + '</b>기간 비어 있음</div>' +
+    '<div class="' + (d.terms.filter(function (t) { return t.start && !t.math; }).length ? "bad" : "") + '"><b>' +
+      d.terms.filter(function (t) { return t.start && !t.math; }).length + '</b>수학시험 없음</div></div>';
+
+  var schools = '<h2>학교 일정</h2>' +
+    '<p class="sub">학생이 다니는 학교만. 수학시험 날짜는 학사일정에 안 나온다 — 손으로 넣거나 학생이 낸 것이다.</p>' +
+    '<div class="box"><table><thead><tr><th>학교</th><th class="c">학생</th><th>내신 시작</th><th>끝</th>' +
+    '<th>수학시험</th><th>복귀</th><th>시험 이름</th><th>학기 계획 · 근거</th></tr></thead><tbody>' +
+    (d.terms.length ? d.terms.map(function (t) {
+      return '<tr><td><b>' + esc(t.school || "") + '</b></td><td class="c">' + (t.n || 0) + '</td>' +
+        '<td>' + md(t.start) + '</td><td>' + md(t.end) + '</td><td>' + md(t.math) + '</td>' +
+        '<td>' + (t.back ? fmtMD(t.back) : "") + '</td><td>' + esc(t.label || "") + '</td>' +
+        '<td class="note">' + esc(t.plan || "") + (t.srcUrl ? ' <a href="' + esc(t.srcUrl) + '">' + esc(t.srcName || "근거") + '</a>' : "") +
+        '</td></tr>';
+    }).join("") : '<tr><td colspan="8">중3 학생의 학교가 아직 없다.</td></tr>') +
+    '</tbody></table></div>';
+
+  var legend = '<p class="legend">' + ["exam", "math", "prep", "back"].map(function (k) {
+    var m = EXAM_MARKS[k];
+    return '<span style="background:' + m.bg + ';color:' + m.fg + '">' + m.t + ' ' + esc(m.label) + '</span>';
+  }).join("") + '</p>';
+
+  var stripTbl = !d.strip.length ? '<div class="box">아직 아무도 참여표를 안 냈다. 날짜 띠는 낸 사람이 생기면 그려진다.</div>' :
+    '<div class="box"><table><thead><tr><th>이름</th><th>반</th><th>학교</th>' +
+    d.strip.map(function (s) {
+      return '<th class="c' + (isWend(s) ? " wend" : "") + '">' + Number(s.slice(8)) + '<br>' + day(s) + '</th>';
+    }).join("") + '</tr></thead><tbody>' +
+    d.people.map(function (p) {
+      return '<tr><td><b>' + esc(p.name) + '</b></td><td>' + esc(p.cls) + '</td><td>' + esc(p.school) + '</td>' +
+        p.cells.map(function (m, i) {
+          if (!m) return '<td class="c' + (isWend(d.strip[i]) ? " wend" : "") + '"></td>';
+          return '<td class="c" style="background:' + m.bg + ';color:' + m.fg + ';font-weight:600">' + m.t + '</td>';
+        }).join("") + '</tr>';
+    }).join("") + '</tbody></table></div>' + legend;
+
+  var tbl = '<h2>학생별</h2>' +
+    '<div class="box"><table><thead><tr><th>이름</th><th>반</th><th>담임</th><th>학교</th>' +
+    '<th>내신 기간</th><th>수학시험</th><th>직보</th><th>복귀</th>' +
+    '<th class="c">' + (d.examMonth ? Number(d.examMonth.slice(5)) + '월 등원' : "등원") + '</th><th>비고</th></tr></thead><tbody>' +
+    d.people.map(function (p) {
+      if (!p.has) {
+        return '<tr><td><b>' + esc(p.name) + '</b></td><td>' + esc(p.cls) + '</td><td>' + esc(p.homeroom) + '</td>' +
+          '<td>' + esc(p.school) + '</td><td colspan="6" class="miss">참여표를 안 냈다</td></tr>';
+      }
+      return '<tr><td><b>' + esc(p.name) + '</b></td><td>' + esc(p.cls) + '</td><td>' + esc(p.homeroom) + '</td>' +
+        '<td>' + esc(p.school) + '</td>' +
+        '<td>' + md(p.start) + (p.end ? " ~ " + fmtMD(p.end) : "") + '</td>' +
+        '<td>' + md(p.math) + '</td><td>' + (p.prep ? fmtMD(p.prep) : "") + '</td>' +
+        '<td>' + (p.back ? fmtMD(p.back) : '<span class="miss">—</span>') + '</td>' +
+        '<td class="c"><b>' + p.come + '</b> / ' + p.total + '</td>' +
+        '<td class="note">' + esc(p.note) + '</td></tr>';
+    }).join("") + '</tbody></table></div>' +
+    '<p class="sub">등원은 <b>온 날 / 그 달 수업일</b>. 안 오는 구간은 직보 다음날부터 복귀 전날까지다.</p>';
+
+  return '<!doctype html><html lang="ko"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>중3 내신관리</title><style>' + MID3_CSS + '</style></head><body><div class="wrap">' +
+    '<h1>중3 내신관리</h1>' +
+    '<p class="sub">' + esc(d.term || "회차 없음") + ' · 클라이매쓰 대치 고등1관</p>' +
+    '<div class="stamp"><b>' + esc(d.stamp) + '</b> 에 구운 사본이다 — 그 뒤에 바뀐 것은 안 들어 있다. ' +
+    '고치는 곳은 팀체크(내신 참여표 · 학교 일정)다.</div>' +
+    (d.denied ? '<div class="warn"><b>못 읽은 반이 ' + d.denied + '개 있다.</b> 그 반 학생은 «안 냈다»가 아니라 ' +
+      '«못 봤다»다 — 팀장 계정으로 다시 구워야 한다.</div>' : "") +
+    '<div style="height:12px"></div>' + stat + schools +
+    '<h2>내신 참여표' + (d.examMonth ? ' <span class="sub">' + Number(d.examMonth.slice(5)) + '월</span>' : "") + '</h2>' +
+    stripTbl + tbl +
+    '</div></body></html>';
+}
+function downloadMid3() {
+  var d = mid3Build();
+  // ﻿ 를 앞에 붙인다 — 윈도우에서 파일을 두 번 눌러 열 때 charset 을 놓치는 브라우저가 있다
+  var blob = new Blob(["﻿" + mid3Html(d)], { type: "text/html;charset=utf-8" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "중3 내신관리 " + d.stamp.slice(0, 10) + ".html";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
 // ---------- 시험 성적 ----------

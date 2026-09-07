@@ -173,6 +173,54 @@ ok("고칠 자리로 가는 단추 둘", reason.indexOf('id="ex-goterms"') >= 0 
 ok("이유 상자도 div 를 다 닫는다", (reason.match(/<div/g) || []).length === (reason.match(/<\/div>/g) || []).length);
 ok("안 낸 사람이 아무도 없으면 상자도 없다", box(mkRow("이미냄", "중대부고", "고1", { school: "중대부고", grade: "고1", start: "2026-09-21", end: "2026-09-23", math: "2026-09-22" })) === "");
 
+// ---- 중3 내신관리 한 장 굽기 (2026-09-07) ----
+// 파일은 로그인 없이 열리므로 **결과만** 들어가야 한다. 규칙이 들어가면 앱을 고쳐도 그 파일은 옛 규칙으로 남는다.
+{
+  run(`
+    S.term = "2026 2학기 기말";
+    S.teachers = [{ tid:"T1", name:"한민수", classIds:["m1"] }];
+    S.classes = [{ id:"m1", name:"예비고1 A", classDays:[2,4],
+                   roster:[{ id:"s1", name:"설민준", grade:"중3", school:"봉은중" },
+                           { id:"s2", name:"안유진", grade:"중3", school:"봉은중" }] },
+                 { id:"h1", name:"고1S", classDays:[1,5],
+                   roster:[{ id:"s3", name:"김서진", grade:"고1", school:"중대부고" }] }];
+    S.students = [{ pid:"p1", name:"설민준", grade:"중3", school:"봉은중" },
+                  { pid:"p3", name:"김서진", grade:"고1", school:"중대부고" }];
+    S.byPid = {}; S.examsDenied = {};
+    S.schoolTerms = { k1:{ term:"2026 2학기 기말", school:"봉은중", grade:"중3",
+                           start:"2026-12-07", end:"2026-12-09", math:"2026-12-08" },
+                      k2:{ term:"2026 2학기 기말", school:"중대부고", grade:"고1",
+                           start:"2026-12-07", end:"2026-12-11", math:"2026-12-10" } };
+    S.exams = { m1: { s1: { sid:"s1", term:"2026 2학기 기말", school:"봉은중", grade:"중3",
+                            start:"2026-12-07", end:"2026-12-09", math:"2026-12-08",
+                            prep:"2026-12-07", back:"2026-12-15", days:[2,4] } },
+                h1: { s3: { sid:"s3", term:"2026 2학기 기말", school:"중대부고", grade:"고1",
+                            start:"2026-12-07", end:"2026-12-11", math:"2026-12-10" } } };
+  `);
+  const d = JSON.parse(run(`var d = mid3Build();
+    return JSON.stringify({ names: d.people.map(function(p){return p.name;}), has: d.people.map(function(p){return p.has;}),
+      schools: d.terms.map(function(t){return t.school;}), month: d.examMonth, strip: d.strip.length, stamp: d.stamp });`));
+  ok("중3만 담는다 (고1은 안 들어간다)", d.names.join(",") === "설민준,안유진", d.names.join(","));
+  ok("중3 학교만 담는다", d.schools.join(",") === "봉은중", d.schools.join(","));
+  ok("안 낸 사람도 빠뜨리지 않는다", d.has.join(",") === "true,false", d.has.join(","));
+  ok("띠는 시험 있는 달 1일부터 복귀일까지 (12/1~12/15)", d.month === "2026-12" && d.strip === 15, d.month + " " + d.strip);
+  ok("구운 시각이 들어간다", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(d.stamp), d.stamp);
+
+  const html = run(`return mid3Html(mid3Build())`);
+  ok("규칙을 안 굽는다 — 자바스크립트가 한 줄도 없다", html.indexOf("<script") < 0 && html.indexOf("onclick") < 0);
+  ok("혼자 열린다 — 바깥 파일을 안 부른다", html.indexOf("<link") < 0 && html.indexOf("src=\"http") < 0);
+  ok("제목은 중3 내신관리", html.indexOf("<title>중3 내신관리</title>") >= 0);
+  ok("구운 시각을 파일에도 적는다", html.indexOf("에 구운 사본이다") >= 0);
+  ok("안 낸 사람은 «안 냈다»로 적힌다", html.indexOf("참여표를 안 냈다") >= 0);
+  ok("고1은 파일에도 없다", html.indexOf("김서진") < 0 && html.indexOf("중대부고") < 0);
+  ok("태그를 다 닫는다", (html.match(/<table/g) || []).length === (html.match(/<\/table>/g) || []).length &&
+    (html.match(/<div/g) || []).length === (html.match(/<\/div>/g) || []).length);
+  // 못 읽은 반이 섞이면 «안 냈다»가 거짓말이 된다. 파일이 그 사실을 스스로 말해야 한다.
+  run(`S.examsDenied = { m1: true };`);
+  ok("못 읽은 반이 있으면 파일이 그렇게 말한다", run(`return mid3Html(mid3Build())`).indexOf("못 읽은 반이 1개") >= 0);
+  run(`S.examsDenied = {};`);
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
