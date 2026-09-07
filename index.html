@@ -615,11 +615,10 @@ function renderShell() {
   showPage(currentPage());
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
-// 셋째 칸이 "owner" 면 **팀장만 보는 메뉴**다.
-//   회의록에는 간부회의가 섞여 있다 — 강사 선생님이 볼 것이 아니다 (2026-09-07).
-//   ⚠ 화면에서 감추는 것은 헷갈리지 말라는 것이고, 진짜 문턱은 firestore.rules 다.
-//     감추기만 하면 브라우저 콘솔에서 minutes 를 그냥 읽을 수 있다.
-var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["minutes", "회의록", "owner"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+// 셋째 칸이 "owner" 면 팀장만 보는 메뉴다. 지금은 쓰는 데가 없다 —
+// 회의록은 **메뉴째 감추다가(9/7 오전) 회의록 하나하나로 갈랐다**(9/7 오후).
+// 팀회의는 선생님도 보고 간부회의는 팀장만 본다. loadMinutes() 와 firestore.rules 를 볼 것.
+var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
@@ -689,7 +688,7 @@ function renderBanner() {
   var el = $("#banner");
   var ro = S.ro ? '<div class="banner" style="background:#f5f7fb;border-color:var(--line)"><b>읽기만 하는 계정</b> — 보이는 것은 관리자와 같고, 고치는 단추는 감춰져 있다. ' +
     '고칠 것이 있으면 한민수 팀장에게. 학생 명단·참여표·학교 일정은 수업관리 앱에서 여느 때처럼 고친다.<br>' +
-    '<b>회의록</b>은 간부회의가 섞여 있어 팀장만 본다. 필요한 것은 공지로 나간다.</div>' : "";
+    '<b>회의록</b>은 팀회의만 올라온다. 간부회의는 팀장만 본다.</div>' : "";
   if (S.teamOk) { el.innerHTML = ro; return; }
   el.innerHTML = '<div class="banner"><b>팀체크 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
     'Firebase 콘솔의 climath-team 프로젝트에서 Firestore가 켜져 있고 규칙이 게시됐는지 본다. 규칙은 저장소 <code>firestore.rules</code>. ' +
@@ -701,8 +700,13 @@ function renderBanner() {
 // 볼트(`40 팀장업무/회의록`)가 원본이고, `tools/push-minutes.mjs` 가 그걸 이 앱 DB로 올린다.
 // 여기서는 **읽기만** 한다 — 고칠 곳이 둘이면 어느 쪽이 맞는지 알 수 없다.
 
+// 선생님은 «공개: 팀» 인 회의록만 받아온다. 간부회의는 목록에도 안 뜬다.
+// ⚠ 이 where 는 꾸밈이 아니다. **규칙이 목록 쿼리를 이걸로만 통과시킨다** —
+//   조건 없이 부르면 Firestore 가 "안전함을 증명 못 한다"며 통째로 거절한다.
+//   (→ 볼트 「Firestore 보안 규칙 함정」 2번)
 async function loadMinutes() {
-  var s = await tdb.collection("minutes").get();
+  var col = tdb.collection("minutes");
+  var s = await (S.ro ? col.where("open", "==", true) : col).get();
   var arr = [];
   s.forEach(function (d) { arr.push(Object.assign({ id: d.id }, d.data())); });
   arr.sort(function (a, b) { return (b.date || "") < (a.date || "") ? -1 : (b.date || "") > (a.date || "") ? 1 : 0; });
@@ -939,10 +943,13 @@ function renderMinutes() {
       '(<code>tools/push-minutes.mjs</code>).</div>') +
     '<div class="chips">' + list.map(function (m) {
       return '<button class="mini ' + (m.id === S.minPick ? "on" : "") + '" data-mn="' + esc(m.id) + '">' +
+        (S.ro || m.open ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') +
         esc(fmtMD(m.date)) + ' ' + esc(m.title) + '</button>';
     }).join("") + (q && !list.length ? '<span class="muted">찾는 것이 없다.</span>' : "") + '</div>' +
     (cur ? '<div class="mdoc">' +
       '<div class="mmeta">' + (cur.kind ? '<b>' + esc(cur.kind) + '</b>' : "") +
+      (S.ro ? "" : '<span class="pill ' + (cur.open ? "green" : "yellow") + '" title="볼트 프런트매터의 «공개» 칸에서 정한다">' +
+        (cur.open ? "팀 공개" : "🔒 팀장만") + '</span>') +
       (cur.attend ? '<div class="atts"><span class="muted">참석</span>' +
         attendNames(cur.attend).map(function (a) {
           return '<button class="mini ' + (S.minName === a.name ? "on" : "") + '" data-att="' + esc(a.name) + '" title="' + esc(a.label) + '">' + esc(a.label) + '</button>';

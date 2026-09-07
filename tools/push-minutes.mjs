@@ -89,9 +89,14 @@ export function parseNote(name, text) {
   const base = name.replace(/\.md$/, "");
   const title = h1 ? h1[1].trim() : base.replace(/^\d{4}-\d{2}-\d{2}\s*/, "");
   const date = fm["날짜"] || (/^(\d{4}-\d{2}-\d{2})/.exec(base) || [])[1] || "";
+  // 누가 볼 것인가. 프런트매터 «공개: 팀» 이라야 선생님도 본다.
+  // ⚠ 안 적혀 있으면 **안 보이는 쪽**이다. 간부회의가 실수로 열리는 것보다
+  //   팀회의가 실수로 닫히는 편이 낫다 — 닫힌 건 "왜 안 보여요"로 금방 드러난다.
+  const openWord = (fm["공개"] || "").trim();
   return {
     id: base, date, title,
     kind: fm["종류"] || "", attend: fm["참석"] || "", decisions: fm["결정"] || "",
+    open: openWord === "팀", openWord: openWord,
     md: body.trim(),
   };
 }
@@ -105,12 +110,14 @@ async function main() {
   // 먼저 읽는다. --dry 는 열쇠 없이도 돌아야 **무엇이 올라갈지**를 확인할 수 있다.
   const notes = files.map((f) => {
     const n = parseNote(f, fs.readFileSync(path.join(VAULT, f), "utf8"));
-    n.hash = sha(n.md);
+    // ⚠ 지문에 «공개»도 넣는다. 본문만 세면 공개 칸만 고쳤을 때 안 올라간다.
+    n.hash = sha(n.md + "@공개=" + (n.open ? "팀" : "간부"));
     return n;
   });
   if (DRY) {
     notes.forEach((n) => console.log("  " + n.date + "  " + n.title +
-      "  \u00b7 " + (n.kind || "\uc885\ub958 \uc5c6\uc74c") + "  \u00b7 " + n.md.length + "\uc790"));
+      "  \u00b7 " + (n.kind || "\uc885\ub958 \uc5c6\uc74c") +
+      "  \u00b7 " + (n.open ? "\ud300 \uacf5\uac1c" : "\ud300\uc7a5\ub9cc") + "  \u00b7 " + n.md.length + "\uc790"));
     console.log("\n--dry \ub77c \uc62c\ub9ac\uc9c0 \uc54a\uc558\ub2e4. " + notes.length + "\uac74.");
     return;
   }
@@ -137,7 +144,7 @@ async function main() {
   for (const n of notes) {
     if (!ALL && have[n.id] === n.hash) { same++; continue; }
     const fields = {};
-    ["id", "date", "title", "kind", "attend", "decisions", "md", "hash"].forEach((k) => { fields[k] = toValue(n[k]); });
+    ["id", "date", "title", "kind", "attend", "decisions", "md", "hash", "open"].forEach((k) => { fields[k] = toValue(n[k]); });
     fields.updated = toValue(new Date().toISOString());
     const url = base + "/minutes/" + encodeURIComponent(n.id);
     const r = await fetch(url, { method: "PATCH", headers: h, body: JSON.stringify({ fields }) });

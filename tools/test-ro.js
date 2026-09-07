@@ -15,7 +15,14 @@ DocumentReference.prototype.set = function () { CALLS.push("set"); return Promis
 DocumentReference.prototype.update = function () { CALLS.push("update"); return Promise.resolve("update-ok"); };
 DocumentReference.prototype.delete = function () { CALLS.push("delete"); return Promise.resolve("delete-ok"); };
 DocumentReference.prototype.get = function () { return Promise.resolve({ exists: false }); };
+const WHERE = [];
 function CollectionReference() {}
+// ⚠ 흉내가 진짜보다 너그러우면 안 된다 — 조건을 안 적어도 되는 것처럼 보이면
+//   규칙이 목록을 통째로 거절하는 것을 여기서 못 잡는다.
+CollectionReference.prototype.where = function (f, op, v) {
+  WHERE.push(f + " " + op + " " + v);
+  return { get: () => Promise.resolve({ forEach() {} }) };
+};
 CollectionReference.prototype.add = function () { CALLS.push("add"); return Promise.resolve("add-ok"); };
 CollectionReference.prototype.doc = function () { return new DocumentReference(); };
 CollectionReference.prototype.get = function () { return Promise.resolve({ forEach() {} }); };
@@ -119,6 +126,15 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   run("applyReadOnly()");
   ok("관리자면 아무것도 안 감춘다", !save2.hidden);
 
+  // ---- 회의록은 누가 받아 오나 ----
+  // 팀장은 전부, 선생님은 «공개: 팀» 인 것만. 조건을 빼면 규칙이 목록을 통째로 거절한다.
+  WHERE.length = 0;
+  run("S.ro = false"); await run("return loadMinutes()");
+  ok("팀장은 조건 없이 다 받아온다", WHERE.length === 0, WHERE.join(" | "));
+  run("S.ro = true"); await run("return loadMinutes()");
+  ok("선생님은 open==true 만 받아온다", WHERE.join("") === "open == true", WHERE.join(" | "));
+  run("S.ro = false");
+
   // ---- 규칙 파일 ----
   // 메뉴를 감추는 것은 «헷갈리지 말라»는 것이고, 진짜 문턱은 규칙이다.
   // 감추기만 하면 선생님이 브라우저 콘솔에서 minutes 를 그냥 읽는다.
@@ -132,7 +148,12 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
     (noComment.match(/match\s*\/\{document=\*\*\}[^\n]*/) || [""])[0]);
   const minutes = /match\s*\/minutes\/\{[^}]*\}\s*\{([\s\S]*?)\n\s*\}/.exec(noComment);
   ok("회의록 규칙이 있다", !!minutes);
-  ok("회의록은 owner 만", !!minutes && minutes[1].indexOf("teacher") < 0, minutes && minutes[1].trim());
+  const mb = minutes ? minutes[1] : "";
+  // 팀장은 전부, 선생님은 «공개: 팀» 인 것만. 조건 없는 teacher 읽기가 한 줄이라도 있으면 간부회의가 열린다.
+  const loose = mb.split("\n").filter((l) => /allow\s+read/.test(l) && /teacher/.test(l) && !/open/.test(l));
+  ok("선생님 읽기에는 반드시 open 조건이 붙는다", !loose.length, loose.join(" | "));
+  ok("팀장은 전부 읽는다", /allow\s+read:\s*if\s+role\(\)\s*==\s*"owner"/.test(mb), mb.trim().slice(0, 80));
+  ok("쓰는 것은 팀장뿐이다", /allow\s+write:\s*if\s+role\(\)\s*==\s*"owner"/.test(mb));
   ["dash", "marks", "devtools", "devlog", "tests", "testScores"].forEach((c) => {
     ok("규칙에 " + c + " 가 있다 (없으면 아무도 못 읽는다)", new RegExp("match\\s*/" + c + "/").test(noComment));
   });

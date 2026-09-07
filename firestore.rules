@@ -19,9 +19,17 @@ service cloud.firestore {
     function team() { return role() == "owner" || role() == "teacher"; }
     function myTid() { return request.auth != null ? request.auth.token.tid : ""; }
 
-    // 팀장만 — 회의록. 간부회의·데스크회의가 같이 올라간다.
-    match /minutes/{doc=**} {
-      allow read, write: if role() == "owner";
+    // 회의록 — 회의마다 갈린다. 볼트 프런트매터의 «공개: 팀» 이 `open: true` 로 올라온다.
+    // 팀장은 전부, 선생님은 열린 것만. 간부회의는 목록에도 안 뜬다.
+    //
+    // ⚠ 선생님 쪽은 **목록 쿼리(list)가 조건을 달고 와야** 통과한다 —
+    //   Firestore 는 `resource.data` 를 근거로 하는 규칙에서, 조건 없는 목록은
+    //   "안전함을 증명할 수 없다"며 통째로 거절한다. 앱이 `where("open","==",true)` 로 부른다.
+    // ⚠ `open` 이 없는 문서는 안 열린다. 안 적힌 회의록은 닫혀 있는 쪽이 맞다.
+    match /minutes/{doc} {
+      allow read: if role() == "owner";
+      allow read: if role() == "teacher" && resource.data.open == true;
+      allow write: if role() == "owner";
     }
 
     // 팀 할 일의 «내가 끝냈다» 표시. 사람마다 자기 문서 하나다.

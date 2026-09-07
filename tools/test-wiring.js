@@ -58,20 +58,30 @@ const pages = JSON.parse(vm.runInContext("JSON.stringify(PAGES)", ctx));
 ok("메뉴가 열이다", pages.length === 10, String(pages.length));
 
 // ---- 팀장만 보는 메뉴 ----
-// 회의록에는 간부회의가 섞여 있다. 선생님에게는 메뉴가 아예 없어야 한다 (2026-09-07).
+// 9/7 오전에는 회의록 메뉴를 통째로 감췄다가, 오후에 **회의록 하나하나로** 갈랐다
+// (팀회의는 선생님도 본다). 그래서 지금 «owner» 표를 단 메뉴는 없지만 **장치는 살아 있어야** 한다 —
+// 다음에 팀장 전용 메뉴가 생길 때 이게 도는지가 여기서 갈린다.
 {
   const mine = (ro) => JSON.parse(vm.runInContext(
     "(function(){ var b=S.ro; S.ro=" + ro + "; var r=JSON.stringify(myPages().map(function(p){return p[0]})); S.ro=b; return r; })()", ctx));
   ok("팀장은 열 개를 다 본다", mine(false).length === 10, mine(false).join(","));
-  ok("선생님은 회의록이 없다", mine(true).indexOf("minutes") < 0 && mine(true).length === 9, mine(true).join(","));
+  ok("선생님도 회의록 메뉴는 있다 (안이 갈린다)", mine(true).indexOf("minutes") >= 0 && mine(true).length === 10, mine(true).join(","));
+
+  // 장치가 도는지 — 아무 메뉴에나 «owner» 를 달아 본다
+  const hid = JSON.parse(vm.runInContext(`(function(){
+    var b = S.ro, p = PAGES.filter(function(x){ return x[0] === "dev" })[0];
+    S.ro = true; p[2] = "owner";
+    var out = { pages: myPages().map(function(x){ return x[0] }), isP: isPage("dev") };
+    showPage("dev"); out.landed = location.hash;
+    p.length = 2; S.ro = b;
+    return JSON.stringify(out);
+  })()`, ctx));
+  ok("«owner» 를 달면 선생님 목록에서 빠진다", hid.pages.indexOf("dev") < 0 && hid.pages.length === 9, hid.pages.join(","));
+  ok("«owner» 를 단 페이지는 없는 페이지가 된다", !hid.isP);
+  ok("주소로 직접 들어와도 할 일로 보낸다", hid.landed === "#tasks", hid.landed);
   const isP = (ro, id) => vm.runInContext(
     "(function(){ var b=S.ro; S.ro=" + ro + "; var r=isPage(" + JSON.stringify(id) + "); S.ro=b; return r; })()", ctx);
-  ok("선생님에게 #minutes 는 없는 페이지다", !isP(true, "minutes") && isP(false, "minutes"));
-  ok("다른 메뉴는 그대로 열린다", isP(true, "exams") && isP(true, "tasks"));
-  // 주소창에 직접 쳐도 안 열린다 — showPage 가 되돌린다
-  const landed = vm.runInContext(
-    "(function(){ var b=S.ro; S.ro=true; showPage('minutes'); var h=location.hash; S.ro=b; return h; })()", ctx);
-  ok("선생님이 #minutes 로 들어와도 할 일로 보낸다", landed === "#tasks", landed);
+  ok("표를 뗀 뒤에는 도로 열린다", isP(true, "dev") && isP(true, "minutes") && isP(true, "tasks"));
 }
 pages.forEach((p) => {
   const f = RENDER[p[0]];
