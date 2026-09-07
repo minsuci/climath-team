@@ -157,6 +157,14 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   ["dash", "marks", "devtools", "devlog", "tests", "testScores"].forEach((c) => {
     ok("규칙에 " + c + " 가 있다 (없으면 아무도 못 읽는다)", new RegExp("match\\s*/" + c + "/").test(noComment));
   });
+  // 팀장 전용 할 일. 한 문서 안의 배열은 규칙이 못 가르므로 문서를 나눴다 —
+  // 이 조건이 빠지면 선생님이 콘솔에서 팀장 할 일을 통째로 읽는다.
+  const dash = /match\s*\/dash\/\{doc\}\s*\{([\s\S]*?)\n\s*\}/.exec(noComment);
+  ok("dash 규칙이 문서 이름을 본다", !!dash, "match /dash/{doc} 가 있어야 한다");
+  ok("선생님은 tasksLead 를 못 읽는다",
+    !!dash && /teacher/.test(dash[1]) && /doc\s*!=\s*"tasksLead"/.test(dash[1]), dash && dash[1].trim());
+  // ⚠ `{doc=**}` 로 되돌리면 doc 이 Path 라 이름 비교가 무너진다
+  ok("dash 는 재귀 와일드카드가 아니다", !/match\s*\/dash\/\{doc=\*\*\}/.test(noComment));
 
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;

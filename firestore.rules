@@ -39,8 +39,16 @@ service cloud.firestore {
       allow write: if role() == "owner" || (role() == "teacher" && tid == myTid());
     }
 
+    // 팀 할 일은 문서 둘이다 — `dash/tasks`(공개분)와 `dash/tasksLead`(팀장 전용).
+    // 담당에 강사가 하나라도 걸리면 공개분, 팀장 혼자거나 담당이 없거나 팀 밖 사람이면 전용이다.
+    // ⚠ 한 문서 안의 배열은 규칙이 못 가른다. 그래서 나눴다 —
+    //   안 나누면 화면에서만 걸러지고 선생님이 콘솔에서 통째로 읽는다.
+    match /dash/{doc} {
+      allow read: if role() == "owner" || (role() == "teacher" && doc != "tasksLead");
+      allow write: if role() == "owner";
+    }
+
     // 나머지는 팀 전체가 읽고, 쓰는 것은 관리자뿐이다.
-    match /dash/{doc=**}       { allow read: if team(); allow write: if role() == "owner"; }
     match /devtools/{doc=**}   { allow read: if team(); allow write: if role() == "owner"; }
     match /devlog/{doc=**}     { allow read: if team(); allow write: if role() == "owner"; }
     match /tests/{doc=**}      { allow read: if team(); allow write: if role() == "owner"; }

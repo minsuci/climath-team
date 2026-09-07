@@ -457,6 +457,7 @@ var S = {
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
   marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
+  tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
   dev: null, devLoading: false, devErr: "", devWho: "", devApp: "", devKindPick: "", devDays: 14, devQ: "", devEdit: false,
@@ -666,6 +667,10 @@ async function loadCore() {
     db.collection("appConfig").doc("schoolTerms").get().then(function (d) { S.schoolTerms = d.exists ? d.data() : {}; }),
     dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
+    // 팀장 전용 할 일. 선생님은 규칙이 막아 여기서 조용히 빈 배열이 된다 —
+    // 그러면 할 일·업무 달력·앞으로 2주가 **저절로** 공개분만 그린다. 화면마다 거를 필요가 없다.
+    dashDoc("tasksLead").get().then(function (d) { S.tasksLead = d.exists ? (d.data().items || []) : []; })
+      .catch(function () { S.tasksLead = []; }),
     dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
     tdb.collection("marks").get().then(function (s2) { S.marks = {}; s2.forEach(function (d) { S.marks[d.id] = d.data() || {}; }); })
       .catch(function () { S.marks = {}; }),
@@ -676,6 +681,7 @@ async function loadCore() {
       .catch(function () {}),
   ];
   await Promise.all(jobs);
+  S.tasks = S.tasks.concat(S.tasksLead || []);   // 팀장에게는 한 목록으로 보인다
 }
 function teacherName(tid) { var t = S.teachers.filter(function (x) { return x.tid === tid; })[0]; return t ? t.name : (tid ? "?" : ""); }
 function classTeachers(cid) { return S.teachers.filter(function (t) { return (t.classIds || []).indexOf(cid) >= 0; }).map(function (t) { return t.name; }); }
@@ -1413,9 +1419,27 @@ function markPill(t) {
   return '<span class="pill ' + cls + '" title="' + esc((names.join(" · ") || "아직 아무도") + (left.length ? "  |  남은 사람: " + left.join(" · ") : "")) +
     '">' + done.length + "/" + all.length + "</span>";
 }
+// 이 할 일을 강사 선생님이 봐도 되나. **출처(어느 회의)가 아니라 담당(누가 하나)으로 가른다.**
+// 간부회의에서 나와도 담당이 «전원» 이면 강사가 해야 할 일이고,
+// 전체회의에서 나와도 담당이 팀장 혼자면 강사가 볼 것이 아니다.
+//
+// 기준: **담당에 팀장 말고 우리 팀 사람이 하나라도 걸리면 공개.**
+// 담당이 비었거나(아직 안 시킨 것), 팀장 혼자거나, 팀 밖 사람(고우빈·김효상·데스크)이면 팀장만 본다.
+function taskShared(t) {
+  return taskTids(t).some(function (tid) {
+    var x = S.teachers.filter(function (y) { return y.tid === tid; })[0];
+    return x && x.role !== "owner";
+  });
+}
+// ⚠ 문서를 둘로 나눠야 **규칙으로** 막힌다. 한 문서 안의 배열은 규칙이 못 가른다 —
+//   화면에서만 거르면 선생님이 콘솔에서 통째로 읽는다 (회의록에서 겪은 것과 같다).
 async function saveTasks() {
   if (!S.teamOk) return;
-  await dashDoc("tasks").set({ items: S.tasks, updated: Date.now() });
+  var open = [], lead = [];
+  S.tasks.forEach(function (t) { (taskShared(t) ? open : lead).push(t); });
+  await dashDoc("tasks").set({ items: open, updated: Date.now() });
+  await dashDoc("tasksLead").set({ items: lead, updated: Date.now() });
+  S.tasksLead = lead;
 }
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function whoChips() {
@@ -1505,7 +1529,8 @@ function taskRow(t) {
   var dueHtml = t.due ? '<span class="' + (n < 0 ? "over" : n <= 3 ? "soon" : "") + '">' + esc(fmtMD(t.due)) + (t.due.length === 10 ? " " + dday(t.due) : "") + '</span>' : "";
   var stCls = { open: "", doing: "blue", hold: "yellow", done: "green" }[t.status || "open"];
   return '<div class="task" data-id="' + esc(t.id) + '"><input type="checkbox"' + (t.status === "done" ? " checked" : "") + '>' +
-    '<div class="t' + (t.status === "done" ? " done" : "") + '">' + esc(t.text) +
+    '<div class="t' + (t.status === "done" ? " done" : "") + '">' +
+    (S.ro || taskShared(t) ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') + esc(t.text) +
     '<div class="m">' + (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
     (t.repeat ? '<span class="pill blue">매주 ' + t.repeat.dow.map(function (i) { return DOW_KO[i]; }).join("·") + '</span>' : "") +
     (t.who ? '<span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +

@@ -221,7 +221,11 @@ ctx.__t.then((r) => {
   ok("반복을 체크하면 그날만 끝난다", doneOn === '{"2026-09-04":true}', doneOn);
   ok("체크한 날은 목록에서 빠지고 다른 날은 남는다",
     !after.includes("e@2026-09-04") && after.includes("e@2026-08-31"), after);
-  ok("저장까지 간다", SAVED.length === 1 && SAVED[0].items.length === 7, String(SAVED.length));
+  // 2026-09-07부터 할 일은 문서 둘로 나뉜다 — dash/tasks(공개분)와 dash/tasksLead(팀장 전용).
+  // 여기서는 «달력에서 체크한 것이 저장까지 간다»만 본다. 가르는 규칙 자체는 test-tasks.js 가 지킨다.
+  const items = SAVED.reduce((n, d) => n + (d.items || []).length, 0);
+  ok("저장까지 간다 (문서 둘로 갈려도 하나도 안 샌다)", SAVED.length === 2 && items === 7,
+    SAVED.length + "번 저장 · " + items + "건");
 
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;

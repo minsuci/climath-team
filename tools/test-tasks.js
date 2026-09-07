@@ -57,7 +57,7 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ") |
 // 이창혁A 는 두 학년을 다 맡는다(여기가 늘 함정이다).
 run(`
   S.teachers = [
-    { tid:"T1", name:"한민수",  classIds:["c1"] },
+    { tid:"T1", name:"한민수",  classIds:["c1"], role:"owner" },
     { tid:"T2", name:"이창혁A", classIds:["c1t","c0s"] },
     { tid:"T3", name:"이현우",  classIds:["c0s2"] },
     { tid:"T4", name:"정찬준",  classIds:["c0t"] },
@@ -116,6 +116,27 @@ ok("내 것 칩이 내 줄만 남긴다",
 ok("담당 칩은 글자로 그대로 거른다", val("S.tasks.filter(function(t){ return taskMatchesWho(t,'김효상') }).length") === 1);
 ok("아무것도 안 고르면 전부", val("S.tasks.filter(function(t){ return taskMatchesWho(t,'') }).length") === 4);
 
+// ---- 강사가 봐도 되는 할 일인가 ----
+// **출처(어느 회의)가 아니라 담당(누가 하나)으로 가른다.**
+// 간부회의에서 나와도 담당이 «전원» 이면 강사 일이고, 전체회의에서 나와도 팀장 혼자 것이면 아니다.
+run(`S.tasks = S.tasks.concat([
+  { id:"e", text:"한 달치 업무 계획",   who:"한민수", src:"간부", status:"open" },
+  { id:"f", text:"생각나는 것 카톡에",  who:"전원",   src:"간부", status:"open" },
+  { id:"g", text:"라이브클래스",       who:"한민수 · 이창혁B", src:"간부", status:"open" },
+  { id:"h", text:"담당 아직 없음",      who:"",      src:"간부", status:"open" }
+]);`);
+const shared = (id) => vm.runInContext("taskShared(S.tasks.filter(function(t){return t.id==='" + id + "'})[0])", ctx);
+ok("«전원» 은 공개 (간부회의에서 나왔어도)", shared("f"));
+ok("«담임 전원» 도 공개", shared("a"));
+ok("강사 이름이 들어간 것도 공개", shared("c"));
+ok("팀장 혼자 것은 팀장만 (전체회의에서 나왔어도)", !shared("b"), "b = 이번 주 업무 정리 / 한민수");
+ok("팀장 혼자 것은 팀장만 2", !shared("e"));
+ok("담당이 비면 팀장만 (아직 아무에게도 안 시켰다)", !shared("h"));
+ok("팀 밖 사람 것은 팀장만", !shared("d"), "d = 편제표 서초 / 김효상");
+// ⚠ 이창혁B 는 중등관 사람이다. 우리 이창혁A 와 다르다 — 이름이 닮았다고 공개되면 안 된다
+ok("이름이 닮은 팀 밖 사람에게 속지 않는다", !shared("g"), "이창혁B 는 우리 팀이 아니다");
+
+
 (async () => {
   // ---- 자기 체크를 적는다 ----
   await run("return toggleMyMark('a')");
@@ -132,6 +153,21 @@ ok("아무것도 안 고르면 전부", val("S.tasks.filter(function(t){ return 
   FAIL_WRITE = false;
   ok("저장에 실패하면 되돌린다", msg === "규칙이 막았다" && !val("S.marks.T1 && S.marks.T1.done.b"),
     msg + " / " + JSON.stringify(val("S.marks.T1 || null")));
+
+  // ---- 저장은 문서 둘로 갈린다 ----
+  // ⚠ 한 문서 안의 배열은 규칙이 못 가른다. 화면에서만 거르면 선생님이 콘솔에서 통째로 읽는다.
+  WROTE.length = 0;
+  run("S.teamOk = true; S.ro = false;");
+  await run("return saveTasks()");
+  const paths = WROTE.map((w) => w.path);
+  ok("공개분과 팀장 전용을 따로 쓴다", paths.join(",") === "dash/tasks,dash/tasksLead", paths.join(","));
+  const openIds = (WROTE[0].v.items || []).map((t) => t.id);
+  const leadIds = (WROTE[1].v.items || []).map((t) => t.id);
+  ok("공개분에는 강사가 걸린 것만", openIds.sort().join(",") === "a,c,f", openIds.join(","));
+  ok("팀장 전용에는 나머지", leadIds.sort().join(",") === "b,d,e,g,h", leadIds.join(","));
+  ok("하나도 잃어버리지 않는다", openIds.length + leadIds.length === val("S.tasks.length"),
+    openIds.length + "+" + leadIds.length + " vs " + val("S.tasks.length"));
+  ok("같은 할 일이 양쪽에 들어가지 않는다", !openIds.some((x) => leadIds.indexOf(x) >= 0));
 
   // ---- 선생님 계정 ----
   // 읽기 계정은 모든 쓰기가 막힌다. 오직 «내 완료» 만 그 문을 지나간다.
