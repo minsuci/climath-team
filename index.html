@@ -467,6 +467,7 @@ var S = {
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
   marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
+  own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
   calGrade: "전체", calAnchor: "", calAdd: "",
@@ -740,6 +741,9 @@ async function loadCore() {
     dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
     tdb.collection("marks").get().then(function (s2) { S.marks = {}; s2.forEach(function (d) { S.marks[d.id] = d.data() || {}; }); })
       .catch(function () { S.marks = {}; }),
+    // 선생님이 스스로 적은 할 일. 사람마다 문서 하나(myTasks/<tid>) — 자기 것만 쓴다.
+    tdb.collection("myTasks").get().then(function (s2) { S.own = {}; s2.forEach(function (d) { S.own[d.id] = d.data() || {}; }); })
+      .catch(function () { S.own = {}; }),
     loadTests(),
     db.collection("appConfig").doc("studentLog").get()
       .then(function (d) { S.stLog = (d.exists && d.data().items) || []; }).catch(function () { S.stLog = []; }),
@@ -748,6 +752,21 @@ async function loadCore() {
   ];
   await Promise.all(jobs);
   S.tasks = S.tasks.concat(S.tasksLead || []);   // 팀장에게는 한 목록으로 보인다
+  S.tasks = S.tasks.concat(ownTasks());          // 각자 적은 것도 같은 목록에 섞인다
+}
+// 자기 할 일 문서들을 한 목록으로 편다.
+// ⚠ **담당은 문서 주인에서 다시 만든다.** 문서 안에 적힌 who 를 믿지 않는다 —
+//   규칙은 배열 안을 못 보니, 자기 칸에 남의 이름을 적어 두면 남에게 일을 시킨 것처럼 보일 수 있다.
+//   `own` 은 화면에만 쓰는 표식이라 저장할 때 뗀다.
+function ownTasks() {
+  var out = [];
+  Object.keys(S.own || {}).forEach(function (tid) {
+    var nm = teacherName(tid); if (nm === "?") nm = (S.own[tid].name || "");
+    (S.own[tid].items || []).forEach(function (t) {
+      out.push(Object.assign({}, t, { own: tid, who: nm, src: t.src || "직접 추가" }));
+    });
+  });
+  return out;
 }
 function teacherName(tid) { var t = S.teachers.filter(function (x) { return x.tid === tid; })[0]; return t ? t.name : (tid ? "?" : ""); }
 function classTeachers(cid) { return S.teachers.filter(function (t) { return (t.classIds || []).indexOf(cid) >= 0; }).map(function (t) { return t.name; }); }
@@ -760,6 +779,7 @@ function renderBanner() {
   var el = $("#banner");
   var ro = S.ro ? '<div class="banner" style="background:#f5f7fb;border-color:var(--line)"><b>읽기만 하는 계정</b> — 보이는 것은 관리자와 같고, 고치는 단추는 감춰져 있다. ' +
     '고칠 것이 있으면 한민수 팀장에게. 학생 명단·참여표·학교 일정은 수업관리 앱에서 여느 때처럼 고친다.<br>' +
+    '<b>할 일</b>은 예외다 — <b>내 할 일은 직접</b> 넣고 지운다. 남에게 시키는 것만 팀장이 한다.<br>' +
     '<b>회의록</b>은 팀회의만 올라온다. 간부회의는 팀장만 본다.</div>' : "";
   var rd = (S.readErr && S.readErr.length)
     ? '<div class="banner"><b>수업관리 앱 DB에서 못 읽은 것</b> — ' + esc(S.readErr.join(", ")) + '.<br>' +
@@ -1472,6 +1492,7 @@ async function toggleMyMark(id) {
 }
 // 내가 눌러야 하는 줄이면 단추, 여럿이 걸린 줄이면 «몇 명 했나»
 function myMarkBtn(t) {
+  if (t.own) return "";   // 자기가 적은 것은 체크칸으로 바로 끝낸다. 따로 표시할 상대가 없다
   if (!taskIsMine(t) || t.status === "done") return "";
   var d = markDate(myTid(), t.id);
   return '<button class="mini mk' + (d ? " on" : "") + '" data-keep data-mk="' + esc(t.id) + '"' +
@@ -1502,10 +1523,30 @@ function taskShared(t) {
 }
 // ⚠ 문서를 둘로 나눠야 **규칙으로** 막힌다. 한 문서 안의 배열은 규칙이 못 가른다 —
 //   화면에서만 거르면 선생님이 콘솔에서 통째로 읽는다 (회의록에서 겪은 것과 같다).
+// ---- 각자 적은 할 일 (2026-09-07) ----
+//
+// 선생님도 **자기 할 일은 직접 적는다.** 남의 할 일을 만드는 것은 팀장뿐이다.
+// 그 «남의 것은 안 된다» 를 화면이 아니라 **규칙**이 지키게 하려고 사람마다 문서를 하나씩 준다
+// (`myTasks/<tid>`, marks 와 같은 모양). 공용 목록에 선생님 쓰기를 열면 담당 칸에 아무 이름이나
+// 적어 남에게 일을 시킬 수 있다 — 문서 이름이 곧 누구인지인 편이 훨씬 단단하다.
+function canEditTask(t) { return !S.ro || (!!t.own && t.own === myTid()); }
+function stripOwn(t) { var o = Object.assign({}, t); delete o.own; return o; }
+async function saveOwnTasks(tid) {
+  if (!tid) throw new Error("누구인지 알 수 없다");
+  if (S.ro && tid !== myTid()) throw new Error(RO_MSG);   // 규칙도 막지만 여기서 먼저 막는다
+  var items = S.tasks.filter(function (t) { return t.own === tid; }).map(stripOwn);
+  var doc = { name: teacherName(tid), items: items, updated: Date.now() };
+  S.own[tid] = doc;
+  await passWrite(function () { return tdb.collection("myTasks").doc(tid).set(doc); });
+}
+// 이 줄이 어디에 저장되는지는 줄이 안다. 공용 목록이면 팀장 몫, 자기 것이면 자기 문서.
+async function saveTaskOf(t) { return t.own ? saveOwnTasks(t.own) : saveTasks(); }
+
 async function saveTasks() {
   if (!S.teamOk) return;
   var open = [], lead = [];
-  S.tasks.forEach(function (t) { (taskShared(t) ? open : lead).push(t); });
+  // ⚠ 각자 적은 것은 여기 안 들어간다. 넣으면 자기 문서와 공용 목록에 같은 것이 둘 생긴다.
+  S.tasks.forEach(function (t) { if (t.own) return; (taskShared(t) ? open : lead).push(t); });
   await dashDoc("tasks").set({ items: open, updated: Date.now() });
   await dashDoc("tasksLead").set({ items: lead, updated: Date.now() });
   S.tasksLead = lead;
@@ -1546,12 +1587,18 @@ function renderTasks() {
     '<div class="chips"><button class="mini ' + (!S.filterWho ? "on" : "") + '" data-who="">전체</button>' +
     '<button class="mini ' + (S.filterWho === MINE ? "on" : "") + '" data-who="' + esc(MINE) + '">' + esc(MINE) + " " + mine.length + "</button>" +
     chips.map(function (w) { return '<button class="mini ' + (S.filterWho === w ? "on" : "") + '" data-who="' + esc(w) + '">' + esc(w) + '</button>'; }).join("") + '</div>' +
-    (S.ro ? '<div class="muted" style="margin:4px 0 8px">내 것은 <b>내 완료</b> 를 눌러 표시한다. 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.</div>' : "") +
+    (S.ro ? '<div class="muted" style="margin:4px 0 8px">팀장이 시킨 일은 <b>내 완료</b> 를 눌러 표시한다 — 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.<br>' +
+      '<b>내가 적은 할 일</b>은 아래에서 직접 넣고, 상태도 지우기도 내가 한다. 남에게 시키는 것은 팀장만 한다.</div>' : "") +
     fromMinutesBox() +
     '<div id="tk-list">' + (list.length ? list.map(taskRow).join("") : '<div class="empty">' + (S.teamOk ? "할 일이 없다. 아래에 적거나 볼트에서 붙여넣는다." : "규칙을 게시하면 여기 저장된다.") + '</div>') + '</div>' +
-    '<div class="row"><input type="text" id="tk-text" placeholder="새 할 일">' +
-    '<input type="text" id="tk-who" placeholder="담당" style="flex:0 0 90px" list="who-list">' +
-    '<input type="date" id="tk-due"><button class="btn" id="tk-add"' + (S.teamOk ? "" : " disabled") + '>추가</button></div>' +
+    // 선생님 칸에는 «담당» 이 없다 — 담당은 자기 자신이다. data-keep 이 없으면 감추기가 지운다.
+    (S.ro
+      ? '<div class="row"><input type="text" id="tk-text" data-keep placeholder="내 할 일 적기">' +
+        '<input type="date" id="tk-due" data-keep>' +
+        '<button class="btn" id="tk-add" data-keep' + (S.teamOk ? "" : " disabled") + '>내 할 일 추가</button></div>'
+      : '<div class="row"><input type="text" id="tk-text" placeholder="새 할 일">' +
+        '<input type="text" id="tk-who" placeholder="담당" style="flex:0 0 90px" list="who-list">' +
+        '<input type="date" id="tk-due"><button class="btn" id="tk-add"' + (S.teamOk ? "" : " disabled") + '>추가</button></div>') +
     '<datalist id="who-list">' + chips.map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist>' +
     '<div id="tk-imp" hidden><textarea id="tk-md" rows="6" style="width:100%" placeholder="볼트 「할 일 추적」의 표를 그대로 붙여넣기 (| 할 일 | 담당 | 기한 | 출처 | 상태 |)"></textarea>' +
     '<div class="row"><button class="btn o" id="tk-imp-go">가져오기</button><span class="muted" id="tk-imp-msg">같은 글자의 할 일은 건너뛴다</span></div></div>';
@@ -1561,8 +1608,16 @@ function renderTasks() {
   $("#tk-import").onclick = function () { var d = $("#tk-imp"); d.hidden = !d.hidden; };
   $("#tk-add").onclick = async function () {
     var text = $("#tk-text").value.trim(); if (!text) return;
-    S.tasks.push({ id: newId(), text: text, who: $("#tk-who").value.trim(), due: $("#tk-due").value, src: "팀체크", status: "open", created: TODAY });
-    await saveTasks(); renderTasks();
+    var t = { id: newId(), text: text, who: S.ro ? myName() : $("#tk-who").value.trim(),
+              due: $("#tk-due").value, src: S.ro ? "직접 추가" : "팀체크", status: "open", created: TODAY };
+    if (S.ro) t.own = myTid();
+    S.tasks.push(t);
+    try { await saveTaskOf(t); }
+    catch (e) {
+      S.tasks = S.tasks.filter(function (x) { return x.id !== t.id; });   // 못 썼으면 화면에도 남기지 않는다
+      alert("적지 못했다: " + e.message);
+    }
+    renderTasks();
   };
   $("#tk-text").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#tk-add").click(); });
   $("#tk-imp-go").onclick = async function () {
@@ -1581,17 +1636,24 @@ function renderTasks() {
   $$(".task", el).forEach(function (row) {
     var id = row.getAttribute("data-id");
     var t = S.tasks.filter(function (x) { return x.id === id; })[0];
-    $("input[type=checkbox]", row).onchange = async function (e) {
+    // 손댈 수 없는 줄에는 아예 안 건다. 걸어 두면 눌렀을 때 조용히 거절만 당하고 화면은 그대로다.
+    if (!canEditTask(t)) return;
+    var box = $("input[type=checkbox]", row);
+    if (box) box.onchange = async function (e) {
       t.status = e.target.checked ? "done" : "open"; t.done = e.target.checked ? TODAY : "";
-      await saveTasks(); renderTasks();
+      await saveTaskOf(t); renderTasks();
     };
     $(".st", row).onclick = async function () {
       var order = ["open", "doing", "hold", "done"]; t.status = order[(order.indexOf(t.status || "open") + 1) % order.length];
-      if (t.status === "done") t.done = TODAY; await saveTasks(); renderTasks();
+      if (t.status === "done") t.done = TODAY; await saveTaskOf(t); renderTasks();
     };
-    $(".x", row).onclick = async function () {
+    var x = $(".x", row);
+    if (x) x.onclick = async function () {
       if (!confirm("지울까? " + t.text)) return;
-      S.tasks = S.tasks.filter(function (x) { return x.id !== id; }); await saveTasks(); renderTasks();
+      var keep = S.tasks;
+      S.tasks = S.tasks.filter(function (y) { return y.id !== id; });
+      try { await saveTaskOf(t); } catch (e) { S.tasks = keep; alert("지우지 못했다: " + e.message); }
+      renderTasks();
     };
   });
 }
@@ -1599,15 +1661,17 @@ function taskRow(t) {
   var n = daysFromToday(t.due);
   var dueHtml = t.due ? '<span class="' + (n < 0 ? "over" : n <= 3 ? "soon" : "") + '">' + esc(fmtMD(t.due)) + (t.due.length === 10 ? " " + dday(t.due) : "") + '</span>' : "";
   var stCls = { open: "", doing: "blue", hold: "yellow", done: "green" }[t.status || "open"];
-  return '<div class="task" data-id="' + esc(t.id) + '"><input type="checkbox"' + (t.status === "done" ? " checked" : "") + '>' +
+  // 자기가 적은 줄은 읽기 계정도 손댄다 — data-keep 이 없으면 감추기가 체크칸을 잠근다.
+  var mine = canEditTask(t);
+  return '<div class="task" data-id="' + esc(t.id) + '"><input type="checkbox"' + (mine ? " data-keep" : "") + (t.status === "done" ? " checked" : "") + '>' +
     '<div class="t' + (t.status === "done" ? " done" : "") + '">' +
     (S.ro || taskShared(t) ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') + esc(t.text) +
     '<div class="m">' + (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
     (t.repeat ? '<span class="pill blue">매주 ' + t.repeat.dow.map(function (i) { return DOW_KO[i]; }).join("·") + '</span>' : "") +
     (t.who ? '<span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
-    '<span class="pill ' + stCls + ' st" title="눌러서 바꾸기">' + STATUS[t.status || "open"] + '</span>' + markPill(t) + dueHtml +
+    '<span class="pill ' + stCls + ' st"' + (mine ? ' title="눌러서 바꾸기"' : ' title="상태는 팀장이 바꾼다"') + '>' + STATUS[t.status || "open"] + '</span>' + markPill(t) + dueHtml +
     (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div>' + myMarkBtn(t) +
-    '<button class="x" title="지우기">×</button></div>';
+    (mine ? '<button class="x" data-keep title="지우기">×</button>' : "") + '</div>';
 }
 // ---------- 회의록에서 할 일 끌어오기 (2026-09-07) ----------
 //

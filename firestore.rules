@@ -39,6 +39,16 @@ service cloud.firestore {
       allow write: if role() == "owner" || (role() == "teacher" && tid == myTid());
     }
 
+    // 선생님이 **자기가 스스로 적은 할 일.** 사람마다 자기 문서 하나다 (marks 와 같은 모양).
+    // ⚠ «남의 할 일은 팀장만 만든다» 를 규칙으로 지키는 방법이 이것이다 —
+    //   문서 이름이 곧 누구인지라, 선생님은 자기 칸에만 쓸 수 있다.
+    //   공용 목록(dash/tasks)에 선생님 쓰기를 열면 담당을 아무 이름으로나 적어 남에게 일을 시킬 수 있다.
+    // ⚠ 담당(who)은 규칙이 아니라 **앱이 문서 주인에서 다시 만든다.** 규칙은 배열 안을 못 본다.
+    match /myTasks/{tid} {
+      allow read: if team();
+      allow write: if role() == "owner" || (role() == "teacher" && tid == myTid());
+    }
+
     // 팀 할 일은 문서 둘이다 — `dash/tasks`(공개분)와 `dash/tasksLead`(팀장 전용).
     // 담당에 강사가 하나라도 걸리면 공개분, 팀장 혼자거나 담당이 없거나 팀 밖 사람이면 전용이다.
     // ⚠ 한 문서 안의 배열은 규칙이 못 가른다. 그래서 나눴다 —

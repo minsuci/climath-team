@@ -148,6 +148,15 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   ok("«앱 열기» 링크는 남는다 (a.mini 이지만 열기)", !open.hidden);
   ok("«PIN 초기화» 는 감춘다", pin.hidden);
   ok("«내 완료» 는 읽기 계정에도 남는다 (data-keep)", !mine.hidden);
+  // 자기 할 일을 적는 칸·단추. 이것이 감춰지면 «각자 적는다» 가 통째로 없어진다 (2026-09-07)
+  const addMy = mk("BUTTON", "내 할 일 추가", ["btn"], { "data-keep": "" });
+  const addTxt = mk("INPUT", "", [], { type: "text", "data-keep": "" });
+  const addDue = mk("INPUT", "", [], { type: "date", "data-keep": "" });
+  const myBox = mk("INPUT", "", [], { type: "checkbox", "data-keep": "" });
+  run("applyReadOnly()");
+  ok("«내 할 일 추가» 단추는 남는다", !addMy.hidden);
+  ok("내 할 일 적는 칸은 잠기지 않는다", !addTxt.readOnly && !addDue.readOnly);
+  ok("내가 적은 줄의 체크칸은 살아 있다", !myBox.disabled);
   ok("찾기 칸은 남는다", !search.readOnly && !search.disabled);
   ok("날짜 칸은 읽기만", dateIn.readOnly);
   ok("체크박스는 못 누른다", chk.disabled);
@@ -257,7 +266,15 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   ok("선생님 읽기에는 반드시 open 조건이 붙는다", !loose.length, loose.join(" | "));
   ok("팀장은 전부 읽는다", /allow\s+read:\s*if\s+role\(\)\s*==\s*"owner"/.test(mb), mb.trim().slice(0, 80));
   ok("쓰는 것은 팀장뿐이다", /allow\s+write:\s*if\s+role\(\)\s*==\s*"owner"/.test(mb));
-  ["dash", "marks", "devtools", "devlog", "tests", "testScores"].forEach((c) => {
+  // 각자 적는 할 일. 규칙이 «남의 것은 안 된다» 를 지킨다 — 문서 이름이 곧 누구인지다.
+  // ⚠ 이 조건이 빠지면 선생님이 남의 칸에 일을 밀어 넣을 수 있다.
+  const my = /match\s*\/myTasks\/\{tid\}\s*\{([\s\S]*?)\n\s*\}/.exec(noComment);
+  ok("myTasks 규칙이 있다", !!my, "match /myTasks/{tid} 가 있어야 한다");
+  ok("선생님은 자기 칸에만 쓴다",
+    !!my && /teacher/.test(my[1]) && /tid\s*==\s*myTid\(\)/.test(my[1]), my && my[1].trim());
+  ok("팀장은 어느 칸에나 쓴다", !!my && /role\(\)\s*==\s*"owner"/.test(my[1]));
+  ok("팀은 다 읽는다 (팀장이 봐야 한다)", !!my && /allow\s+read:\s*if\s+team\(\)/.test(my[1]));
+  ["dash", "marks", "myTasks", "devtools", "devlog", "tests", "testScores"].forEach((c) => {
     ok("규칙에 " + c + " 가 있다 (없으면 아무도 못 읽는다)", new RegExp("match\\s*/" + c + "/").test(noComment));
   });
   // 팀장 전용 할 일. 한 문서 안의 배열은 규칙이 못 가르므로 문서를 나눴다 —

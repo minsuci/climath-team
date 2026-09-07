@@ -271,6 +271,68 @@ ok("이름이 닮은 팀 밖 사람에게 속지 않는다", !shared("g"), "이�
   ok("«안 넣기» 도 저장한다", WROTE.some((w) => w.path === "dash/config"), WROTE.map((w) => w.path).join(","));
   ok("남은 것은 그대로 올라온다", news().indexOf("고등관 회의 진행") >= 0);
 
+  // ---- 각자 적는 할 일 (2026-09-07) ----
+  //
+  // 선생님도 **자기 할 일**은 직접 적는다. 남의 할 일을 만드는 것은 팀장뿐이다.
+  // 문서를 사람마다 하나씩 두는 이유가 그것이다 — 공용 목록에 쓰기를 열면
+  // 담당 칸에 아무 이름이나 적어 **남에게 일을 시킬 수 있다.**
+  run(`S.claims = { tid:"T3", name:"이현우", role:"teacher" }; S.ro = true;
+       S.own = {}; S.tasks = []; S.teamOk = true;`);
+  WROTE.length = 0;
+  await run(`return (function(){ S.tasks.push({ id:"m1", text:"내가 적은 것", who:"이현우",
+    due:"2026-09-10", src:"직접 추가", status:"open", own:"T3" }); return saveTaskOf(S.tasks[0]); })()`);
+  ok("선생님이 자기 할 일을 적는다", WROTE.length === 1, JSON.stringify(WROTE.map((w) => w.path)));
+  ok("자기 문서에만 간다", WROTE[0].path === "myTasks/T3", WROTE[0].path);
+  ok("문은 다시 닫힌다", run("return RO_PASS") === false);
+  ok("공용 목록은 여전히 못 쓴다", (await tryW("return saveTasks()")) === RO_MSG);
+  ok("남의 칸에는 못 쓴다", (await tryW("return saveOwnTasks('T2')")) === RO_MSG);
+
+  // 담당은 문서 주인에서 다시 만든다 — 자기 칸에 남의 이름을 적어 둬도 소용없다
+  run(`S.own = { T3: { name:"이현우", items:[{ id:"m2", text:"남에게 시키려는 것", who:"한민수", status:"open" }] } };
+       S.tasks = ownTasks();`);
+  ok("자기 칸에 남의 이름을 적어도 자기 것이 된다", val("S.tasks[0].who") === "이현우", val("S.tasks[0].who"));
+  ok("어느 칸에서 왔는지 남는다", val("S.tasks[0].own") === "T3");
+
+  // 저장할 때는 표식을 뗀다. 남겨 두면 문서 안에 화면용 값이 쌓인다
+  WROTE.length = 0;
+  await run("return saveOwnTasks('T3')");
+  ok("저장한 것에는 own 표식이 없다", WROTE[0].v.items.every((x) => x.own === undefined), JSON.stringify(WROTE[0].v.items));
+
+  // 손댈 수 있는 줄과 아닌 줄
+  run(`S.tasks = [{ id:"m2", text:"내 것", who:"이현우", own:"T3", status:"open" },
+                 { id:"s1", text:"팀장이 시킨 것", who:"이현우", status:"open" },
+                 { id:"o1", text:"남이 적은 것", who:"정찬준", own:"T4", status:"open" }];`);
+  const canEdit = (id) => run("return canEditTask(S.tasks.filter(function(t){return t.id==='" + id + "'})[0])");
+  ok("내가 적은 줄은 내가 고친다", canEdit("m2") === true);
+  ok("팀장이 시킨 줄은 못 고친다", canEdit("s1") === false);
+  ok("남이 적은 줄도 못 고친다", canEdit("o1") === false);
+  const row = (id) => run("return taskRow(S.tasks.filter(function(t){return t.id==='" + id + "'})[0])");
+  // ⚠ data-keep 이 없으면 applyReadOnly 가 체크칸을 잠근다 — 적어 놓고 못 끄는 목록이 된다
+  ok("내 줄의 체크칸은 안 잠긴다", row("m2").indexOf("checkbox\" data-keep") >= 0, row("m2").slice(0, 90));
+  ok("내 줄에는 지우기가 있다", row("m2").indexOf('class="x"') >= 0);
+  ok("못 고치는 줄에는 지우기가 없다", row("s1").indexOf('class="x"') < 0);
+  // 「내 완료」 단추에는 data-keep 이 붙는 게 맞다 — 체크칸에만 없어야 한다
+  ok("못 고치는 줄의 체크칸은 잠긴다(표가 없다)", row("s1").indexOf('checkbox" data-keep') < 0, row("s1").slice(0, 90));
+  ok("그래도 «내 완료» 단추는 남는다", row("s1").indexOf("data-mk=") >= 0);
+  ok("내가 적은 줄에는 «내 완료» 가 없다 (체크칸으로 끝낸다)",
+    run("return myMarkBtn(S.tasks[0])") === "", run("return myMarkBtn(S.tasks[0])"));
+
+  // 팀장은 남의 것도 고친다 — 규칙이 owner 에게는 다 열려 있다
+  run(`S.claims = { tid:"T1", name:"한민수", role:"owner" }; S.ro = false;`);
+  ok("팀장은 남이 적은 줄도 고친다", canEdit("o1") === true);
+  WROTE.length = 0;
+  await run("return saveTaskOf(S.tasks.filter(function(t){return t.id==='o1'})[0])");
+  ok("팀장이 고쳐도 그 사람 칸에 저장된다", WROTE[0].path === "myTasks/T4", WROTE[0].path);
+
+  // ⚠ 공용 목록에 섞여 들어가면 같은 것이 두 군데 생긴다
+  WROTE.length = 0;
+  await run("return saveTasks()");
+  const teamDoc = WROTE.filter((w) => w.path === "dash/tasks")[0];
+  const leadDoc = WROTE.filter((w) => w.path === "dash/tasksLead")[0];
+  const inTeam = JSON.stringify((teamDoc ? teamDoc.v.items : []).concat(leadDoc ? leadDoc.v.items : []));
+  ok("각자 적은 것은 공용 목록에 안 들어간다", inTeam.indexOf("m2") < 0 && inTeam.indexOf("o1") < 0, inTeam.slice(0, 160));
+  ok("팀장이 시킨 것은 그대로 들어간다", inTeam.indexOf("s1") >= 0);
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

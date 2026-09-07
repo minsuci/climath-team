@@ -114,6 +114,21 @@ async function main() {
     T.push((d.status === 200 ? "  ·   " : "FAIL  ") + "되돌렸다 (없던 문서를 지웠다)   HTTP " + d.status);
   }
 
+  // ---- 각자 적는 할 일 ----
+  // 자기 칸은 열려 있어야 하고(막히면 «내 할 일 추가» 가 조용히 안 먹는다),
+  // 남의 칸은 막혀 있어야 한다(열리면 남에게 일을 시킬 수 있다).
+  say(false, "남의 «내 할 일» 칸에는 못 쓴다",
+    (await write("myTasks/" + other.tid, { name: { stringValue: "x" } })) === 403);
+  const hadMy = (await read("myTasks/" + me.tid)) === 200;
+  const wm = await write("myTasks/" + me.tid,
+    { name: { stringValue: me.name }, items: { arrayValue: { values: [] } }, updated: { integerValue: String(Date.now()) } });
+  say(true, "자기 «내 할 일» 칸에는 쓴다", wm === 200, "HTTP " + wm);
+  say(true, "팀은 남의 «내 할 일» 도 읽는다 (팀장이 봐야 한다)", (await read("myTasks/" + other.tid)) !== 403);
+  if (!hadMy && wm === 200) {
+    const d = await fetch(BASE + "/myTasks/" + me.tid, { method: "DELETE", headers: H });
+    T.push((d.status === 200 ? "  ·   " : "FAIL  ") + "되돌렸다 (없던 문서를 지웠다)   HTTP " + d.status);
+  }
+
   // ---- 규칙에 안 적은 것은 닫혀 있어야 한다 ----
   say(false, "규칙에 없는 컬렉션은 아무도 못 읽는다", (await read("students/anything")) === 403);
 
