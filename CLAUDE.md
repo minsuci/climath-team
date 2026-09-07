@@ -14,6 +14,7 @@ repo/
 ├── api/sheets.js     # 구글시트 읽기 (서비스 계정, 읽기 전용)
 ├── api/github.js     # 깃허브 커밋·배포 이력 읽기 — «개발 현황» (5분 캐시)
 ├── tools/push-devlog.mjs  # 나스 허브의 도구보고·일지 개발 줄 → devtools·devlog (개발 현황의 나스 쪽)
+├── tools/check-rules.mjs  # 게시된 규칙이 실제로 막는지 — 선생님 토큰으로 불러 본다
 ├── api/_google.js    # 커스텀 토큰 발급 · ID 토큰 검증 · 구글 API 토큰
 ├── firestore.rules   # climath-team DB 규칙 — 읽기 owner·teacher, 쓰기 owner (+ marks/<tid> 는 본인, minutes 는 open 인 것만 teacher). 콘솔에 붙여넣어 게시 (tools/publish-rules.mjs 는 권한이 없어 403)
 └── vercel.json       # icn1
@@ -66,8 +67,16 @@ PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. �
 - 머리띠에 `이름 · 읽기만` 표, 위에 안내 배너. 로그인 화면은 앱 PIN 그대로.
 - **회의록은 «팀회의»만 보인다** (2026-09-07) — 간부회의는 목록에도 안 뜬다. 아래 «회의록» 절.
 - 서버: `api/auth.js` 가 teacher 도 통과, `api/github.js` 는 읽기라 teacher 도 됨. `api/sheets.js`·`api/schedule.js` 는 owner 만(쓰기).
-- `firestore.rules`: **컬렉션마다 따로** 적는다 — 읽기 owner·teacher, 쓰기 owner (minutes 는 owner 만, marks 는 본인).
-  **콘솔에 붙여넣어 게시해야 선생님이 읽는다.**
+- `firestore.rules`: **컬렉션마다 따로** 적는다 — 읽기 owner·teacher, 쓰기 owner
+  (minutes 는 `open` 인 것만, marks 는 본인, dash/tasksLead 는 팀장만).
+  **콘솔에 붙여넣어 게시해야 걸린다.** 게시한 뒤에는 반드시 —
+  ```bash
+  node tools/check-rules.mjs
+  ```
+  **선생님 계정 토큰을 만들어 진짜로 불러 본다.** 서비스 계정은 규칙을 통과해 버려 소용없고,
+  «잘 되는지»만 봐서는 반쪽이다 — **막혀야 할 것이 막히는지**를 본다.
+  자국은 안 남긴다(성공하는 쓰기 하나만 시험하고 없던 문서면 지운다).
+  2026-09-07 게시 뒤 12건 전부 확인했다.
   `tools/publish-rules.mjs` 를 만들었지만 서비스 계정에 규칙 게시 권한이 없어 403 — IAM 에서 «Firebase Rules 관리자»를 주면 된다.
 
 > [!warning] String.replace 의 치환 문자열에서 `$$` 는 `$` 가 된다
