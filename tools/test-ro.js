@@ -65,7 +65,10 @@ function el(tag, attrs) {
   return o;
 }
 const ELS = [];
+const LG = {};              // 로그인 화면의 #lg-… 칸들
+let loginCard = null;       // 로그인 카드가 화면에 있나 (있으면 감추기가 손대면 안 된다)
 const rootEl = el("div");
+rootEl.querySelector = (sel) => (sel === ".card.login" ? loginCard : null);
 rootEl.querySelectorAll = (sel) => ELS.filter((e) => {
   if (sel === ".card button, .card a.mini") return e.tagName === "BUTTON" || (e.tagName === "A" && e.cls.indexOf("mini") >= 0);
   if (sel === ".card input, .card textarea") return e.tagName === "INPUT" || e.tagName === "TEXTAREA";
@@ -75,7 +78,8 @@ let observed = false;
 let FETCH = () => Promise.reject(new Error("no net"));   // 시험마다 갈아 끼운다
 const stub = {
   firebase: { initializeApp: () => ({}), firestore: firestoreFn, auth: () => ({ onAuthStateChanged() {}, currentUser: null, signOut: () => Promise.resolve() }) },
-  document: { querySelector: (s) => (s === "#root" ? rootEl : null), querySelectorAll: () => [], addEventListener() {} },
+  // 로그인 화면의 칸들은 있는 셈 친다 — renderLogin() 을 통째로 돌려 봐야 하기 때문이다
+  document: { querySelector: (s) => (s === "#root" ? rootEl : (/^#lg-/.test(s) ? (LG[s] = LG[s] || el("DIV")) : null)), querySelectorAll: () => [], addEventListener() {} },
   window: { addEventListener() {}, scrollTo() {} }, location: { hash: "" }, history: { replaceState() {} },
   localStorage: { getItem: () => null, setItem() {} },
   // ⚠ 흉내는 브라우저보다 너그러우면 안 된다. 2026-09-06에 이 `observe(){}` 가
@@ -102,7 +106,8 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   const a = await run("return tdb.collection('dash').doc('x').set({a:1})");
   ok("관리자는 그대로 쓴다", a === "set-ok" && CALLS.length === 1, JSON.stringify(CALLS));
 
-  run("S.ro = true");
+  // 진짜 앱에서 S.ro 가 켜지는 순간에는 늘 claims 가 있다(boot 이 둘을 같이 정한다). 흉내도 그렇게 둔다.
+  run("S.ro = true; S.claims = { role: 'teacher', tid: 'T2', name: '이현우' }");
   const tryW = async (code) => { try { await run(code); return "ok"; } catch (e) { return e.message; } };
   const msg = run("return RO_MSG");
   ok("읽기 계정의 set 은 거절", (await tryW("return tdb.collection('dash').doc('x').set({a:1})")) === msg);
@@ -160,6 +165,29 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   run("S.ro = true"); await run("return loadMinutes()");
   ok("선생님은 open==true 만 받아온다", WHERE.join("") === "open == true", WHERE.join(" | "));
   run("S.ro = false");
+
+  // ---- 로그인 화면에는 «들어가기» 가 남아야 한다 ----
+  //
+  // 2026-09-07: 선생님이 로그인에 실패하거나 로그아웃하면 S.ro 가 켜진 채로 로그인 화면이 그려졌다.
+  // 감추기가 `.btn` 을 지우는데 «들어가기» 가 `.btn` 이다 — **다시 들어갈 방법이 없어졌다.**
+  // 화면에 단추가 없으면 «안 된다» 도 아니고 «없다» 라 사람이 손쓸 데가 없다.
+  const goBtn = mk("BUTTON", "들어가기", ["btn"]);
+  loginCard = el("DIV");
+  run("S.ro = true; S.claims = { role: 'teacher', tid: 'T2', name: '이현우' }");
+  run("applyReadOnly()");
+  ok("로그인 화면이면 «들어가기» 를 안 감춘다", !goBtn.hidden);
+  loginCard = null;
+  run("applyReadOnly()");
+  ok("로그인 화면이 아니면 그대로 감춘다", goBtn.hidden);
+  // 아무도 아닌 상태(로그아웃 직후)에도 손대지 않는다
+  goBtn.hidden = false;
+  run("S.claims = null");
+  run("applyReadOnly()");
+  ok("로그인 전이면 아무것도 안 감춘다", !goBtn.hidden);
+  // renderLogin 이 앞 사람의 «읽기만» 을 내린다 — 두 겹 중 첫 겹
+  run("S.ro = true; S.claims = { role: 'teacher' }; renderLogin('앞 사람이 막혔던 것')");
+  ok("renderLogin 이 읽기 계정 상태를 내린다", val("S.ro") === false && val("S.claims") === null,
+    JSON.stringify(val("S.ro")) + " / " + JSON.stringify(val("S.claims")));
 
   // ---- 선생님 명단은 어디서 오나 ----
   //

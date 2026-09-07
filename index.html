@@ -413,6 +413,10 @@ guardWrites();
 var RO_WORDS = /저장|지우|빼기|초기화|가져오|찾아오|보내기|만들기|추가|잇기|되돌리|편집|관리|고치|바꾸|끊기|넣기|채우기|읽히나|끝냄|완료|취소|잠금|잠그|풀기|다시 보내|재발송|올리기|내려받|＋|✓|✕|×/;
 function applyReadOnly() {
   if (!S.ro) return;
+  // ⚠ 로그인 화면은 누구의 것도 아니다. 여기서 «감추기»가 돌면 «들어가기»(.btn)가 사라져
+  //   **다시 로그인할 방법이 없어진다** (2026-09-07 실제로 그랬다). 두 겹으로 막는다 —
+  //   renderLogin() 이 S.ro 를 내리고, 여기서도 로그인 카드면 손대지 않는다.
+  if (!S.claims || $(".card.login", root)) return;
   $$(".card button, .card a.mini", root).forEach(function (b) {
     if (b.hidden) return;
     if (b.hasAttribute("data-keep")) return;   // 읽기 계정도 누르는 것 — 지금은 «내 완료» 뿐이다
@@ -519,6 +523,9 @@ async function sheetsApi(body) {
 // 한 번 더 돌기 때문에, 인자로만 넘기면 메시지가 지워진다. 다음 시도 때 비운다.
 var LOGIN_ERR = "";
 function renderLogin(msg) {
+  // 로그인 화면으로 돌아왔으면 아무도 아니다. 앞 사람이 선생님이었으면 S.ro 가 켜진 채로 남는데,
+  // 그 상태로 감추기가 돌면 «들어가기» 단추가 사라진다. 로그아웃·로그인 실패 모두 이 길로 온다.
+  S.ro = false; S.claims = null;
   root.innerHTML =
     '<div class="top"><h1><b>팀체크</b></h1><span class="date">' + fmtMD(TODAY) + '</span></div>' +
     '<div class="wrap"><div class="card login"><h2>선생님 로그인</h2>' +
