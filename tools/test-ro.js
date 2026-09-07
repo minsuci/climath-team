@@ -10,25 +10,48 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
 
 // 진짜 SDK 처럼 프로토타입이 있는 가짜 Firestore
 const CALLS = [];
-function DocumentReference() {}
-DocumentReference.prototype.set = function () { CALLS.push("set"); return Promise.resolve("set-ok"); };
+const DOCS = {};    // 경로 -> 값. get 이 여기서 꺼낸다 ("t:" 는 팀 DB)
+const SETS = [];    // 무엇을 어디에 썼나
+function DocumentReference(path) { this.path = path || "?"; }
+DocumentReference.prototype.set = function (d) { CALLS.push("set"); SETS.push({ path: this.path, data: d }); DOCS[this.path] = d; return Promise.resolve("set-ok"); };
 DocumentReference.prototype.update = function () { CALLS.push("update"); return Promise.resolve("update-ok"); };
 DocumentReference.prototype.delete = function () { CALLS.push("delete"); return Promise.resolve("delete-ok"); };
-DocumentReference.prototype.get = function () { return Promise.resolve({ exists: false }); };
+DocumentReference.prototype.get = function () {
+  const d = DOCS[this.path];
+  return Promise.resolve({ exists: d !== undefined, data: () => d });
+};
 const WHERE = [];
-function CollectionReference() {}
+// 수업관리 앱 규칙 흉내. teachers 문서에는 PIN 이 있어서 그쪽 규칙이 남의 것을 막는다 —
+// **문서 이름**을 보는 조건이라 목록 쿼리로는 증명이 안 되고, 선생님이 컬렉션을 통째로 부르면
+// Firestore 가 목록을 통째로 거절한다. 흉내도 똑같이 거절해야 «로그인이 안 된다» 를 여기서 잡는다.
+const CLASS_TEACHERS = [
+  { id: "T1", name: "한민수", role: "owner", pin: "1234", classIds: ["c1"], time: 1 },
+  { id: "T2", name: "이현우", role: "teacher", pin: "9999", classIds: ["c2"], time: 2 },
+];
+const denied = () => Promise.reject(Object.assign(new Error("Missing or insufficient permissions."), { code: "permission-denied" }));
+function CollectionReference(name, team) { this.name = name || "?"; this.team = !!team; }
+CollectionReference.prototype.list = function () {
+  if (!this.team && this.name === "teachers" && vm.runInContext("S.ro", ctx)) return denied();
+  if (!this.team && this.name === "teachers")
+    return Promise.resolve({ forEach(cb) { CLASS_TEACHERS.forEach((t) => cb({ id: t.id, data: () => Object.assign({}, t, { id: undefined }) })); } });
+  return Promise.resolve({ forEach() {} });
+};
 // ⚠ 흉내가 진짜보다 너그러우면 안 된다 — 조건을 안 적어도 되는 것처럼 보이면
 //   규칙이 목록을 통째로 거절하는 것을 여기서 못 잡는다.
 CollectionReference.prototype.where = function (f, op, v) {
   WHERE.push(f + " " + op + " " + v);
   return { get: () => Promise.resolve({ forEach() {} }) };
 };
+CollectionReference.prototype.orderBy = function () { return this; };
 CollectionReference.prototype.add = function () { CALLS.push("add"); return Promise.resolve("add-ok"); };
-CollectionReference.prototype.doc = function () { return new DocumentReference(); };
-CollectionReference.prototype.get = function () { return Promise.resolve({ forEach() {} }); };
+CollectionReference.prototype.doc = function (id) { return new DocumentReference((this.team ? "t:" : "c:") + this.name + "/" + id); };
+CollectionReference.prototype.get = function () { return this.list(); };
 function WriteBatch() {}
 WriteBatch.prototype.commit = function () { CALLS.push("commit"); return Promise.resolve("commit-ok"); };
-const firestoreFn = function () { return { collection: () => new CollectionReference(), batch: () => new WriteBatch() }; };
+const firestoreFn = function (app) {
+  const team = !!app;
+  return { collection: (n) => new CollectionReference(n, team), batch: () => new WriteBatch() };
+};
 firestoreFn.DocumentReference = DocumentReference;
 firestoreFn.CollectionReference = CollectionReference;
 firestoreFn.WriteBatch = WriteBatch;
@@ -49,6 +72,7 @@ rootEl.querySelectorAll = (sel) => ELS.filter((e) => {
   return [];
 });
 let observed = false;
+let FETCH = () => Promise.reject(new Error("no net"));   // 시험마다 갈아 끼운다
 const stub = {
   firebase: { initializeApp: () => ({}), firestore: firestoreFn, auth: () => ({ onAuthStateChanged() {}, currentUser: null, signOut: () => Promise.resolve() }) },
   document: { querySelector: (s) => (s === "#root" ? rootEl : null), querySelectorAll: () => [], addEventListener() {} },
@@ -61,12 +85,14 @@ const stub = {
     observed = true;
     return { observe(t) { if (!t) throw new TypeError("observe: 대상이 Node 가 아니다 (root 가 아직 없다)"); } };
   },
-  fetch: () => Promise.reject(new Error("no net")), alert() {}, confirm: () => true, prompt: () => null,
+  fetch: (u, o) => FETCH(u, o), alert() {}, confirm: () => true, prompt: () => null,
   console, setTimeout, clearTimeout, Date, Math, JSON, Object, Array, String, Number, Promise, RegExp, isNaN, parseInt,
 };
 const ctx = vm.createContext(stub);
 vm.runInContext(src, ctx);
 const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
+// 값은 JSON 으로 건너온다 — vm 안의 객체를 그대로 만지면 프로토타입이 달라 헷갈린다.
+const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")", ctx) || "null");
 
 (async () => {
   ok("화면 감시가 걸린다 (MutationObserver)", observed);
@@ -135,6 +161,55 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   ok("선생님은 open==true 만 받아온다", WHERE.join("") === "open == true", WHERE.join(" | "));
   run("S.ro = false");
 
+  // ---- 선생님 명단은 어디서 오나 ----
+  //
+  // 2026-09-07: 선생님이 로그인하면 «Missing or insufficient permissions» 만 뜨고 못 들어왔다.
+  // loadCore 의 맨 앞줄이 앱 DB 의 teachers 컬렉션을 통째로 부르는데, 그쪽 문서에는 PIN 이 있어
+  // 규칙이 남의 것을 막는다. **팀 DB 규칙만 검증했기 때문에** 이걸 못 잡았다.
+  // 여기서는 흉내가 그 규칙대로 거절한다 — 다시 부르면 이 시험이 먼저 터진다.
+  run("S.ro = true");
+  ok("흉내도 규칙처럼 거절한다 (선생님이 앱 teachers 목록을 부르면)",
+    (await tryW("return db.collection('teachers').orderBy('time').get()")) === "Missing or insufficient permissions.");
+
+  // 이것이 곧 «로그인이 되는가» 다 — boot 이 loadCore 를 부르고, 여기서 하나라도 거절당하면
+  // 선생님은 로그인 화면에서 영어 한 줄만 본다. 사본이 아직 없어도 끝까지 가야 한다.
+  run("S.ro = true; S.readErr = []");
+  const bootErr = await tryW("return loadCore()");
+  ok("선생님으로 loadCore 가 끝까지 간다", bootErr === "ok", bootErr);
+  ok("못 읽은 것이 없다", val("S.readErr.length") === 0, JSON.stringify(val("S.readErr")));
+
+  run("S.ro = false; S.teachers = []");
+  SETS.length = 0;
+  await run("return loadTeachers()");
+  ok("팀장은 앱 DB 에서 읽는다", val("S.teachers.length") === 2, String(val("S.teachers.length")));
+  const mirror = SETS.filter((s) => s.path === "t:dash/teachers")[0];
+  ok("팀장이 사본을 팀 DB 에 남긴다", !!mirror, SETS.map((s) => s.path).join(",") || "안 썼다");
+  // ⚠ 사본에 PIN 이 딸려 가면 선생님이 남의 PIN 을 통째로 읽는다 — 막으려던 것을 도로 여는 것이다.
+  ok("사본에 PIN 이 안 딸려 간다", !!mirror && JSON.stringify(mirror.data).indexOf("9999") < 0,
+    mirror ? JSON.stringify(mirror.data).slice(0, 120) : "");
+  ok("사본에 담당 반은 남는다", !!mirror && JSON.stringify(mirror.data).indexOf("c2") >= 0);
+  SETS.length = 0;
+  await run("return loadTeachers()");
+  ok("바뀐 게 없으면 다시 안 쓴다", !SETS.length, SETS.map((s) => s.path).join(","));
+
+  run("S.ro = true; S.teachers = []");
+  await run("return loadTeachers()");
+  ok("선생님은 사본을 읽는다 (앱 DB 를 안 부른다)", val("S.teachers.length") === 2, String(val("S.teachers.length")));
+  ok("선생님도 담당 반을 안다", val("S.teachers[1].classIds[0]") === "c2");
+
+  // 사본이 아직 없을 때 — 못 들어오는 것보다 이름만이라도 낫다
+  delete DOCS["t:dash/teachers"];
+  FETCH = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ teachers: [
+    { tid: "T1", name: "한민수", role: "owner", status: "active" },
+    { tid: "T9", name: "아직 승인 전", role: "teacher", status: "pending" }] }) });
+  run("S.teachers = []");
+  await run("return loadTeachers()");
+  ok("사본이 없으면 로그인 화면 목록으로 버틴다", val("S.teachers.length") === 1, String(val("S.teachers.length")));
+  ok("승인 전 선생님은 빼고", val("S.teachers[0].name") === "한민수");
+
+  FETCH = () => Promise.reject(new Error("no net"));
+  run("S.ro = false");
+
   // ---- 규칙 파일 ----
   // 메뉴를 감추는 것은 «헷갈리지 말라»는 것이고, 진짜 문턱은 규칙이다.
   // 감추기만 하면 선생님이 브라우저 콘솔에서 minutes 를 그냥 읽는다.
@@ -170,4 +245,9 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
   process.exit(bad ? 1 : 0);
-})();
+})().catch((e) => {
+  // 도중에 터지면 그때까지 센 것이 안 보인다 — 무엇까지 통과했는지가 곧 어디서 터졌는지다.
+  console.log(T.join("\n"));
+  console.log("\n시험이 도중에 터졌다: " + e.message);
+  process.exit(1);
+});

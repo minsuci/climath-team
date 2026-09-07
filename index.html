@@ -461,7 +461,7 @@ var S = {
   claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {},   // ro = 읽기만 하는 계정(선생님)
   exams: {},      // cid -> { sid -> doc }
   scores: {},     // cid -> [ {date, ...score} ]
-  tasks: [], config: { sources: {} }, teamOk: true, teamErr: "",
+  tasks: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
   marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
@@ -567,6 +567,9 @@ function loginHint(e) {
   if (/invalid-custom-token|custom token format/.test(c + m))
     return "팀체크 서버가 만든 토큰을 파이어베이스가 거절했습니다.\n" +
       "Vercel 환경변수 TEAM_SERVICE_ACCOUNT 가 climath-team 프로젝트의 키가 맞는지 확인해 주세요.";
+  if (/insufficient permissions|permission-denied/i.test(c + m))
+    return "로그인은 됐는데 자료를 읽는 데서 막혔습니다.\n" +
+      "규칙이 막은 것이라 다시 눌러도 같습니다. 이 화면을 한민수 팀장에게 알려주세요.\n(" + m + ")";
   if (/network|Failed to fetch/i.test(m)) return "네트워크에 닿지 않았습니다. 잠시 뒤 다시 해주세요.";
   return m;
 }
@@ -666,13 +669,61 @@ function navBadge(id, n, red) {
 function renderAll() { renderBanner(); renderCal(); renderTasks(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
 // ---------- 불러오기 ----------
+// ---- 선생님 명단은 계정에 따라 오는 길이 다르다 ----
+//
+// ⚠ 수업관리 앱의 `teachers` 문서에는 **PIN 이 들어 있다.** 그쪽 규칙은 그래서 남의 문서를 막는다 —
+//   `allow read: if isOwner() || tid == 자기 tid`. 문서 내용이 아니라 **문서 이름**을 보는 조건이라
+//   목록 쿼리로는 증명이 안 되고, 선생님이 컬렉션을 통째로 부르면 Firestore 가 통째로 거절한다.
+//   2026-09-07: 그 줄이 loadCore 의 맨 앞이라 boot 이 여기서 터졌고, 선생님은 로그인 화면에
+//   «Missing or insufficient permissions» 만 보고 못 들어왔다. **규칙이 맞다. 부르는 쪽을 고쳤다.**
+//
+// 팀장은 원래대로 앱 DB 에서 읽고, **PIN 을 뺀 사본**을 팀 DB(dash/teachers)에 남긴다.
+// 선생님은 그 사본을 읽는다(dash 는 규칙이 이미 팀 전체에 열려 있다 — 규칙을 고칠 일이 없다).
+var TEACHER_KEEP = ["tid", "name", "role", "status", "time", "classIds"];   // pin 은 절대 담지 않는다
+function teacherCopy(t) {
+  var o = {}; TEACHER_KEEP.forEach(function (k) { if (t[k] !== undefined) o[k] = t[k]; }); return o;
+}
+async function loadTeachers() {
+  if (S.ro) {
+    var d = await dashDoc("teachers").get().catch(function () { return { exists: false }; });
+    var list = (d.exists && d.data().items) || [];
+    // 사본이 아직 없으면(팀장이 새 앱을 한 번도 안 열었으면) 로그인 화면이 쓰는 목록으로 버틴다.
+    // 담당 반(classIds)이 없어 «담당» 칸이 비지만, 못 들어오는 것보다 낫다.
+    if (!list.length) {
+      var r = await authApi({ action: "teachers" }).catch(function () { return {}; });
+      list = (r.teachers || []).filter(function (t) { return t.status !== "pending"; });
+    }
+    S.teachers = list;
+    return;
+  }
+  var s = await db.collection("teachers").orderBy("time").get();
+  S.teachers = []; s.forEach(function (d) { S.teachers.push(Object.assign({ tid: d.id }, d.data())); });
+  await mirrorTeachers();
+}
+// 팀장이 열 때마다 사본을 맞춰 둔다. 바뀐 게 없으면 안 쓴다 — 열 때마다 문서를 건드릴 이유가 없다.
+// 실패해도 조용히 넘어간다. 사본을 못 남기는 것이 팀장의 로그인을 막을 일은 아니다.
+async function mirrorTeachers() {
+  try {
+    var copy = S.teachers.map(teacherCopy);
+    var d = await dashDoc("teachers").get();
+    var old = (d.exists && d.data().items) || [];
+    if (JSON.stringify(old) === JSON.stringify(copy)) return;
+    await dashDoc("teachers").set({ items: copy, updated: Date.now() });
+  } catch (e) {}
+}
+// 앱 DB 읽기 하나가 막히면 로그인이 통째로 실패하고 영어 한 줄만 남는다 — 어디서 막혔는지 알 수가 없다.
+// 이름을 달아 두고 배너로 알린다. 그 화면만 비고 나머지는 돈다.
+function coreRead(name, p) {
+  return p.catch(function (e) { S.readErr.push(name + " (" + (e.code || e.message) + ")"); });
+}
 async function loadCore() {
+  S.readErr = [];
   var jobs = [
-    db.collection("teachers").orderBy("time").get().then(function (s) { S.teachers = []; s.forEach(function (d) { S.teachers.push(Object.assign({ tid: d.id }, d.data())); }); }),
-    db.collection("classes").get().then(function (s) { S.classes = []; s.forEach(function (d) { S.classes.push(Object.assign({ id: d.id }, d.data())); }); S.classes.sort(function (a, b) { return (a.order || 0) - (b.order || 0); }); }),
-    db.collection("students").get().then(function (s) { S.students = []; s.forEach(function (d) { S.students.push(Object.assign({ pid: d.id }, d.data())); }); }),
-    db.collection("appConfig").doc("examTerm").get().then(function (d) { S.term = d.exists ? (d.data().term || "") : ""; }),
-    db.collection("appConfig").doc("schoolTerms").get().then(function (d) { S.schoolTerms = d.exists ? d.data() : {}; }),
+    coreRead("선생님 명단", loadTeachers()),
+    coreRead("반 목록", db.collection("classes").get().then(function (s) { S.classes = []; s.forEach(function (d) { S.classes.push(Object.assign({ id: d.id }, d.data())); }); S.classes.sort(function (a, b) { return (a.order || 0) - (b.order || 0); }); })),
+    coreRead("학생 명단", db.collection("students").get().then(function (s) { S.students = []; s.forEach(function (d) { S.students.push(Object.assign({ pid: d.id }, d.data())); }); })),
+    coreRead("내신 회차", db.collection("appConfig").doc("examTerm").get().then(function (d) { S.term = d.exists ? (d.data().term || "") : ""; })),
+    coreRead("학교 일정", db.collection("appConfig").doc("schoolTerms").get().then(function (d) { S.schoolTerms = d.exists ? d.data() : {}; })),
     dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
     // 팀장 전용 할 일. 선생님은 규칙이 막아 여기서 조용히 빈 배열이 된다 —
@@ -703,8 +754,11 @@ function renderBanner() {
   var ro = S.ro ? '<div class="banner" style="background:#f5f7fb;border-color:var(--line)"><b>읽기만 하는 계정</b> — 보이는 것은 관리자와 같고, 고치는 단추는 감춰져 있다. ' +
     '고칠 것이 있으면 한민수 팀장에게. 학생 명단·참여표·학교 일정은 수업관리 앱에서 여느 때처럼 고친다.<br>' +
     '<b>회의록</b>은 팀회의만 올라온다. 간부회의는 팀장만 본다.</div>' : "";
-  if (S.teamOk) { el.innerHTML = ro; return; }
-  el.innerHTML = '<div class="banner"><b>팀체크 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
+  var rd = (S.readErr && S.readErr.length)
+    ? '<div class="banner"><b>수업관리 앱 DB에서 못 읽은 것</b> — ' + esc(S.readErr.join(", ")) + '.<br>' +
+      '그 화면만 비어 있고 나머지는 그대로 돈다. climath-class 쪽 <code>firestore.rules</code> 를 본다.</div>' : "";
+  if (S.teamOk) { el.innerHTML = rd + ro; return; }
+  el.innerHTML = rd + '<div class="banner"><b>팀체크 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
     'Firebase 콘솔의 climath-team 프로젝트에서 Firestore가 켜져 있고 규칙이 게시됐는지 본다. 규칙은 저장소 <code>firestore.rules</code>. ' +
     '나머지 상자(앱 데이터)는 그대로 돈다.</div>' + ro;
 }
