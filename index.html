@@ -1567,11 +1567,20 @@ async function saveOwnTasks(tid) {
 // 이 줄이 어디에 저장되는지는 줄이 안다. 공용 목록이면 팀장 몫, 자기 것이면 자기 문서.
 async function saveTaskOf(t) { return t.own ? saveOwnTasks(t.own) : saveTasks(); }
 
+// ---- 초안 (2026-09-07) ----
+//
+// 회의록·볼트에서 **끌어온 것은 바로 선생님에게 가지 않는다.** `draft: true` 로 들어와
+// 팀장 목록에만 쌓이고, 팀장이 «보내기» 를 눌러야 공개분으로 내려간다.
+//
+// ⚠ 회의록의 할 일 표에는 지나가다 한 말도 섞인다. 넣는 순간 공개되면 목록이 금방 쓰레기가 되고,
+//   그러면 아무도 안 본다. 거르는 자리가 **넣기와 공개 사이**에 있어야 한다.
+// ⚠ 초안도 «담당에 강사가 있으면 공개» 규칙을 타면 안 된다 — 그래서 taskShared 보다 먼저 본다.
+function taskDraft(t) { return t.draft === true; }
 async function saveTasks() {
   if (!S.teamOk) return;
   var open = [], lead = [];
   // ⚠ 각자 적은 것은 여기 안 들어간다. 넣으면 자기 문서와 공용 목록에 같은 것이 둘 생긴다.
-  S.tasks.forEach(function (t) { if (t.own) return; (taskShared(t) ? open : lead).push(t); });
+  S.tasks.forEach(function (t) { if (t.own) return; ((taskShared(t) && !taskDraft(t)) ? open : lead).push(t); });
   await dashDoc("tasks").set({ items: open, updated: Date.now() });
   await dashDoc("tasksLead").set({ items: lead, updated: Date.now() });
   S.tasksLead = lead;
@@ -1614,7 +1623,7 @@ function renderTasks() {
     chips.map(function (w) { return '<button class="mini ' + (S.filterWho === w ? "on" : "") + '" data-who="' + esc(w) + '">' + esc(w) + '</button>'; }).join("") + '</div>' +
     (S.ro ? '<div class="muted" style="margin:4px 0 8px">팀장이 시킨 일은 <b>내 완료</b> 를 눌러 표시한다 — 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.<br>' +
       '<b>내가 적은 할 일</b>은 아래에서 직접 넣고, 상태도 지우기도 내가 한다. 남에게 시키는 것은 팀장만 한다.</div>' : "") +
-    fromMinutesBox() +
+    fromMinutesBox() + draftBox() +
     '<div id="tk-list">' + (list.length ? list.map(taskRow).join("") : '<div class="empty">' + (S.teamOk ? "할 일이 없다. 아래에 적거나 볼트에서 붙여넣는다." : "규칙을 게시하면 여기 저장된다.") + '</div>') + '</div>' +
     // 선생님 칸에는 «담당» 이 없다 — 담당은 자기 자신이다. data-keep 이 없으면 감추기가 지운다.
     (S.ro
@@ -1629,6 +1638,7 @@ function renderTasks() {
     '<div class="row"><button class="btn o" id="tk-imp-go">가져오기</button><span class="muted" id="tk-imp-msg">같은 글자의 할 일은 건너뛴다</span></div></div>';
   $$("[data-who]", el).forEach(function (b) { b.onclick = function () { S.filterWho = b.getAttribute("data-who"); renderTasks(); }; });
   wireFromMinutes(el);
+  wireDrafts(el);
   $("#tk-done").onclick = function () { S.showDone = !S.showDone; renderTasks(); };
   $("#tk-import").onclick = function () { var d = $("#tk-imp"); d.hidden = !d.hidden; };
   $("#tk-add").onclick = async function () {
@@ -1690,12 +1700,15 @@ function taskRow(t) {
   var mine = canEditTask(t);
   return '<div class="task" data-id="' + esc(t.id) + '"><input type="checkbox"' + (mine ? " data-keep" : "") + (t.status === "done" ? " checked" : "") + '>' +
     '<div class="t' + (t.status === "done" ? " done" : "") + '">' +
-    (S.ro || taskShared(t) ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') + esc(t.text) +
-    '<div class="m">' + (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
+    (S.ro || taskShared(t) || taskDraft(t) ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') + esc(t.text) +
+    '<div class="m">' +
+    (!S.ro && taskDraft(t) ? '<span class="pill yellow" title="아직 선생님에게 안 갔다. «보내기» 를 눌러야 간다">✎ 초안</span>' : "") +
+    (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
     (t.repeat ? '<span class="pill blue">매주 ' + t.repeat.dow.map(function (i) { return DOW_KO[i]; }).join("·") + '</span>' : "") +
     (t.who ? '<span class="pill">' + esc(t.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
     '<span class="pill ' + stCls + ' st"' + (mine ? ' title="눌러서 바꾸기"' : ' title="상태는 팀장이 바꾼다"') + '>' + STATUS[t.status || "open"] + '</span>' + markPill(t) + dueHtml +
     (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div></div>' + myMarkBtn(t) +
+    (!S.ro && taskDraft(t) ? '<button class="mini" data-pub="' + esc(t.id) + '" title="선생님에게 보낸다">보내기</button>' : "") +
     (mine ? '<button class="x" data-keep title="지우기">×</button>' : "") + '</div>';
 }
 // ---------- 회의록에서 할 일 끌어오기 (2026-09-07) ----------
@@ -1753,12 +1766,51 @@ function newFromMinutes() {
   });
   return out;
 }
+// ⚠ 여기서 들어오는 것은 **전부 초안**이다. 선생님에게는 팀장이 «보내기» 를 눌러야 간다.
 async function addFromMinutes(rows) {
   rows.forEach(function (r) {
     S.tasks.push({ id: newId(), text: r.text, who: r.who, due: r.due, dueText: r.dueText,
-      src: r.src, from: r.from, status: "open", created: TODAY });
+      src: r.src, from: r.from, status: "open", created: TODAY, draft: true });
   });
   await saveTasks();
+}
+// 초안을 공개분으로 내린다. 담당에 강사가 없으면 내려도 팀장 목록에 그대로 남는다(그게 맞다).
+async function publishDrafts(ids) {
+  var set = {}; ids.forEach(function (id) { set[id] = 1; });
+  S.tasks.forEach(function (t) { if (set[t.id]) delete t.draft; });
+  await saveTasks();
+}
+function draftList() { return S.ro ? [] : S.tasks.filter(function (t) { return !t.own && taskDraft(t); }); }
+// 화면 — «몇 건이 아직 안 갔는지» 를 늘 위에 띄운다. 안 띄우면 초안인 채로 잊힌다.
+function draftBox() {
+  if (S.ro) return "";
+  var d = draftList();
+  if (!d.length) return "";
+  var toTeam = d.filter(taskShared);
+  return '<div class="banner" style="background:#fff8e1;border-color:#f0d68a">' +
+    '<b>초안 ' + d.length + '건</b> — 아직 선생님에게 안 갔다.' +
+    (toTeam.length ? ' 보내면 <b>' + toTeam.length + '건</b>이 선생님 화면에 뜬다.'
+                   : ' 담당이 다 팀장·팀 밖이라 보내도 선생님에게는 안 간다.') +
+    '<span class="sp"></span><button class="mini" id="dr-all">전부 보내기</button></div>';
+}
+function wireDrafts(el) {
+  if (S.ro) return;
+  var all = $("#dr-all", el);
+  if (all) all.onclick = async function () {
+    var d = draftList(), n = d.filter(taskShared).length;
+    if (!confirm("초안 " + d.length + "건을 보낼까?\n선생님 화면에 뜨는 것은 " + n + "건이다.")) return;
+    try { await publishDrafts(d.map(function (t) { return t.id; })); }
+    catch (e) { alert("보내지 못했다: " + e.message); }
+    keepScrollIn("#sec-tasks", renderTasks);
+  };
+  $$("[data-pub]", el).forEach(function (b) {
+    b.onclick = async function () {
+      b.disabled = true;
+      try { await publishDrafts([b.getAttribute("data-pub")]); }
+      catch (e) { b.disabled = false; alert("보내지 못했다: " + e.message); }
+      keepScrollIn("#sec-tasks", renderTasks);
+    };
+  });
 }
 // «안 넣기»는 기억해 둔다. 안 그러면 누를 때마다 도로 올라와서 결국 안내를 무시하게 된다.
 async function skipFromMinutes(keys) {
@@ -1775,9 +1827,10 @@ function fromMinutesBox() {
   var rows = newFromMinutes();
   if (!rows.length) return "";
   return '<div class="banner" style="background:#eef4ff;border-color:#c7d8f5">' +
-    '<b>회의록에서 온 할 일 ' + rows.length + '건</b> 이 아직 목록에 없다.' +
+    '<b>회의록에서 온 할 일 ' + rows.length + '건</b> 이 아직 목록에 없다. ' +
+    '<span class="muted">넣으면 <b>초안</b>으로 들어온다 — 골라서 «보내기» 를 눌러야 선생님에게 간다.</span>' +
     '<span class="sp"></span><button class="mini" id="fm-see">' + (S.fmOpen ? "접기" : "보기") + '</button>' +
-    '<button class="mini" id="fm-all">전부 넣기</button>' +
+    '<button class="mini" id="fm-all">전부 초안으로</button>' +
     (S.fmOpen ? '<div class="fmlist">' + rows.map(function (r, i) {
       return '<div class="fmrow"><div class="t">' + esc(r.text) +
         '<div class="m">' + (r.who ? '<span class="pill">' + esc(r.who) + '</span>' : '<span class="pill red">담당 없음</span>') +
@@ -1794,7 +1847,7 @@ function wireFromMinutes(el) {
   if (see) see.onclick = function () { S.fmOpen = !S.fmOpen; keepScrollIn("#sec-tasks", renderTasks); };
   var all = $("#fm-all", el);
   if (all) all.onclick = async function () {
-    if (!confirm(rows.length + "건을 전부 넣을까? 넣은 뒤에도 줄마다 고치거나 지울 수 있다.")) return;
+    if (!confirm(rows.length + "건을 전부 초안으로 넣을까?\n초안은 선생님에게 안 간다 — 골라서 «보내기» 를 누르면 간다.")) return;
     try { await addFromMinutes(rows); } catch (e) { alert("넣지 못했다: " + e.message); }
     keepScrollIn("#sec-tasks", renderTasks);
   };
@@ -1826,8 +1879,10 @@ function importMarkdown(md) {
     var text = cells[0]; if (!text || have[text]) return;
     var st = cells[4] || "";
     var status = /완료|^\d{4}-/.test(st) ? "done" : /진행/.test(st) ? "doing" : /보류/.test(st) ? "hold" : "open";
+    // 붙여넣기도 한 번에 여러 줄이 들어온다 — 회의록에서 끌어온 것과 같이 **초안**으로 받는다.
     S.tasks.push({ id: newId(), text: text, who: cells[1] || "", due: parseDueText(cells[2] || ""), dueText: cells[2] || "",
-      src: cells[3] || "", status: status, created: TODAY, done: status === "done" ? (/^\d{4}-/.test(st) ? st.slice(0, 10) : TODAY) : "" });
+      src: cells[3] || "", status: status, created: TODAY, draft: true,
+      done: status === "done" ? (/^\d{4}-/.test(st) ? st.slice(0, 10) : TODAY) : "" });
     have[text] = 1; n++;
   });
   return n;
