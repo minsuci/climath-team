@@ -99,7 +99,9 @@ Object.values(RENDER).forEach((f) => {
 
 vm.runInContext(`
   S.teachers=[{tid:"T1",name:"한민수",classIds:["c1"]}];
-  S.classes=[{id:"c1",name:"고1S",classDays:[1,5],roster:[{id:"r1",pid:"p1",name:"김서진",grade:"고1"}]}];
+  S.classes=[{id:"c1",name:"고1S",classDays:[1,5],roster:[{id:"r1",pid:"p1",name:"김서진",grade:"고1"}]},
+             {id:"c2",name:"고1T",classDays:[2,4],roster:[{id:"r2",name:"박준서",grade:"고1",school:"경기고"}]}];   // 반이 둘이어야 참여표의 반 칩·못 읽은 반 배너가 그려진다
+  S.examsDenied={ c2:true };
   S.students=[{pid:"p1",name:"김서진",grade:"고1",school:"중대부고",homeroom:"T1"}];
   S.byPid={p1:S.students[0]};
   S.term="2026 2학기 중간";

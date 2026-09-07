@@ -464,6 +464,8 @@ var gradeRank = function (g) { var i = GRADES.indexOf(g); return i < 0 ? 99 : i;
 var S = {
   claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {},   // ro = 읽기만 하는 계정(선생님)
   exams: {},      // cid -> { sid -> doc }
+  examsDenied: {},  // cid -> true. 앱 규칙이 그 반 참여표 읽기를 막은 것 — «안 냈다»와 다르다
+  exCls: "",      // 참여표 반 거르기. 비면 그 학년 전체
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
   marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
@@ -2907,8 +2909,12 @@ async function loadExams() {
   var cs = activeClasses();
   await Promise.all(cs.map(function (c) {
     return db.collection("classes").doc(c.id).collection("exams").where("term", "==", S.term).get().then(function (s) {
-      var m = {}; s.forEach(function (d) { var v = d.data(); m[v.sid] = v; }); S.exams[c.id] = m;
-    }).catch(function () { S.exams[c.id] = {}; });
+      var m = {}; s.forEach(function (d) { var v = d.data(); m[v.sid] = v; }); S.exams[c.id] = m; delete S.examsDenied[c.id];
+    }).catch(function (e) {
+      // 못 읽은 반을 «아무도 안 냈다»로 그리면 안 된다. 선생님 계정은 앱 규칙이 담당 반만 열어 주던 때가 있었다(2026-09-07).
+      S.exams[c.id] = {};
+      if (e && /permission|insufficient/i.test(e.code + " " + e.message)) S.examsDenied[c.id] = true;
+    });
   }));
 }
 async function saveExamTerm(term) {
@@ -2953,17 +2959,19 @@ function schedFields(x, sc, keep) {
   };
 }
 // 안 낸 사람 중 학교 일정이 있는 사람 / 이미 냈는데 일정과 다른 사람
+// 안 낸 사람인데 못 채우는 이유도 센다(why) — 상자가 조용히 사라지면 "단추가 없다"로만 보인다(2026-09-07).
 function fillTargets(rows) {
-  var fillable = [], off = [];
+  var fillable = [], off = [], why = { noSchool: [], noTerm: [], noStart: [] };
   rows.forEach(function (x) {
-    if (!x.school || !x.grade) return;
+    if (!x.school || !x.grade) { if (!x.v) why.noSchool.push(x); return; }
     var sc = schedFor(x.school, x.grade);
-    if (!sc || !sc.start) return;
+    if (!sc) { if (!x.v) why.noTerm.push(x); return; }
+    if (!sc.start) { if (!x.v) why.noStart.push(x); return; }
     if (!x.v) { fillable.push({ x: x, s: sc }); return; }
     if (examSig(x.v) !== examSig(sc) || x.v.school !== sc.school || x.v.grade !== sc.grade)
       off.push({ x: x, s: sc });
   });
-  return { fillable: fillable, off: off };
+  return { fillable: fillable, off: off, why: why };
 }
 async function runFill(list, keepOld, btn, label) {
   if (!list.length) return;
@@ -3068,8 +3076,15 @@ function renderExams() {
   if (!S.exGrade || grades[S.exGrade] === undefined) {
     S.exGrade = GRADES.filter(function (g) { return grades[g] > 0; })[0] || "고1";
   }
-  var rows = all.filter(function (x) { return x.grade === S.exGrade; });
+  var gradeRows = all.filter(function (x) { return x.grade === S.exGrade; });
+  // 반 거르기 — 그 학년에 있는 반만 칩으로. 담임이 자기 반만 모아 보거나, 팀장이 반별로 훑을 때 (2026-09-07)
+  var clsIn = [];
+  gradeRows.forEach(function (x) { if (clsIn.indexOf(x.cls) < 0) clsIn.push(x.cls); });
+  if (S.exCls && !clsIn.some(function (c) { return c.id === S.exCls; })) S.exCls = "";
+  var rows = S.exCls ? gradeRows.filter(function (x) { return x.cls.id === S.exCls; }) : gradeRows;
   navBadge("exams", all.filter(function (x) { return !x.v; }).length, true);
+  // 앱 규칙이 막아 못 읽은 반 — «안 냈다»가 아니라 «못 봤다»다
+  var denied = clsIn.filter(function (c) { return S.examsDenied[c.id]; });
 
   // 띠 = 시험 있는 달 1일 ~ 가장 늦은 복귀일. 회차 달 = 등원 회차를 세는 달.
   // 정렬과 상관없이 같은 값이라 먼저 구한다 (등원 회차 정렬이 이걸 쓴다).
@@ -3115,6 +3130,16 @@ function renderExams() {
         (on ? (S.exSort.dir === "asc" ? " ▲" : " ▼") : "") + '</button>';
     }).join("") +
     (S.exSort ? '<button class="mini" data-esort="">원래 순서</button>' : "") + '</div>' +
+    (clsIn.length > 1 ? '<div class="chips"><span class="muted" style="font-size:12px">반</span>' +
+      '<button class="mini ' + (S.exCls ? "" : "on") + '" data-ecls="">전체 ' + gradeRows.length + '</button>' +
+      clsIn.map(function (c) {
+        var n = gradeRows.filter(function (x) { return x.cls.id === c.id; }).length;
+        return '<button class="mini ' + (S.exCls === c.id ? "on" : "") + '" data-ecls="' + esc(c.id) + '">' + esc(c.name) + ' ' + n +
+          (S.examsDenied[c.id] ? ' <span class="pill red">못 봄</span>' : "") + '</button>';
+      }).join("") + '</div>' : "") +
+    (denied.length ? '<div class="banner" style="margin:0 0 10px"><b>' + denied.length + '개 반의 참여표를 읽지 못했다</b> — ' +
+      esc(denied.map(function (c) { return c.name; }).join(", ")) + '. 수업관리 앱 규칙이 담당 반만 열어 주고 있다. ' +
+      '이 반 학생들은 «아직 안 냈다»가 아니라 <b>못 본 것</b>이다. 앱 저장소 <code>firestore.rules</code> 를 climath-class 콘솔에 게시하면 풀린다 (2026-09-07 고침).</div>' : "") +
     '<div class="stat"><div class="' + (miss.length ? "bad" : "good") + '"><b>' + done.length + '/' + rows.length + '</b><span>낸 사람</span></div>' +
     '<div><b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "—") + '</b><span>회차 달</span></div>' +
     (clash.length ? '<div class="bad"><b>' + clash.length + '</b><span>일정 갈림</span></div>' : "") + '</div>' +
@@ -3134,7 +3159,8 @@ function renderExams() {
       return '<span class="pill" style="background:' + m.bg + ';color:' + m.fg + '">' + m.t + '</span> ' + esc(m.label); }).join(" · ") +
     '</p>';
 
-  $$("[data-eg]", el).forEach(function (b) { b.onclick = function () { S.exGrade = b.getAttribute("data-eg"); S.exEntry = null; renderExams(); }; });
+  $$("[data-eg]", el).forEach(function (b) { b.onclick = function () { S.exGrade = b.getAttribute("data-eg"); S.exCls = ""; S.exEntry = null; renderExams(); }; });
+  $$("[data-ecls]", el).forEach(function (b) { b.onclick = function () { S.exCls = b.getAttribute("data-ecls"); S.exEntry = null; keepScrollIn("#sec-exams", renderExams); }; });
   // 오름 → 내림 → 원래 순서. 같은 칩·같은 열 머리 어느 쪽을 눌러도 같이 돈다.
   $$("[data-esort]", el).forEach(function (b) {
     b.onclick = function () {
@@ -3177,6 +3203,9 @@ function renderExams() {
       (t.off.length > 15 ? "\n  … 외 " + (t.off.length - 15) + "명" : ""))) return;
     runFill(t.off, true, this, "맞췄다");
   };
+  // 채울 사람이 없을 때의 이유 상자 — 고칠 자리로 보낸다
+  if ($("#ex-goterms")) $("#ex-goterms").onclick = function () { showPage("terms"); };
+  if ($("#ex-gostudents")) $("#ex-gostudents").onclick = function () { S.stView = "edit"; showPage("students"); renderStudents(); };
   $("#ex-edit-term").onclick = async function () {
     var t = prompt("회차 이름 (학원 전체로 하나다)", S.term);
     if (t === null || !t.trim() || t.trim() === S.term) return;
@@ -3203,11 +3232,28 @@ function stripHtml(strip, done) {
   return '<div class="gridwrap" style="max-height:none"><table class="cgrid strip"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
 }
 
-// 학교 일정으로 채우는 상자. 채울 게 없으면 안 보인다.
+// 학교 일정으로 채우는 상자. 채울 게 있으면 단추, **안 낸 사람은 있는데 채울 수 없으면 그 이유**.
+// 예전엔 이때 상자를 통째로 숨겼다 — 그러면 "자동 채우기 단추가 없다"로만 보이고 왜 없는지 모른다(2026-09-07).
 function fillBoxHtml(rows) {
   var t = fillTargets(rows);
   window.__FILL = t;
-  if (!t.fillable.length && !t.off.length) return "";
+  if (!t.fillable.length && !t.off.length) {
+    var w = t.why, n = w.noSchool.length + w.noTerm.length + w.noStart.length;
+    if (!n) return "";
+    var names = function (arr) { return arr.slice(0, 6).map(function (x) { return x.st.name; }).join(", ") + (arr.length > 6 ? " 외 " + (arr.length - 6) : ""); };
+    var parts = [];
+    if (w.noTerm.length) parts.push('<b>' + w.noTerm.length + '명</b>은 «' + esc(S.term) + '» 회차의 학교 일정이 없다 <span class="muted">(' + esc(names(w.noTerm)) + ')</span>');
+    if (w.noStart.length) parts.push('<b>' + w.noStart.length + '명</b>은 학교 일정은 있는데 내신 시작일이 비어 있다 <span class="muted">(' + esc(names(w.noStart)) + ')</span>');
+    if (w.noSchool.length) parts.push('<b>' + w.noSchool.length + '명</b>은 학교나 학년이 없다 <span class="muted">(' + esc(names(w.noSchool)) + ')</span>');
+    return '<div class="banner" style="margin:0 0 10px;background:#f5f7fb;border-color:var(--line)">' +
+      '<b style="font-size:13px">학교 일정으로 채울 사람이 없다</b> ' +
+      '<span class="muted" style="font-size:12px">— 안 낸 ' + n + '명 중</span>' +
+      '<ul style="margin:4px 0 6px 18px;font-size:13px">' + parts.map(function (p) { return '<li>' + p + '</li>'; }).join("") + '</ul>' +
+      '<div class="row" style="margin:0">' +
+      (w.noTerm.length || w.noStart.length ? '<button class="mini" id="ex-goterms">학교 일정 메뉴로</button>' : "") +
+      (w.noSchool.length ? '<button class="mini" id="ex-gostudents">학생 명단으로</button>' : "") +
+      '<span class="muted" style="font-size:12px">일정을 적으면 여기 «채우기» 단추가 생긴다</span></div></div>';
+  }
   return '<div class="banner" style="margin:0 0 10px">' +
     '<b style="font-size:13px">학교 일정으로 채우기</b> ' +
     '<span class="muted" style="font-size:12px">— 학교 일정에 적어둔 내신 기간·수학시험으로 학생 것을 만든다. ' +

@@ -142,6 +142,37 @@ ok("띠에 쓰는 목록이 표와 같은 순서", run(`
   return done + " | " + table;
 `) === "임서윤,김서진 | 임서윤,김서진,박준서");
 
+// 8. 학교 일정으로 채우기 — 채울 사람이 없을 때 **왜 없는지**가 보여야 한다 (2026-09-07)
+//    상자를 통째로 숨기면 "자동 채우기 단추가 없다"로만 보인다.
+run(`
+  S.term = "2026 2학기 중간";
+  S.schoolTerms = {};
+  S.schoolTerms[schedKey(S.term, "중대부고", "고1")] = { term: S.term, school: "중대부고", grade: "고1", start: "2026-09-21", end: "2026-09-23", math: "2026-09-22" };
+  S.schoolTerms[schedKey(S.term, "휘문고", "고1")] = { term: S.term, school: "휘문고", grade: "고1", plan: "있음" };   // 시작일 없음
+  S.schoolTerms[schedKey("2026 1학기 기말", "경기고", "고1")] = { term: "2026 1학기 기말", school: "경기고", grade: "고1", start: "2026-06-29" };  // 옛 회차
+`);
+const mkRow = (name, school, grade, v) => `{ cls:{id:"c1",name:"고1S",classDays:[2,4]}, st:{id:"${name}",name:"${name}"}, v:${v ? JSON.stringify(v) : "null"}, grade:"${grade}", school:"${school}" }`;
+const FT = (rowsCode) => JSON.parse(run(`
+  var t = fillTargets([${rowsCode}]);
+  return JSON.stringify({ f: t.fillable.map(function(o){return o.x.st.name}), off: t.off.map(function(o){return o.x.st.name}),
+    noSchool: t.why.noSchool.map(function(x){return x.st.name}), noTerm: t.why.noTerm.map(function(x){return x.st.name}), noStart: t.why.noStart.map(function(x){return x.st.name}) });
+`));
+const t1 = FT([mkRow("채움", "중대부고", "고1"), mkRow("일정없음", "경기고", "고1"), mkRow("시작없음", "휘문고", "고1"), mkRow("학교없음", "", "고1"),
+  mkRow("이미냄", "중대부고", "고1", { school: "중대부고", grade: "고1", start: "2026-09-21", end: "2026-09-23", math: "2026-09-22" })].join(","));
+ok("일정 있는 사람만 채울 수 있다", JSON.stringify(t1.f) === '["채움"]', JSON.stringify(t1));
+ok("옛 회차 일정만 있으면 «이 회차 일정 없음»", JSON.stringify(t1.noTerm) === '["일정없음"]');
+ok("일정은 있는데 시작일이 비면 «시작일 없음»", JSON.stringify(t1.noStart) === '["시작없음"]');
+ok("학교가 비면 «학교 없음»", JSON.stringify(t1.noSchool) === '["학교없음"]');
+ok("이미 낸 사람은 이유에 안 센다", t1.noTerm.length + t1.noStart.length + t1.noSchool.length === 3 && t1.off.length === 0);
+const box = (rowsCode) => run(`return fillBoxHtml([${rowsCode}])`);
+ok("채울 사람이 있으면 «채우기» 단추", box(mkRow("채움", "중대부고", "고1")).indexOf('id="ex-fill"') >= 0);
+const reason = box([mkRow("일정없음", "경기고", "고1"), mkRow("학교없음", "", "고1")].join(","));
+ok("채울 사람이 없어도 상자가 사라지지 않고 이유가 나온다", reason.indexOf("채울 사람이 없다") >= 0 && reason.indexOf("일정없음") >= 0 && reason.indexOf("학교없음") >= 0, reason.slice(0, 120));
+ok("이유 상자에 회차 이름이 적힌다", reason.indexOf("2026 2학기 중간") >= 0);
+ok("고칠 자리로 가는 단추 둘", reason.indexOf('id="ex-goterms"') >= 0 && reason.indexOf('id="ex-gostudents"') >= 0);
+ok("이유 상자도 div 를 다 닫는다", (reason.match(/<div/g) || []).length === (reason.match(/<\/div>/g) || []).length);
+ok("안 낸 사람이 아무도 없으면 상자도 없다", box(mkRow("이미냄", "중대부고", "고1", { school: "중대부고", grade: "고1", start: "2026-09-21", end: "2026-09-23", math: "2026-09-22" })) === "");
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
