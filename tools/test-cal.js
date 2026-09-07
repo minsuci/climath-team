@@ -227,6 +227,31 @@ ctx.__t.then((r) => {
   ok("저장까지 간다 (문서 둘로 갈려도 하나도 안 샌다)", SAVED.length === 2 && items === 7,
     SAVED.length + "번 저장 · " + items + "건");
 
+  // ---- 업무 달력은 «내 것»만 (2026-09-07) ----
+  // "본인의 할 일이 뭔지 보기 편하려는 것이지 남의 일을 숙지하려는 게 아니다" — 마왕님.
+  // 감추는 게 아니라 고르는 것이다. 여기서 빠진 할 일도 «할 일» 메뉴에는 그대로 있다.
+  run(`
+    S.claims = { tid: "t1", name: "한민수", role: "owner" }; S.ro = false;
+    S.teachers = [{ tid:"t1", name:"한민수", role:"owner", classIds:[] },
+                  { tid:"t2", name:"이창혁A", role:"teacher", classIds:[] }];
+    S.tasks = [
+      { id:"m1", text:"내 것",      who:"한민수",  due:"2026-09-04", status:"open" },
+      { id:"m2", text:"남의 것",    who:"이창혁A", due:"2026-09-04", status:"open" },
+      { id:"m3", text:"전원",       who:"전원",    due:"2026-09-04", status:"open" },
+      { id:"m4", text:"담당 없음",  who:"",        due:"2026-09-04", status:"open" },
+    ];
+  `);
+  const calIds = () => run(`return calTasks().map(function(t){return t.id;}).join(",")`);
+  ok("팀장 달력엔 내 것 · 전원 · 담당 없는 것", calIds() === "m1,m3,m4", calIds());
+  run(`S.claims = { tid:"t2", name:"이창혁A", role:"teacher" }; S.ro = true;`);
+  // ⚠ 담당 없는 것을 선생님에게도 보이면 «아무 것도 아닌 일»이 다섯 사람 달력에 다 뜬다.
+  //   담당을 정할 사람은 팀장이다.
+  ok("선생님 달력엔 자기 것 · 전원만 (담당 없는 것은 안 뜬다)", calIds() === "m2,m3", calIds());
+  const dueIds = run(`return dueThrough("전체", weekDays("2026-09-04")).map(function(x){return x.t.id;}).join(",")`);
+  ok("«이번 주까지 해야 할 일»도 같은 잣대", dueIds === "m2,m3", dueIds);
+  run(`S.claims = null;`);
+  ok("누구인지 모르면 안 가린다 (빈 달력보다 낫다)", run(`return calTasks().length`) === 4);
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

@@ -1237,10 +1237,25 @@ function barHtml(g, rowBase) {
     (g.head ? esc(g.text) : '<span class="cont">◂ ' + esc(g.text) + '</span>') + '</div>';
 }
 
+// 업무 달력은 **자기 할 일만** 보여준다 (2026-09-07 결정).
+//
+// 이 화면은 «내가 이번 주에 뭘 해야 하나»를 보는 자리다. 팀 것을 다 얹으면 자기 것이 묻힌다 —
+// 남의 일을 숙지하라고 만든 화면이 아니다. 팀 전체는 «할 일» 메뉴에서 사람 칩으로 본다.
+// ⚠ 감추는 것이 아니라 **고르는 것**이다. 여기서 안 보이는 할 일도 «할 일» 메뉴에는 그대로 있다.
+function calTasks() {
+  var me = myName();
+  if (!me) return S.tasks;                                  // 누구인지 모르면 가리지 않는다. 빈 달력보다 낫다
+  return S.tasks.filter(function (t) {
+    if (taskIsMine(t)) return true;
+    // 담당이 비어 있는 것은 팀장에게만. 아무에게도 안 걸린 일이 조용히 사라지면 안 된다 —
+    // 담당을 정할 사람이 팀장이다. 선생님 화면에서는 안 보인다.
+    return !S.ro && !String(t.who || "").trim();
+  });
+}
 // 이번 주까지 해야 할 일 — 기한 지난 것과 이 주 안의 것. 반복은 그 주의 각 요일마다 한 건.
 function dueThrough(want, days) {
   var last = days[days.length - 1], out = [];
-  S.tasks.forEach(function (t) {
+  calTasks().forEach(function (t) {
     if (!gradeHit(taskGrade(t), want)) return;
     if (t.repeat && t.repeat.dow && t.repeat.dow.length) {
       days.forEach(function (d) {
@@ -1301,7 +1316,7 @@ function renderCal() {
               '" style="grid-column:' + (i + 1) + ';grid-row:1/' + (lay.lanes + 2) + '" data-cjump="' + d + '"></div>';
           }).join("") +
           wd.map(function (d, i) {
-            var tn = S.tasks.filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d) && !taskDoneOn(t, d); }).length;
+            var tn = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d) && !taskDoneOn(t, d); }).length;
             return '<div class="mn' + (monthOf(d) !== ym ? " out" : "") + (d === TODAY ? " today" : "") +
               '" style="grid-column:' + (i + 1) + ';grid-row:1">' + Number(d.slice(8)) +
               (tn ? '<span class="tn">' + tn + '</span>' : "") + '</div>';
@@ -1327,7 +1342,7 @@ function renderCal() {
     })() +
     '<div class="calwrap"><div class="cal">' + days.map(function (d) {
       var dow = parseYmd(d).getDay();
-      var mine = S.tasks.filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
+      var mine = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
       return '<div class="cday' + (d === TODAY ? " today" : "") + (dow === 0 || dow === 6 ? " wend" : "") + '">' +
         '<div class="ch"><b>' + Number(d.slice(8)) + '</b> <span>' + DOW_KO[dow] + '</span>' +
         '<button class="add" data-cadd="' + d + '" title="여기에 할 일 넣기">＋</button></div>' +
@@ -1341,7 +1356,9 @@ function renderCal() {
         '</div>';
     }).join("") + '</div></div>' +
     '<div id="cal-add"></div>' +
-    '<p class="muted" style="font-size:12px;margin:6px 0 0">월간 달력의 날을 누르면 그 주가 아래에 열린다. ' +
+    '<p class="muted" style="font-size:12px;margin:6px 0 0"><b>이 달력에는 내 할 일만 나온다</b> — ' +
+    '담당에 내 이름(또는 «전원»·«담임 전원» 같은 묶음)이 걸린 것. 팀 전체는 <b>할 일</b> 메뉴에서 사람으로 골라 본다. ' +
+    '월간 달력의 날을 누르면 그 주가 아래에 열린다. ' +
     '날짜 옆 숫자는 그날 남은 할 일이다. 막대는 <b>시험 성적에 만든 시험</b>과 <b>반 종강</b>이고, ' +
     '겹치면 한 막대로 묶여 앞에 개수가 붙는다(손을 올리면 전부 보인다). ' +
     '<b>학교 내신 일정은 여기 안 나온다</b> — 달력이 시험 막대로 뒤덮이므로 <b>내신 참여표</b>의 날짜 띠에서 본다. ' +
