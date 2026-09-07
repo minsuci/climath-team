@@ -30,7 +30,10 @@ var firebase={initializeApp:function(c,n){return n?{t:1}:{};},
   auth:()=>({onAuthStateChanged(){},currentUser:null,signOut:()=>Promise.resolve()})};
 var document={querySelector:()=>EL(),querySelectorAll:()=>[],addEventListener(){}};
 var window={addEventListener(){},scrollTo(){},scrollY:0};
-var location={hash:""},history={replaceState(){}},localStorage={getItem:()=>null,setItem(){}};
+// 브라우저는 replaceState 하면 location.hash 가 따라 바뀐다. 흉내도 그래야 —
+// 안 그러면 «어느 페이지로 갔나»를 볼 수가 없다 (→ 흉내가 진짜보다 너그러우면 검사가 못 잡는다)
+var location={hash:""},history={replaceState:function(a,b,u){ location.hash=String(u||""); }},
+    localStorage={getItem:()=>null,setItem(){}};
 var fetch=()=>Promise.reject(new Error("no net")); var alert=function(){},confirm=()=>true,prompt=()=>null;
 // ⚠ 없으면 «typeof MutationObserver !== "undefined"» 가 거짓이 되어 그 줄을 통째로 건너뛴다.
 //   브라우저처럼 **대상이 없으면 터져야** 한다 — 2026-09-06에 그걸 놓쳐 앱이 하얗게 떴다.
@@ -53,6 +56,23 @@ const RENDER = { cal: "renderCal", tasks: "renderTasks", minutes: "renderMinutes
   students: "renderStudents", terms: "renderTerms", exams: "renderExams", scores: "renderScores", sheets: "renderSheets" };
 const pages = JSON.parse(vm.runInContext("JSON.stringify(PAGES)", ctx));
 ok("메뉴가 열이다", pages.length === 10, String(pages.length));
+
+// ---- 팀장만 보는 메뉴 ----
+// 회의록에는 간부회의가 섞여 있다. 선생님에게는 메뉴가 아예 없어야 한다 (2026-09-07).
+{
+  const mine = (ro) => JSON.parse(vm.runInContext(
+    "(function(){ var b=S.ro; S.ro=" + ro + "; var r=JSON.stringify(myPages().map(function(p){return p[0]})); S.ro=b; return r; })()", ctx));
+  ok("팀장은 열 개를 다 본다", mine(false).length === 10, mine(false).join(","));
+  ok("선생님은 회의록이 없다", mine(true).indexOf("minutes") < 0 && mine(true).length === 9, mine(true).join(","));
+  const isP = (ro, id) => vm.runInContext(
+    "(function(){ var b=S.ro; S.ro=" + ro + "; var r=isPage(" + JSON.stringify(id) + "); S.ro=b; return r; })()", ctx);
+  ok("선생님에게 #minutes 는 없는 페이지다", !isP(true, "minutes") && isP(false, "minutes"));
+  ok("다른 메뉴는 그대로 열린다", isP(true, "exams") && isP(true, "tasks"));
+  // 주소창에 직접 쳐도 안 열린다 — showPage 가 되돌린다
+  const landed = vm.runInContext(
+    "(function(){ var b=S.ro; S.ro=true; showPage('minutes'); var h=location.hash; S.ro=b; return h; })()", ctx);
+  ok("선생님이 #minutes 로 들어와도 할 일로 보낸다", landed === "#tasks", landed);
+}
 pages.forEach((p) => {
   const f = RENDER[p[0]];
   ok("메뉴 «" + p[1] + "» 에 그릴 함수가 있다", !!f && typeOf(f) === "function", p[0]);

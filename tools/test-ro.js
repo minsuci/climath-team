@@ -119,6 +119,24 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
   run("applyReadOnly()");
   ok("관리자면 아무것도 안 감춘다", !save2.hidden);
 
+  // ---- 규칙 파일 ----
+  // 메뉴를 감추는 것은 «헷갈리지 말라»는 것이고, 진짜 문턱은 규칙이다.
+  // 감추기만 하면 선생님이 브라우저 콘솔에서 minutes 를 그냥 읽는다.
+  //
+  // ⚠ Firestore 규칙은 **맞는 규칙이 하나라도 허용하면 허용**이다.
+  //   `match /{document=**}` 로 다 열어두고 minutes 만 막는 것은 불가능하다 —
+  //   그래서 컬렉션마다 따로 적는다. 그 줄이 돌아오면 회의록이 도로 열린다.
+  const rules = fs.readFileSync("firestore.rules", "utf8");
+  const noComment = rules.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  ok("규칙에 «전부 열기» 줄이 없다", !/match\s*\/\{document=\*\*\}/.test(noComment),
+    (noComment.match(/match\s*\/\{document=\*\*\}[^\n]*/) || [""])[0]);
+  const minutes = /match\s*\/minutes\/\{[^}]*\}\s*\{([\s\S]*?)\n\s*\}/.exec(noComment);
+  ok("회의록 규칙이 있다", !!minutes);
+  ok("회의록은 owner 만", !!minutes && minutes[1].indexOf("teacher") < 0, minutes && minutes[1].trim());
+  ["dash", "marks", "devtools", "devlog", "tests", "testScores"].forEach((c) => {
+    ok("규칙에 " + c + " 가 있다 (없으면 아무도 못 읽는다)", new RegExp("match\\s*/" + c + "/").test(noComment));
+  });
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

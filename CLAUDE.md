@@ -11,7 +11,7 @@ repo/
 ├── api/github.js     # 깃허브 커밋·배포 이력 읽기 — «개발 현황» (5분 캐시)
 ├── tools/push-devlog.mjs  # 나스 허브의 도구보고·일지 개발 줄 → devtools·devlog (개발 현황의 나스 쪽)
 ├── api/_google.js    # 커스텀 토큰 발급 · ID 토큰 검증 · 구글 API 토큰
-├── firestore.rules   # climath-team DB 규칙 — 읽기 owner·teacher, 쓰기 owner (+ marks/<tid> 는 본인). 콘솔에 붙여넣어 게시 (tools/publish-rules.mjs 는 권한이 없어 403)
+├── firestore.rules   # climath-team DB 규칙 — 읽기 owner·teacher, 쓰기 owner (+ marks/<tid> 는 본인, minutes 는 owner 만). 콘솔에 붙여넣어 게시 (tools/publish-rules.mjs 는 권한이 없어 403)
 └── vercel.json       # icn1
 ```
 
@@ -27,6 +27,7 @@ repo/
 | `firebase.app()` 기본 | climath-class | teachers · classes · appConfig · exams · scores | 읽기만 |
 | 〃 | 〃 | **students · classes.roster** | **쓴다** — 학생 명단이 이 앱에서 관리된다 |
 | `teamApp` | climath-team | `dash/tasks`(할 일) · `dash/config`(시트·저장소) · `dash/students`(메모) | 여기만 |
+| 〃 | 〃 | `minutes`(회의록) — **팀장만 읽는다** | push-minutes.mjs |
 | 〃 | 〃 | **`marks/<tid>`** — 할 일의 «내가 끝냈다» 표시 | **선생님도 자기 것만** |
 
 브라우저가 두 프로젝트에 따로 로그인한다. `/api/auth login` 이 `classToken`(수업관리 앱이 발급)과
@@ -58,8 +59,10 @@ PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. �
   글자로 가르는 건 어설프다 — **새 단추 이름에 저 말들이 들어가면 읽기 계정에서 사라진다**는 뜻이다. 막는 건 가로채기고 이건 헷갈리지 않게 하는 것.
   «다시 읽기»·거르기 칩·찾기 칸·«앱 열기» 링크는 남는다.
 - 머리띠에 `이름 · 읽기만` 표, 위에 안내 배너. 로그인 화면은 앱 PIN 그대로.
+- **회의록 메뉴는 선생님에게 안 보인다** (2026-09-07) — 아래 «회의록» 절.
 - 서버: `api/auth.js` 가 teacher 도 통과, `api/github.js` 는 읽기라 teacher 도 됨. `api/sheets.js`·`api/schedule.js` 는 owner 만(쓰기).
-- `firestore.rules`: 읽기 owner·teacher, 쓰기 owner. **콘솔에 붙여넣어 게시해야 선생님이 읽는다.**
+- `firestore.rules`: **컬렉션마다 따로** 적는다 — 읽기 owner·teacher, 쓰기 owner (minutes 는 owner 만, marks 는 본인).
+  **콘솔에 붙여넣어 게시해야 선생님이 읽는다.**
   `tools/publish-rules.mjs` 를 만들었지만 서비스 계정에 규칙 게시 권한이 없어 403 — IAM 에서 «Firebase Rules 관리자»를 주면 된다.
 
 > [!warning] String.replace 의 치환 문자열에서 `$$` 는 `$` 가 된다
@@ -72,8 +75,9 @@ PIN 대조·시도 제한·선생님 명단은 수업관리 앱에만 있다. �
 node tools/test-ro.js
 ```
 
-25건. 프로토타입이 있는 가짜 Firestore 로 set/update/delete/add/commit 이 전부 거절되는지, 거절된 것이 SDK 까지 안 가는지,
-단추·칸이 맞게 감춰지는지(«다시 읽기»·칩·찾기·«앱 열기»·«내 완료» 는 남는지).
+34건. 프로토타입이 있는 가짜 Firestore 로 set/update/delete/add/commit 이 전부 거절되는지, 거절된 것이 SDK 까지 안 가는지,
+단추·칸이 맞게 감춰지는지(«다시 읽기»·칩·찾기·«앱 열기»·«내 완료» 는 남는지),
+그리고 **규칙 파일**에 «전부 열기» 줄이 없고 minutes 가 owner 만인지.
 
 ## 팀 할 일 — 내 것과 자기 체크 (2026-09-06)
 
@@ -389,7 +393,22 @@ node tools/test-wiring.js
 - **반이 없는 학생도 뺀다면 틀린다** — 그 학생도 시험 때 안 온다. 「반 없음」으로 표시만 한다.
 - 명단에 그 학교·학년 학생이 하나도 없으면 그렇다고 적는다. 빈칸이면 «안 뜬 건가»로 읽힌다.
 
-## 회의록 (2026-09-05)
+## 회의록 (2026-09-05) — **팀장만 본다** (2026-09-07)
+
+> [!warning] 강사 선생님에게는 메뉴가 아예 없다
+> 간부회의·데스크회의가 같이 올라간다. 2026-09-07에 닫았다.
+> `PAGES` 의 셋째 칸이 `"owner"` 면 `myPages()` 가 걸러 **단추도 상자도 안 만든다.**
+> `showPage()` 는 주소에 `#minutes` 를 쳐도 할 일로 되돌린다.
+>
+> **화면에서 감추는 것은 문턱이 아니다.** 진짜 문턱은 `firestore.rules` 의
+> `match /minutes/{doc=**} { allow read, write: if role() == "owner" }` 다 —
+> 감추기만 하면 브라우저 콘솔에서 그냥 읽힌다.
+>
+> ⚠ 규칙은 **맞는 규칙이 하나라도 허용하면 허용**이라, 예전처럼 `match /{document=**}` 로
+> 다 열어두고 minutes 만 막는 것이 **불가능하다.** 그래서 컬렉션마다 따로 적는다
+> (`dash` · `marks` · `minutes` · `devtools` · `devlog` · `tests` · `testScores`).
+> **여기 없는 컬렉션은 아무도 못 읽는다 — 새로 만들면 규칙에 줄을 더한다.**
+> `tools/test-ro.js` 가 규칙 파일을 읽어 이 둘(전부 열기 줄이 없다 · minutes 는 owner 만)을 지킨다.
 
 **볼트가 원본이다.** `민수의 뇌/40 팀장업무/회의록/*.md` 를 `tools/push-minutes.mjs` 가 올리고,
 대시보드는 **읽기만** 한다. 고칠 곳이 둘이면 어느 쪽이 맞는지 알 수 없다 — 학생 명단과 같은 원칙이다.

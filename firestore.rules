@@ -1,26 +1,41 @@
 rules_version = '2';
 // climath-team — 대시보드 전용 DB.
+//
 // 2026-09-05 «전부, 읽기만»: 선생님(teacher)도 읽는다. 쓰는 것은 관리자(owner)뿐이다.
-// 2026-09-06 한 가지 예외: 선생님이 **자기 체크**를 적는 `marks/<자기 tid>`.
+// 2026-09-06 예외 하나: 선생님이 자기 체크를 적는 `marks/<자기 tid>`.
+// 2026-09-07 **회의록은 팀장만.** 간부회의가 섞여 있어 강사 선생님이 볼 것이 아니다.
+//
+// ⚠ 규칙은 «넓게 열고 좁게 막기»가 안 된다 — 맞는 규칙이 하나라도 허용하면 허용이다.
+//   그래서 `match /{document=**}` 로 다 열어두고 minutes 만 막을 수 없다.
+//   **컬렉션마다 따로 적는다.** 여기 없는 컬렉션은 아무도 못 읽는다 —
+//   새 컬렉션을 만들면 이 파일에 줄을 더해야 한다(모르고 열리는 것보다 낫다).
+//
 // /api/auth 가 수업관리 앱에서 역할을 확인한 뒤에만 이 프로젝트 토큰을 발급한다.
 // 적용은 `node tools/publish-rules.mjs` (서비스 계정으로 게시) 또는
 // Firebase 콘솔 → climath-team → Firestore Database → 규칙에 붙여넣고 게시.
 service cloud.firestore {
   match /databases/{database}/documents {
     function role() { return request.auth != null ? request.auth.token.role : ""; }
+    function team() { return role() == "owner" || role() == "teacher"; }
     function myTid() { return request.auth != null ? request.auth.token.tid : ""; }
 
+    // 팀장만 — 회의록. 간부회의·데스크회의가 같이 올라간다.
+    match /minutes/{doc=**} {
+      allow read, write: if role() == "owner";
+    }
+
     // 팀 할 일의 «내가 끝냈다» 표시. 사람마다 자기 문서 하나다.
-    // ⚠ 공용 목록(dash/tasks)은 여전히 관리자만 쓴다. 선생님에게 그걸 열면 남의 줄까지 열린다.
-    //   문서 이름이 곧 누구인지라, 자기 tid 가 아니면 못 쓴다.
+    // ⚠ 공용 목록(dash/tasks)은 여전히 관리자만 쓴다. 문서 이름이 곧 누구인지라 남의 것은 못 쓴다.
     match /marks/{tid} {
-      allow read: if role() == "owner" || role() == "teacher";
+      allow read: if team();
       allow write: if role() == "owner" || (role() == "teacher" && tid == myTid());
     }
 
-    match /{document=**} {
-      allow read: if role() == "owner" || role() == "teacher";
-      allow write: if role() == "owner";
-    }
+    // 나머지는 팀 전체가 읽고, 쓰는 것은 관리자뿐이다.
+    match /dash/{doc=**}       { allow read: if team(); allow write: if role() == "owner"; }
+    match /devtools/{doc=**}   { allow read: if team(); allow write: if role() == "owner"; }
+    match /devlog/{doc=**}     { allow read: if team(); allow write: if role() == "owner"; }
+    match /tests/{doc=**}      { allow read: if team(); allow write: if role() == "owner"; }
+    match /testScores/{doc=**} { allow read: if team(); allow write: if role() == "owner"; }
   }
 }
