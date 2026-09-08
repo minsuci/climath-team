@@ -81,6 +81,9 @@
   .stat b { display: block; font-size: 20px; line-height: 1.2; }
   .stat span { color: var(--muted); font-size: 12px; }
   .stat .bad b { color: var(--red); }
+  .stat div[data-stat] { cursor: pointer; }
+  .stat div[data-stat]:hover { border-color: var(--navy); }
+  .stat div.on { border-color: var(--navy); box-shadow: inset 0 0 0 1px var(--navy); background: #eef3fb; }
   .stat .good b { color: var(--green); }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { border-bottom: 1px solid var(--line); padding: 5px 7px; text-align: left;
@@ -1943,6 +1946,11 @@ function taskMatchesWho(t, who) {
 // 순서: 0 아직 할 것 → 1 내가 끝낸 것 → 2 팀장이 닫은 것(«완료 보기» 를 켜야 보인다). 그 안에서는 기한순.
 // «내가 끝낸 것» 은 **보는 사람 기준**이다 — 내 완료를 눌렀거나 보고를 넣었으면 그 사람에게만 내려간다.
 // 팀장에게는 «걸린 사람이 모두 끝낸 것» 이 그것이다. 아직 닫지 않았어도 눈앞에서 비켜나고, 남은 사람이 있으면 위에 남는다.
+var STAT_NAME = { overdue: "기한 지난", week: "이번 주", mine: "내", nowho: "담당 없는" };
+function statBox(key, n, label, cls) {
+  var on = S.statPick === key;
+  return '<div class="' + cls + (on ? " on" : "") + '" data-stat="' + key + '" title="' + (on ? "다시 누르면 전부 보인다" : "누르면 이것만 보인다") + '"><b>' + n + '</b><span>' + label + '</span></div>';
+}
 function taskSettled(t) {
   var tid = myTid();
   if (tid && (markDate(tid, t.id) || reportOf(t, tid))) return true;
@@ -1968,6 +1976,9 @@ function renderTasks() {
   var week = open.filter(function (t) { var n = daysFromToday(t.due); return n !== null && n >= 0 && n <= 7; });
   var mine = open.filter(taskIsMine);
   var list = (S.showDone ? S.tasks : open).filter(function (t) { return taskMatchesWho(t, S.filterWho); });
+  // 숫자 상자를 누르면 그것만 — "기한지남 빨간색으로 표시되는데, 누르면 뭔지도 표시하자" (2026-09-08)
+  var pick = { overdue: overdue, week: week, mine: mine, nowho: open.filter(function (t) { return !t.who; }) }[S.statPick];
+  if (pick) { var pk = {}; pick.forEach(function (t) { pk[t.id] = 1; }); list = list.filter(function (t) { return pk[t.id]; }); }
   list.sort(function (a, b) {
     var ar = taskRank(a), br = taskRank(b); if (ar !== br) return ar - br;
     var x = a.due || "9999", y = b.due || "9999"; return x < y ? -1 : x > y ? 1 : 0;
@@ -1978,10 +1989,12 @@ function renderTasks() {
     '<h2>팀 할 일 <span class="n">열림 ' + open.length + '</span><span class="sp"></span>' +
     '<button id="tk-done">' + (S.showDone ? "완료 숨기기" : "완료 보기") + '</button>' +
     '<button id="tk-import">볼트에서 붙여넣기</button></h2>' +
-    '<div class="stat"><div class="' + (overdue.length ? "bad" : "") + '"><b>' + overdue.length + '</b><span>기한 지남</span></div>' +
-    '<div><b>' + week.length + '</b><span>이번 주</span></div>' +
-    '<div><b>' + mine.length + '</b><span>내 것</span></div>' +
-    '<div><b>' + open.filter(function (t) { return !t.who; }).length + '</b><span>담당 없음</span></div></div>' +
+    '<div class="stat">' +
+    statBox("overdue", overdue.length, "기한 지남", overdue.length ? "bad" : "") +
+    statBox("week", week.length, "이번 주", "") +
+    statBox("mine", mine.length, "내 것", "") +
+    statBox("nowho", open.filter(function (t) { return !t.who; }).length, "담당 없음", "") + '</div>' +
+    (pick ? '<div class="muted" style="margin:-4px 0 8px;font-size:13px">' + STAT_NAME[S.statPick] + ' ' + pick.length + '건만 보인다. <button class="mini" data-stat-off="1">전부 보기</button></div>' : "") +
     '<div class="chips"><button class="mini ' + (!S.filterWho ? "on" : "") + '" data-who="">전체</button>' +
     '<button class="mini ' + (S.filterWho === MINE ? "on" : "") + '" data-who="' + esc(MINE) + '">' + esc(MINE) + " " + mine.length + "</button>" +
     chips.map(function (w) {
@@ -1991,7 +2004,7 @@ function renderTasks() {
     (S.ro ? '<div class="muted" style="margin:4px 0 8px">팀장이 시킨 일은 <b>내 완료</b> 를 눌러 표시한다 — 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.<br>' +
       '<b>내가 적은 할 일</b>은 아래에서 직접 넣고, 상태도 지우기도 내가 한다. 남에게 시키는 것은 팀장만 한다.</div>' : "") +
     fromMinutesBox() + draftBox() +
-    '<div id="tk-list">' + (list.length ? taskRowsSplit(list) : '<div class="empty">' + (S.teamOk ? "할 일이 없다. 아래에 적거나 볼트에서 붙여넣는다." : "규칙을 게시하면 여기 저장된다.") + '</div>') + '</div>' +
+    '<div id="tk-list">' + (list.length ? taskRowsSplit(list) : '<div class="empty">' + (pick ? STAT_NAME[S.statPick] + " 할 일이 없다." : S.teamOk ? "할 일이 없다. 아래에 적거나 볼트에서 붙여넣는다." : "규칙을 게시하면 여기 저장된다.") + '</div>') + '</div>' +
     // 선생님 칸에는 «담당» 이 없다 — 담당은 자기 자신이다. data-keep 이 없으면 감추기가 지운다.
     (S.ro
       ? '<div class="row"><input type="text" id="tk-text" data-keep placeholder="내 할 일 적기">' +
@@ -2006,6 +2019,9 @@ function renderTasks() {
     '<div id="tk-imp" hidden><textarea id="tk-md" rows="6" style="width:100%" placeholder="볼트 「할 일 추적」의 표를 그대로 붙여넣기 (| 할 일 | 담당 | 기한 | 출처 | 상태 |)"></textarea>' +
     '<div class="row"><button class="btn o" id="tk-imp-go">가져오기</button><span class="muted" id="tk-imp-msg">같은 글자의 할 일은 건너뛴다</span></div></div>';
   $$("[data-who]", el).forEach(function (b) { b.onclick = function () { S.filterWho = b.getAttribute("data-who"); renderTasks(); }; });
+  // 같은 상자를 다시 누르면 푼다. «내 것» 상자는 담당 칩과 겹치지만 뜻이 같아 그대로 둔다
+  $$("[data-stat]", el).forEach(function (b) { b.onclick = function () { var k = b.getAttribute("data-stat"); S.statPick = S.statPick === k ? "" : k; renderTasks(); }; });
+  $$("[data-stat-off]", el).forEach(function (b) { b.onclick = function () { S.statPick = ""; renderTasks(); }; });
   wireFromMinutes(el);
   wireDrafts(el);
   $("#tk-done").onclick = function () { S.showDone = !S.showDone; renderTasks(); };

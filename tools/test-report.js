@@ -244,6 +244,35 @@ const setup = (who) => {
   ok("팀장: 가르는 줄 둘", seps().join("|") === "내가 끝낸 것|팀장이 닫은 것", seps().join("|"));
   run("S.showDone = false");
 
+  // ---- 숫자 상자를 누르면 그것만 (2026-09-08) ----
+  // "기한지남 빨간색으로 표시되는데, 누르면 뭔지도 표시하자"
+  setup();
+  run(`S.statPick = ""; S.tasks = [
+    { id:"v1", text:"지난 것",     who:"이현우", status:"open", due:"2026-09-01" },
+    { id:"v2", text:"또 지난 것",  who:"전원",   status:"open", due:"2026-09-05" },
+    { id:"v3", text:"이번 주",     who:"이현우", status:"open", due:"2026-09-10" },
+    { id:"v4", text:"담당 없음",   who:"",       status:"open", due:"2026-10-01" },
+    { id:"v5", text:"멀리",        who:"이창혁A", status:"open", due:"2026-10-20" }
+  ]; S.tasksOpen = S.tasks; S.filterWho = "";`);
+  const ids = () => (EL["#sec-tasks"].innerHTML.match(/data-id="([^"]+)"/g) || []).map((m) => m.slice(9, -1)).join(",");
+  const boxes = () => (EL["#sec-tasks"].innerHTML.match(/data-stat="[a-z]+"/g) || []).length;
+  run("renderTasks()");
+  ok("상자 넷이 다 누를 수 있다", boxes() === 4, String(boxes()));
+  ok("안 누르면 전부", ids() === "v1,v2,v3,v4,v5", ids());
+  ok("기한 지남 상자가 빨갛다", /class="bad" data-stat="overdue"/.test(EL["#sec-tasks"].innerHTML));
+  run("S.statPick = 'overdue'; renderTasks()");
+  ok("기한 지남을 누르면 지난 것만", ids() === "v1,v2", ids());
+  ok("누른 상자에 표가 난다", /class="bad on" data-stat="overdue"/.test(EL["#sec-tasks"].innerHTML));
+  ok("«N건만 보인다» 와 «전부 보기» 가 뜬다", /기한 지난 2건만 보인다/.test(EL["#sec-tasks"].innerHTML) && /data-stat-off/.test(EL["#sec-tasks"].innerHTML));
+  ok("걸러도 숫자 상자는 전체 수 그대로", /data-stat="week"[^>]*><b>1<\/b>/.test(EL["#sec-tasks"].innerHTML) && /data-stat="overdue"[^>]*><b>2<\/b>/.test(EL["#sec-tasks"].innerHTML));
+  run("S.statPick = 'nowho'; renderTasks()");
+  ok("담당 없음만", ids() === "v4", ids());
+  run("S.statPick = 'mine'; renderTasks()");
+  ok("내 것만 (이현우 + 전원)", ids() === "v1,v2,v3", ids());
+  run("S.statPick = 'week'; S.filterWho = '이창혁A'; renderTasks()");
+  ok("담당 칩과 겹치면 둘 다 만족하는 것만 — 없으면 빈 줄에 이유가 적힌다", ids() === "" && /이번 주 할 일이 없다/.test(EL["#sec-tasks"].innerHTML), ids());
+  run("S.statPick = ''; S.filterWho = ''");
+
   // ---- 완료 현황에 글까지 ----
   setup("owner");
   run(`S.marks = { T3: { name:"이현우",
