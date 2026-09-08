@@ -94,3 +94,68 @@ export async function googleAccessToken(scope) {
   _toks[scope] = { value: j.access_token, exp: now + (j.expires_in || 3600) };
   return _toks[scope].value;
 }
+
+
+// ---------- Firestore REST (2026-09-08, 찾아오기 서버가 옮겨오며 함께 왔다) ----------
+//
+// 브라우저는 firebase-js-sdk 로 팀 DB 를 보지만 **서버에는 그게 없다.** 서비스 계정으로 REST 를 직접 부른다.
+// 수업관리 앱의 같은 도우미를 그대로 가져왔다 — 그쪽에서 몇 달 돌아간 것이라 새로 짜지 않는다.
+const FS_SCOPE = "https://www.googleapis.com/auth/datastore";
+const docBase = () => "https://firestore.googleapis.com/v1/projects/" + serviceAccount().project_id +
+  "/databases/(default)/documents";
+
+// Firestore REST 는 값에 타입이 붙어 온다 ({stringValue:"..."}). 평범한 JS 값으로 되돌린다.
+function fromValue(v) {
+  if (v == null) return null;
+  if ("stringValue" in v) return v.stringValue;
+  if ("integerValue" in v) return Number(v.integerValue);
+  if ("doubleValue" in v) return v.doubleValue;
+  if ("booleanValue" in v) return v.booleanValue;
+  if ("nullValue" in v) return null;
+  if ("timestampValue" in v) return v.timestampValue;
+  if ("arrayValue" in v) return (v.arrayValue.values || []).map(fromValue);
+  if ("mapValue" in v) return fromFields(v.mapValue.fields || {});
+  return null;
+}
+function fromFields(fields) {
+  const out = {};
+  for (const k of Object.keys(fields || {})) out[k] = fromValue(fields[k]);
+  return out;
+}
+function toValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === "string") return { stringValue: v };
+  if (typeof v === "boolean") return { booleanValue: v };
+  if (typeof v === "number") return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toValue) } };
+  if (typeof v === "object") return { mapValue: { fields: toFields(v) } };
+  return { nullValue: null };
+}
+function toFields(obj) {
+  const out = {};
+  for (const k of Object.keys(obj || {})) out[k] = toValue(obj[k]);
+  return out;
+}
+async function fsCall(path, init) {
+  const t = await googleAccessToken(FS_SCOPE);
+  const r = await fetch(path, { ...init,
+    headers: { Authorization: "Bearer " + t, "Content-Type": "application/json", ...(init && init.headers) } });
+  if (r.status === 404) return null;
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error("Firestore: " + ((j && j.error && j.error.message) || r.status));
+  return j;
+}
+// 문서 하나 읽기. 없으면 null. path 예: "dash/neisCodes"
+export async function getDoc(path) {
+  const j = await fsCall(docBase() + "/" + path, { method: "GET" });
+  if (!j) return null;
+  return { id: path.split("/").pop(), ...fromFields(j.fields || {}) };
+}
+// 문서 쓰기(부분 갱신). maskPaths 를 주면 그 경로만 바꾼다 —
+// ⚠ 지도 안의 한 칸만 고칠 때 꼭 쓴다. 통째로 덮으면 같은 시간에 도는 다른 요청이 넣은 칸이 지워진다
+//   (학교 넷을 나란히 부르므로 실제로 겹친다).
+export async function patchDoc(path, data, maskPaths) {
+  const mask = (maskPaths || Object.keys(data))
+    .map((k) => "updateMask.fieldPaths=" + encodeURIComponent(k)).join("&");
+  await fsCall(docBase() + "/" + path + "?" + mask, { method: "PATCH", body: JSON.stringify({ fields: toFields(data) }) });
+}

@@ -1,53 +1,959 @@
-// 학교 학사일정에서 시험 기간 찾아오기 — **수업관리 앱의 /api/schedule 을 중계한다.**
+// 나이스(NEIS) 교육정보 개방 포털에서 학교 학사일정을 읽어온다.
 //
-// 그쪽에 이미 나이스 → 학교 홈페이지 → 게시판 첨부문서(→ AI로 날짜 뽑기)까지
-// 네 단계 파이프라인이 있다. 여기서 다시 만들 이유가 없고, 만들면 두 벌이 갈린다
-// (학교마다 시험을 부르는 말이 다른 규칙이 그쪽에 쌓여 있다).
+// 왜 서버에서 하나:
+//   (1) 브라우저에서 부르면 CORS에 막힌다.
+//   (2) 학교 코드를 한 번 찾아두면 다시 안 찾도록 Firestore에 적어둔다.
+//   (3) 키를 쓰게 되면 그 키가 클라이언트로 나가면 안 된다.
 //
-// 왜 브라우저가 직접 안 부르나: 그쪽 엔드포인트에는 CORS 헤더가 없다.
-// 앱 코드를 고치지 않기로 했으므로(대시보드는 앱을 안 건드린다) 서버끼리 부른다.
+// ⚠ 키가 없으면 **한 번에 5건**만 오고, 그때는 pIndex(페이지 넘기기)가 **먹지 않는다**
+//    — 2페이지를 불러도 1페이지와 같은 5건이 온다. 그래서 키가 없을 때는
+//    날짜 창을 반씩 잘라 "5건 이하"가 될 때까지 좁혀가며 받는다. 요청 수가 늘어나므로
+//    한 번에 **학교 하나씩만** 처리한다.
+//    Vercel 환경변수 NEIS_API_KEY 를 넣으면 한 번에 1000건까지 와서 요청 한 번으로 끝난다.
+//    (무료. open.neis.go.kr 에서 발급)
 //
-// 검사는 두 겹이다:
-//   여기서   climath-team 토큰이 owner 인지  (이 대시보드를 쓸 사람인지)
-//   저쪽에서 climath-class 토큰이 선생님인지 (그 앱의 자료를 볼 사람인지)
-// 그래서 브라우저가 토큰 둘을 함께 보낸다.
+// 중학교도 본다. 학교 이름 끝 글자로 종류를 짐작하고(“대청중”→중학교), 못 찾으면 반대쪽도 본다.
 //
-// 요청: POST { idToken(team), classToken(class), school, from, to, kind }
+// 못 하는 것: **수학 시험 날짜**. 학사일정에는 "2학기 중간고사"까지만 있고
+// 과목별 시간표는 안 들어간다. 그건 계속 손으로 넣거나 학생이 내야 한다.
 
-import { verifyIdToken } from "./_google.js";
-
-const CLASS_URL = process.env.CLASS_SCHEDULE_URL || "https://climath-class.vercel.app/api/schedule";
+// ---------- 2026-09-08: 수업관리 앱에서 여기로 옮겨왔다 ----------
+//
+// 학교 일정을 채우는 일은 팀체크에서만 한다(2026-09-04). 그런데 **찾아오는 코드는 저쪽에 남아 있어서**
+// 팀체크가 저쪽 서버에 대신 물어보는 모양이었다. 그래서 여기에 손댈 수 없는 것이 생겼다 —
+// 가정통신문에서 수학시험 시간표를 긁어오려면 남의 앱을 고쳐야 했다.
+//
+// 옮기며 달라진 것은 셋뿐이다. 규칙 뭉치(학교마다 시험을 부르는 말, 이름이 같은 학교, 그림으로 붙인 학사일정)는
+// 한 줄도 안 건드렸다 — 몇 달치라 새로 짜면 조용히 갈린다.
+//   (1) 검사가 한 겹이다. 팀 토큰이 owner 인지만 본다. 예전에는 팀 토큰 + 수업관리 앱 토큰 두 겹이었다.
+//   (2) 학교 코드 캐시가 팀 DB 로 왔다 — dash/neisCodes → dash/neisCodes.
+//       옮긴 첫 판에는 캐시가 비어 있어 학교를 다시 찾는다. 한 번만 드는 값이다.
+//   (3) 오래 걸리는 쪽이 여기가 됐으므로 maxDuration 을 여기서 준다.
+//
+// ⚠ 환경변수 둘이 이 프로젝트에도 있어야 한다 — NEIS_API_KEY, GEMINI_API_KEY.
+//   없으면 조용히 나빠진다: 나이스 키가 없으면 날짜 창을 반씩 잘라 받느라 느리고(그래도 된다),
+//   AI 키가 없으면 첨부문서·그림에서 날짜 뽑기가 통째로 죽는다(«AI 키 없음» 으로 적힌다).
+import { verifyIdToken, getDoc, patchDoc } from "./_google.js";
 
 // 학교 하나가 나이스에 없으면 홈페이지 → 게시판 → 문서까지 뒤져서 20~30초씩 걸린다.
-// 중계하는 쪽이 먼저 끊기면 저쪽이 다 해놓은 일이 버려진다.
 export const maxDuration = 60;
+
+const NEIS = "https://open.neis.go.kr/hub";
+const KEY = process.env.NEIS_API_KEY || "";
+const PAGE = KEY ? 1000 : 5;
+// 창을 쪼개 받다 보면 요청이 꽤 든다. 일정이 촘촘한 학교(단대부고는 두 달에 99건)는
+// 예산이 모자라 잘리고, 잘린 조각에 시험이 안 들어 있으면 "시험 없음"으로 잘못 보였다.
+// 학교 찾기가 두 종류 × (서울, 전국) 로 최대 4번까지 쓴다. 키가 있으면 요청이 싸므로 넉넉히.
+const BUDGET = KEY ? 12 : 90;     // 한 번 부를 때 쓸 수 있는 **나이스** 요청 수
+// ⚠ 학교 홈페이지와 문서뷰어(Synap)는 나이스가 아니다. 예산을 같이 쓰면
+//    키를 넣어 나이스 예산이 90 → 12 로 줄어드는 순간 첨부문서를 못 읽게 된다
+//    (메뉴 찾기 + 달 수 + 게시판 목록·상세 + Synap 변환·쪽수만큼 든다).
+//    키와 무관한 몫으로 따로 둔다.
+const WEB_BUDGET = 40;
+
+// 짧은 이름 → 정식 이름으로 규칙만으로는 못 펴는 것들
+const ALIAS = {
+  "건대부고": "건국대학교사범대학부속고등학교",
+  "한대부고": "한양대학교사범대학부속고등학교",
+  "중대부고": "중앙대학교사범대학부속고등학교",
+  "단대부고": "단국대학교사범대학부속고등학교",
+  "건대부중": "건국대학교사범대학부속중학교",
+  "한대부중": "한양대학교사범대학부속중학교",
+  "중대부중": "중앙대학교사범대학부속중학교",
+  "단대부중": "단국대학교사범대학부속중학교",
+};
+// 숙명여고 → 숙명여자고등학교 / 경기고 → 경기고등학교
+function officialName(n) {
+  if (ALIAS[n]) return ALIAS[n];
+  if (/여고$/.test(n)) return n.replace(/여고$/, "여자고등학교");
+  if (/고$/.test(n)) return n.replace(/고$/, "고등학교");
+  if (/여중$/.test(n)) return n.replace(/여중$/, "여자중학교");
+  if (/중$/.test(n)) return n.replace(/중$/, "중학교");
+  return n;
+}
+// 나이스 이름 검색은 앞부분 일치라 "숙명여고"로는 안 걸리고 "숙명"으로 걸린다
+function searchStem(n) {
+  if (ALIAS[n]) return ALIAS[n];
+  return n.replace(/여?[고중]$/, "");
+}
+// "대청중"이면 중학교, 아니면 고등학교. 어디까지나 짐작이라 못 찾으면 반대쪽도 본다
+// (중대부고처럼 가운데에 "중"이 든 고등학교가 있어서 끝 글자만 본다).
+const guessKind = (n) => (/중$/.test(String(n || "")) ? "중학교" : "고등학교");
+
+// 이름이 같은 학교가 전국에 여럿 있다 — 대청중 4곳(서울·부산·인천·경남),
+// 세화고·영동고 3곳, 대성고·경신고·동성고·대원고 2곳.
+// 나이스가 주는 순서는 보장되지 않는다. 지금은 서울이 먼저 오지만 그건 우연이고,
+// 서울에 없는 학교로 넘어가면 순서가 곧 결과가 된다. **서울 → 경기 → 나머지**로 못 박는다.
+const OFFICE_RANK = { B10: 0, J10: 1 };          // B10 서울, J10 경기
+const officeRank = (r) => {
+  const v = OFFICE_RANK[r.ATPT_OFCDC_SC_CODE];
+  return v === undefined ? 9 : v;
+};
+// 학교를 고르는 규칙이 바뀌면 올린다. 옛 캐시는 한 번 다시 찾게 된다.
+const RESOLVE_V = 2;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function callNeis(path, params) {
+  const p = new URLSearchParams({ Type: "json", pIndex: "1", pSize: String(PAGE), ...params });
+  if (KEY) p.set("KEY", KEY);
+  const r = await fetch(NEIS + "/" + path + "?" + p.toString());
+  if (!r.ok) return { rows: [], total: 0 };
+  const j = await r.json().catch(() => null);
+  const box = j && j[path];
+  if (!box) return { rows: [], total: 0 };   // RESULT 만 오면 자료 없음
+  const head = (box[0] && box[0].head) || [];
+  return { rows: (box[1] && box[1].row) || [], total: (head[0] && head[0].list_total_count) || 0 };
+}
+
+// ---- 학교 코드 찾기 (한 번 찾으면 dash/neisCodes 에 적어둔다) ----
+let memo = null;
+async function loadCodes() {
+  if (memo) return memo;
+  const d = await getDoc("dash/neisCodes").catch(() => null);
+  memo = (d && d.map) || {};
+  return memo;
+}
+// 시·도 이름을 앞에 붙여 부르는 습관("서울서운중"). 중·고등학교의 정식 이름에는 대개 그게 없어서
+// 그대로 찾으면 **아무것도 안 나온다** — `서울서운중` → 검색어 `서울서운` → 0건.
+// (초등학교는 정식 이름에 들어 있으므로 붙은 채로 먼저 찾고, 안 되면 떼고 다시 찾는다)
+const REGION_PREFIX = /^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)(?=.{3,})/;
+
+async function resolveSchool(short, budget) {
+  const codes = await loadCodes();
+  const cached = codes[short];
+  // v 가 낮으면 옛 규칙으로 잡힌 것이다 — 이름이 같은 학교를 잘못 골랐을 수 있으므로
+  // 한 번 다시 찾는다. 찾고 나면 새 v 로 다시 캐시되니 다음부터는 그냥 쓴다.
+  if (cached && cached.code && cached.v >= RESOLVE_V) return cached;
+
+  const want = officialName(short);
+  let dupes = [];                      // 이름이 같은데 안 고른 학교의 지역
+  const pick = (rows) => {
+    const exact = rows.filter((r) => r.SCHUL_NM === want);
+    // 정식 이름이 정확히 맞는 것들. 그게 없으면 후보가 딱 하나일 때만 받는다.
+    const cand = exact.length ? exact : (rows.length === 1 ? rows : []);
+    if (!cand.length) return null;
+    const sorted = cand.slice().sort((a, b) => officeRank(a) - officeRank(b));
+    dupes = sorted.slice(1).map((r) => String(r.ATPT_OFCDC_SC_NM || "").replace("교육청", ""));
+    return sorted[0];
+  };
+
+  // 짐작한 종류를 먼저, 그래도 없으면 반대 종류를 본다.
+  const kinds = guessKind(short) === "중학교" ? ["중학교", "고등학교"] : ["고등학교", "중학교"];
+  let hit = null;
+  for (const sk of kinds) {
+    if (hit || budget.n <= 0) break;
+    budget.n--;
+    let { rows } = await callNeis("schoolInfo",
+      { ATPT_OFCDC_SC_CODE: "B10", SCHUL_KND_SC_NM: sk, SCHUL_NM: searchStem(short) });
+    hit = pick(rows);
+    if (!hit && budget.n > 0) {     // 서울에 없으면 전국에서 정식 이름으로
+      await sleep(80);
+      budget.n--;
+      ({ rows } = await callNeis("schoolInfo", { SCHUL_KND_SC_NM: sk, SCHUL_NM: want }));
+      hit = pick(rows);
+    }
+    if (!hit) await sleep(40);
+  }
+  // 못 찾았으면 시·도 이름을 떼고 한 번 더. "서울서운중" → "서운중"
+  // 찾은 결과는 **부른 이름 그대로**(short) 캐시된다 — 다음부터 이 왕복이 없다.
+  if (!hit && REGION_PREFIX.test(short) && budget.n > 0) {
+    const bare = short.replace(REGION_PREFIX, "");
+    const r = await resolveSchool(bare, budget);
+    if (r) {
+      const alias = { ...r, dupes: r.dupes || [] };
+      memo = { ...(memo || {}), [short]: alias };
+      const fp0 = "map.`" + short.replace(/[\`]/g, "\$&") + "`";
+      await patchDoc("dash/neisCodes", { map: { [short]: alias } }, [fp0]).catch(() => {});
+      return alias;
+    }
+  }
+  if (!hit) return null;
+  const found = { code: hit.SD_SCHUL_CODE, office: hit.ATPT_OFCDC_SC_CODE,
+                  official: hit.SCHUL_NM, officeName: hit.ATPT_OFCDC_SC_NM,
+                  kind: hit.SCHUL_KND_SC_NM || guessKind(short),
+                  dupes: dupes, v: RESOLVE_V,
+                  hmpg: hit.HMPG_ADRES || "" };
+  memo = { ...(memo || {}), [short]: found };
+  // ⚠ 지도를 통째로 쓰면 안 된다. 여러 학교를 나란히 부르면 인스턴스마다
+  //    제 손에 든 옛 지도를 덮어써서 남이 방금 넣은 학교가 사라진다.
+  //    한글 이름은 필드 경로에서 백틱으로 감싸야 한다.
+  const fp = "map.`" + short.replace(/[\\`]/g, "\\$&") + "`";
+  await patchDoc("dash/neisCodes", { map: { [short]: found } }, [fp]).catch(() => {});
+  return found;
+}
+
+// 나이스로 채운 줄에도 **사람이 눈으로 볼 자리**를 준다.
+// 나이스 API 주소를 주면 JSON이 열릴 뿐이라 확인이 안 된다. 학교 홈페이지의
+// 학사일정 메뉴를 한 번 찾아 학교 코드 옆에 적어둔다 — 학교마다 딱 한 번만 든다.
+// ("" 도 답이다. 찾아봤는데 없더라는 뜻이니 다음부터 또 찾지 않는다)
+async function calendarUrl(short, s, web) {
+  if (s.calUrl !== undefined) return s.calUrl;
+  if (!s.hmpg || web.n <= 0) return "";
+  web.n--;
+  let url = "";
+  try {
+    const base = s.hmpg.replace(/^http:/, "https:").replace(/\/+$/, "") + "/";
+    url = (await findScheduleMenus(base))[0] || "";
+  } catch (e) { url = ""; }
+  const next = { ...s, calUrl: url };
+  memo = { ...(memo || {}), [short]: next };
+  const fp = "map.`" + short.replace(/[\\`]/g, "\\$&") + "`";
+  await patchDoc("dash/neisCodes", { map: { [short]: next } }, [fp]).catch(() => {});
+  return url;
+}
+
+// ---- 날짜 ----
+const ymd = (s) => String(s || "").replace(/-/g, "");
+const dash = (s) => String(s).slice(0, 4) + "-" + String(s).slice(4, 6) + "-" + String(s).slice(6, 8);
+const toDate = (s) => new Date(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
+const fmt = (d) => d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
+const shiftDay = (s, n) => { const d = toDate(s); d.setDate(d.getDate() + n); return fmt(d); };
+const midDay = (a, b) => fmt(new Date((toDate(a).getTime() + toDate(b).getTime()) / 2));
+
+// 창을 반씩 잘라가며 전부 받는다. 키가 있으면 첫 요청에 다 온다.
+async function scheduleRows(office, code, from, to, budget) {
+  const seen = {};
+  const out = [];
+  const stack = [[from, to]];
+  let truncated = false;
+  while (stack.length) {
+    if (budget.n <= 0) { truncated = true; break; }
+    const [a, b] = stack.pop();
+    budget.n--;
+    const { rows, total } = await callNeis("SchoolSchedule",
+      { ATPT_OFCDC_SC_CODE: office, SD_SCHUL_CODE: code, AA_FROM_YMD: a, AA_TO_YMD: b });
+    if (total > rows.length && a < b) {      // 다 못 받았으면 창을 반으로
+      const m = midDay(a, b);
+      stack.push([a, m], [shiftDay(m, 1), b]);
+      await sleep(40);
+      continue;
+    }
+    rows.forEach((r) => {
+      const k = r.AA_YMD + "|" + r.EVENT_NM;
+      if (!seen[k]) { seen[k] = 1; out.push(r); }
+    });
+    if (stack.length) await sleep(40);   // 더 부를 게 있을 때만 쉰다
+  }
+  return { rows: out, truncated };
+}
+
+// "2학기 중간고사"는 잡고 "성적확인 및 이의신청"은 안 잡는다.
+//
+// 학교마다 부르는 이름이 다르다. 경기도 쪽은 "1차 지필평가 / 2차 지필평가"라고 쓴다 —
+// kind를 글자 그대로 맞추면(indexOf("중간")) 그런 학교가 통째로 빠진다.
+const KIND_RE = {
+  "중간": /(중간|1\s*차\s*(지필|정기)|지필\s*평가\s*1|1\s*[회차]\s*(고사|시험))/,
+  "기말": /(기말|2\s*차\s*(지필|정기)|지필\s*평가\s*2|2\s*[회차]\s*(고사|시험))/,
+};
+// 학교마다 부르는 말이 다르다. 중흥고는 2025년엔 "지필평가"라고 쓰다가 2026년에
+// "정기시험"으로 바꿨다 — 낱말을 좁게 잡으면 그런 학교가 통째로 사라진다.
+const EXAM_WORD = /(중간|기말|지필|고사|정기\s*시험|정기\s*평가)/;
+// ⚠ "시험"까지 넓히면 대학수학능력시험이 딸려 온다. 반드시 먼저 걸러낸다.
+const NOT_EXAM = /(모의|학력평가|수능|모평|대학수학능력|학업성취도|검정|자격)/;
+// 차수(중간/기말)로 가를 수 없는 시험. 기간으로만 거른다.
+const KIND_FREE = /(졸업\s*고사|졸업\s*시험)/;
+
+// ---- 시험 이름을 셋으로 못박는다 ----
+//
+// 나이스가 주는 이름은 학교마다 제각각이다:
+//   "3학년기말고사" · "3학년 지필고사" · "졸업고사" · "2학기 기말고사(1,2학년)"
+//   "1차 지필평가"(경기) · "정기시험"(중흥고)
+// 그대로 표에 넣으면 줄마다 다르게 읽혀서 한눈에 훑을 수가 없다.
+//
+// 규칙은 **학기에 몇 번 보느냐**로 가른다. 이름이 아니라.
+//   중간과 기말을 둘 다 보는 학교  → 이번 회차대로 "중간고사" / "기말고사"
+//   한 번만 보는 학교              → "졸업고사"
+//
+// ⚠ 두 번째가 핵심이다. 강남 중3은 고입 원서 때문에 10월 말에 딱 한 번 보는데
+//    나이스에 올라온 이름은 그냥 "기말고사"다(대명중 10/26, 언북중 10/29).
+//    이름을 믿으면 12월 기말과 구별이 안 된다 — 실제로 그게 그 학교의 졸업고사다.
+const KIND_LABEL = { "중간": "중간고사", "기말": "기말고사" };
+const examLabel = (kind, twice) => (twice ? (KIND_LABEL[kind] || "시험") : "졸업고사");
+// 이름에 학년이 붙어 있으면("기말고사(1,2학년)", "졸업고사(3학년)") 그 학년 것이다.
+// ⚠ 학년칸을 대충 채워 넣은 학교가 있다 — 중대부중 2026 "2학기 기말고사(1,2학년)"은
+//    학년칸이 1·2·3 모두 Y다. 이름이 더 정확하므로 이름이 있으면 그쪽을 믿는다.
+// "(2차)" 처럼 학년이 아닌 괄호에는 안 걸린다(숫자·쉼표만 받는다).
+function nameGrades(nm) {
+  const m = String(nm || "").match(/\(([\d,\s]+)(?:학년)?\)/);
+  if (!m) return null;
+  const ns = m[1].split(",").map((x) => x.trim()).filter((x) => /^[1-3]$/.test(x));
+  return ns.length ? ns : null;
+}
+function isExam(nm, kind) {
+  const s = String(nm || "");
+  if (!EXAM_WORD.test(s)) return false;
+  // 모의고사·학력평가·수능은 내신이 아니다
+  if (NOT_EXAM.test(s)) return false;
+  if (/(성적|이의|발표|정정|준비|대비|안내|미실시|없음|출제|보안|연수)/.test(s)) return false;
+  // ⚠ 중3은 2학기에 "중간/기말" 대신 **졸업고사**를 보는 학교가 많다.
+  //    고입 원서 때문에 일찍 끝내느라 시기도 제각각이라 차수로는 가를 수 없다.
+  //    (언주중 2026: 3학년 졸업고사 10/28~29, 2학년 기말은 12월)
+  //    차수 필터를 면제하고, 선생님이 고른 기간(from~to)으로만 걸러지게 둔다.
+  if (kind && !KIND_FREE.test(s)) { const re = KIND_RE[kind]; if (re && !re.test(s)) return false; }
+  return true;
+}
+// ⚠ 나이스 학년 칸은 1·2·3학년뿐이다. 같은 THREE_GRADE_EVENT_YN 이
+//    중학교에선 중3이고 고등학교에선 고3이다. 학교 종류를 같이 보지 않으면
+//    중3 시험이 고3 칸으로 들어간다.
+const YN_FIELDS = ["ONE_GRADE_EVENT_YN", "TW_GRADE_EVENT_YN", "THREE_GRADE_EVENT_YN"];
+const gradesOf = (sk) => (sk === "중학교" ? ["중1", "중2", "중3"] : ["고1", "고2", "고3"]);
+// 학년 칸을 맞추려면 위 세 학년이 다 필요하지만, **돌려주는 건 앱이 쓰는 학년만**이다.
+// 중학교는 중3만 받는다 (중1·중2 학생을 안 받는다).
+const usedGrades = (sk) => (sk === "중학교" ? ["중3"] : ["고1", "고2", "고3"]);
+const fieldOf = (sk, g) => { const i = gradesOf(sk).indexOf(g); return i < 0 ? null : YN_FIELDS[i]; };
+
+// ---- 중3이 그 학기에 시험을 몇 번 보나 ----
+//
+// 중3은 학교마다 다르다. 중간·기말을 다 보는 학교가 있고(중대부중), 졸업고사 한 번으로
+// 끝내는 학교가 있다(언주중) — 고입 원서 때문에 일찍 끝내기 때문이다.
+// 회차마다 "왜 이 학교는 안 채워지지" 하지 않으려면, 그 학기에 몇 번 보는지를
+// 회차와 상관없이 한 번 알아둬야 한다. 키가 있으면 학기 전체가 요청 하나로 온다.
+function semesterRange(from) {
+  const y = Number(from.slice(0, 4)), m = Number(from.slice(4, 6));
+  if (m >= 8) return [y + "0801", (y + 1) + "0228"];        // 2학기
+  if (m <= 2) return [(y - 1) + "0801", y + "0228"];        // 2학기 (해가 넘어간 뒤)
+  return [y + "0301", y + "0731"];                          // 1학기
+}
+// 중간고사 철이 끝나는 날. 이 뒤에 홀로 있는 시험은 졸업고사로 본다.
+//
+// ⚠ 그냥 고른 숫자가 아니다. 중3 졸업고사가 10월 말~11월 초에 몰리는 건
+//    고입 원서 마감 때문에 성적을 그때까지 내야 해서다. 실측(2026 2학기 강남):
+//      대명중 10/26 · 아주중 10/28 · 원촌중 10/28 · 언주중 10/28~29
+//      언북중 10/29 · 숙명여중 11/2 · 중대부중 11/3
+//    한편 봉은중은 10/12다 — 홀로 2주 앞이고, 이건 평범한 2학기 중간고사 자리다.
+//    그 사이(10/20)에 금을 긋는다.
+function midSeasonEnd(semFrom) {
+  const y = semFrom.slice(0, 4);
+  return semFrom.slice(4) === "0801" ? y + "1020" : y + "0520";
+}
+
+async function examPlan(office, code, from, budget) {
+  if (budget.n <= 0) return null;
+  const [a, b] = semesterRange(from);
+  budget.n--;
+  const { rows } = await callNeis("SchoolSchedule",
+    { ATPT_OFCDC_SC_CODE: office, SD_SCHUL_CODE: code, AA_FROM_YMD: a, AA_TO_YMD: b });
+  // 차수는 안 본다 — 중간·기말·졸업고사를 전부 모아 몇 덩어리인지 세는 게 목적이다.
+  const mine = rows.filter((r) => {
+    if (!isExam(r.EVENT_NM, "")) return false;
+    const ng = nameGrades(r.EVENT_NM);
+    if (ng) return ng.indexOf("3") >= 0;
+    return r.THREE_GRADE_EVENT_YN === "Y" || !r.THREE_GRADE_EVENT_YN;
+  });
+  if (!mine.length) return { blocks: [] };
+  const byDay = {};
+  mine.forEach((r) => { if (!byDay[r.AA_YMD]) byDay[r.AA_YMD] = r.EVENT_NM; });
+  const days = Object.keys(byDay).sort();
+  // 시험은 며칠에 걸친다. 주말·공휴일로 하루 끊기는 것까지 한 덩어리로 본다.
+  const blocks = [];
+  days.forEach((d) => {
+    const last = blocks[blocks.length - 1];
+    if (last && (toDate(d) - toDate(last.e)) / 86400000 <= 4) { last.e = d; return; }
+    blocks.push({ s: d, e: d, nm: byDay[d] });
+  });
+  // 중간·기말을 **둘 다** 보는 학교인가.
+  //
+  // ⚠ 이름만 보면 안 된다. 차수를 아예 안 밝히는 학교가 있다 —
+  //    봉은중은 두 번 다 그냥 "3학년 지필고사"다. 이름으로만 가르면
+  //    중간도 기말도 아닌 게 되어 졸업고사로 잘못 떨어진다.
+  //    그래서 **몇 덩어리인가**를 같이 본다. 덩어리는 4일 안쪽이면 하나로 묶으므로
+  //    이틀에 걸친 시험이 두 번으로 세어지지는 않는다.
+  //
+  // ⚠ 졸업고사라고 적혀 있으면 그건 덩어리가 몇이든 졸업고사 학교다.
+  const hasFree = blocks.some((x) => KIND_FREE.test(x.nm));
+  const hasMid = blocks.some((x) => KIND_RE["중간"].test(x.nm));
+  const hasFin = blocks.some((x) => KIND_RE["기말"].test(x.nm));
+
+  // ⚠ "한 덩어리뿐"을 곧바로 졸업고사로 읽으면 안 된다.
+  //    졸업고사는 **기말을 대신하는** 시험이라 늘 학기 뒤쪽에 있다.
+  //    앞쪽에 홀로 있는 것은 졸업고사가 아니라 **기말이 아직 안 올라온 중간고사**다.
+  //    (봉은중 10/12 — 이걸 졸업고사로 읽으면 11·12월이 통째로 비어버린다)
+  //    그리고 졸업고사는 **2학기 이야기다** — 고입 원서 때문에 있는 것이니까.
+  //    1학기에 하나뿐이면 날짜와 상관없이 아직 안 올라온 것이다.
+  const fall = a.slice(4) === "0801";
+  const lone = blocks.length === 1 && !hasFree;
+  const pending = lone && (!fall || blocks[0].s < midSeasonEnd(a));
+  const twice = !hasFree && (blocks.length >= 2 || (hasMid && hasFin) || pending);
+  return {
+    twice: twice,
+    // 두 번 보는 학교로 봤지만 아직 하나밖에 안 올라왔다. 기말 때 다시 불러야 한다.
+    pending: pending,
+    blocks: blocks.map((x, i) => ({
+      start: dash(x.s), end: dash(x.e),
+      // 이름이 차수를 밝히면 그대로, 안 밝히면 **순서대로** 앞이 중간·뒤가 기말이다
+      name: !twice ? "졸업고사"
+        : KIND_RE["기말"].test(x.nm) ? "기말고사"
+        : KIND_RE["중간"].test(x.nm) ? "중간고사"
+        : (i === 0 ? "중간고사" : "기말고사"),
+      raw: x.nm,   // 나이스가 준 원래 이름. 이상하면 여기를 본다
+    })),
+  };
+}
+
+// ---- 학교 홈페이지에서 긁기 (나이스에 시험이 안 올라온 학교) ----
+//
+// 서울 교육청 웹호스팅을 쓰는 학교는 생김새가 같다. 메뉴 어딘가에 "월간일정 / 학사일정 /
+// 학교일정"이 있고, 그 페이지에 viewType=list 로 POST 하면 표가 그대로 온다:
+//     2026-10-01(목) 00시 | 2026-10-02(금) 23시 | 중간고사
+// 달력형은 눈으로 보라고 만든 것이라 목록형을 쓴다.
+//
+// 게시판에 PDF·한글파일·이미지로 올리는 학교(경기고·언남고·휘문고 같은)는 여기서 못 잡는다.
+// 그건 형식이 학교마다 달라서 일반화가 안 된다 — 그런 학교는 손으로 넣어야 한다.
+const UA = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36" };
+
+function monthsBetween(from, to) {
+  const out = [];
+  let y = Number(from.slice(0, 4)), m = Number(from.slice(4, 6));
+  const ey = Number(to.slice(0, 4)), em = Number(to.slice(4, 6));
+  while (y < ey || (y === ey && m <= em)) {
+    out.push([String(y), String(m).padStart(2, "0")]);
+    m++; if (m > 12) { m = 1; y++; }
+    if (out.length > 6) break;
+  }
+  return out;
+}
+const toText = (h) => h.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<style[\s\S]*?<\/style>/g, "")
+  .replace(/<[^>]+>/g, "|").replace(/&nbsp;/g, " ").replace(/[ \t\r\n]+/g, " ").replace(/\|+/g, "|");
+
+async function findScheduleMenus(base) {
+  const r = await fetch(base, { headers: UA, redirect: "follow" });
+  if (!r.ok) return [];
+  const html = await r.text();
+  const re = /href="([^"]*\/\d+\/subMenu\.do[^"]*)"[^>]*>([\s\S]{0,120}?)<\/a>/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(html))) {
+    const t = m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, "");
+    if (!/일정|학사|캘린더/.test(t)) continue;
+    if (/급식/.test(t)) continue;                       // 급식일정은 아니다
+    const href = m[1].startsWith("http") ? m[1] : new URL(m[1], base).toString();
+    if (out.indexOf(href) < 0) out.push(href);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+let lastMenus = [];
+async function homepageExams(hmpg, from, to, kind, budget, grades) {
+  if (!hmpg) return null;
+  const base = hmpg.replace(/^http:/, "https:").replace(/\/+$/, "") + "/";
+  let menus;
+  budget.n--;
+  try { menus = await findScheduleMenus(base); } catch (e) { return null; }
+  if (!menus.length) return null;
+
+  lastMenus = menus;
+  const rows = [];
+  let usedUrl = "";          // 실제로 자료가 나온 메뉴. 선생님이 눈으로 볼 자리다
+  for (const url of menus) {
+    for (const [y, mm] of monthsBetween(from, to)) {
+      if (budget.n <= 0) break;
+      budget.n--;
+      let t = "";
+      try {
+        const body = new URLSearchParams({ viewType: "list", srhSchdulYear: y, srhSchdulMonth: mm });
+        const r = await fetch(url, { method: "POST", body,
+          headers: { ...UA, "Content-Type": "application/x-www-form-urlencoded" } });
+        t = toText(await r.text());
+      } catch (e) { continue; }
+      // 칸 사이가 "| |" 처럼 여러 개로 나오므로 구분자를 넉넉히 잡는다
+      const re = /(\d{4}-\d{2}-\d{2})\([월화수목금토일]\)[^|]*[|\s]+(\d{4}-\d{2}-\d{2})\([월화수목금토일]\)[^|]*[|\s]+([^|]{1,40})/g;
+      let m;
+      while ((m = re.exec(t))) rows.push({ s: m[1], e: m[2], nm: m[3].trim() });
+      await sleep(40);
+    }
+    if (rows.length) { usedUrl = url; break; }   // 쓸 만한 메뉴를 찾았으면 더 안 본다
+  }
+  if (!rows.length) return null;
+  const exams = rows.filter((r) => isExam(r.nm, kind));
+  if (!exams.length) return { hasAny: true, byGrade: {}, url: usedUrl };
+
+  // "중간고사(1,2)" 처럼 학년이 붙어 있으면 그 학년만. 없으면 전 학년.
+  // ⚠ 예전엔 여기서 /\(([\d,\s]+)\)/ 를 직접 썼는데 "(1,2학년)"에는 안 걸렸다.
+  //    안 걸리면 "전 학년 공통"으로 넘어가서 **1·2학년 시험이 중3 줄에 들어갔다**
+  //    (정신여중·숙명여중이 그렇게 잘못 채워졌다). 나이스 경로와 같은 nameGrades 를 쓴다.
+  const byGrade = {};
+  (grades || ["고1", "고2", "고3"]).forEach((g) => {
+    const n = g.slice(1);          // "고1"·"중1" 둘 다 뒤 한 글자가 학년이다
+    const named = exams.filter((r) => { const ng = nameGrades(r.nm); return ng && ng.indexOf(n) >= 0; });
+    // 이름에 학년이 없는 것만 전 학년 공통으로 본다. 이름이 있는데 내 학년이 아니면 남의 것이다.
+    const plain = exams.filter((r) => !nameGrades(r.nm));
+    const mine = named.length ? named : plain;
+    if (!mine.length) return;
+    const ds = [];
+    mine.forEach((r) => { ds.push(r.s.replace(/-/g, ""), r.e.replace(/-/g, "")); });
+    ds.sort();
+    byGrade[g] = { start: dash(ds[0]), end: dash(ds[ds.length - 1]), days: mine.length, name: mine[0].nm };
+  });
+  return { hasAny: true, byGrade, viaHomepage: true, url: usedUrl };
+}
+
+// ---- 3단계: 게시판에 붙은 문서에서 읽기 ----
+//
+// 달력 페이지가 아니라 게시판에 PDF·한글파일로만 올리는 학교가 있다(경기고·언남고).
+// 서울 교육청 CMS는 게시판도 생김새가 같아서 여기까지는 규칙으로 간다:
+//   메뉴 페이지에서 bbsId → selectBoardListAjax.do 로 글 목록 → "학사일정" 글 고르기
+//   → selectBoardDetailAjax.do 로 첨부 atchFileId → 문서뷰어(Synap)
+// 뷰어는 변환된 글자층을 thumbnailxml 로 준다. PDF를 직접 뜯지 않아도 글자가 나온다.
+//   ⚠ 목록/상세 AJAX는 **세션 쿠키가 있어야** 내용을 준다. 없으면 빈 껍데기가 온다.
+//
+// 마지막으로 그 글자에서 날짜를 뽑는 일만 남는데, 학사력은 학교마다 표 모양이 완전히
+// 달라서(월별 세로표, 일자 가로표…) 규칙으로 짜면 학교마다 깨진다. 그건 AI에게 맡기되,
+// **지어낼 수 없게 검증한다** — 답으로 준 날짜의 숫자가 원문에서 실제로 시험 낱말 바로
+// 앞에 붙어 있어야만 받아들인다.
+const SYNAP = "http://viewhosting.ssem.or.kr:8080/SynapDocViewServer";
+
+async function boardDocText(menuUrl, budget) {
+  const origin = new URL(menuUrl).origin;
+  budget.n--;
+  const first = await fetch(menuUrl, { headers: UA });
+  const cookie = (first.headers.getSetCookie ? first.headers.getSetCookie() : [])
+    .map((c) => c.split(";")[0]).join("; ");
+  const page = await first.text();
+  const bbsId = (page.match(/name="bbsId"[^>]*value="([^"]+)"/) || [])[1];
+  if (!bbsId) return null;                       // 게시판이 아니다
+  const H = { ...UA, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+              "X-Requested-With": "XMLHttpRequest", Referer: menuUrl, Cookie: cookie };
+
+  budget.n--;
+  const list = await (await fetch(origin + "/dggb/module/board/selectBoardListAjax.do", {
+    method: "POST", headers: H,
+    body: new URLSearchParams({ bbsId, bbsTyCode: "base", pageIndex: "1",
+      customRecordCountPerPage: "30", searchCondition: "", searchKeyword: "", cmntSe: "N" }),
+  })).text();
+  const re = /fnView\('([^']+)',\s*'([^']+)'\)[^>]*>([\s\S]{0,140}?)<\/a>/g;
+  const posts = [];
+  let m;
+  while ((m = re.exec(list))) posts.push({ bbsId: m[1], nttId: m[2],
+    title: m[3].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() });
+  const want = /학사\s*일정|학사\s*력|학사력|연간\s*일정/;
+  const yr = new Date().getFullYear();
+  const hit = posts.find((x) => want.test(x.title) && x.title.indexOf(String(yr)) >= 0)
+           || posts.find((x) => want.test(x.title));
+  if (!hit) return null;
+
+  budget.n--;
+  const html = await (await fetch(origin + "/dggb/module/board/selectBoardDetailAjax.do", {
+    method: "POST", headers: H,
+    body: new URLSearchParams({ bbsId: hit.bbsId, nttId: hit.nttId, bbsTyCode: "base",
+      pageIndex: "1", cmntSe: "N", customRecordCountPerPage: "30" }),
+  })).text();
+  const fid = (html.match(/name="atchFileId"[^>]*value="([^"]+)"/) || [])[1];
+  if (!fid) return null;
+
+  // ⚠ fileSn 은 **1부터** 시작한다. 0으로 부르면 빈 HTML 이 200 으로 와서
+  //    "첨부가 없다"로 잘못 읽힌다. 경기고 학사일정 PDF 가 여기서 안 잡혔다.
+  //    (실제 다운로드 경로는 /dggb/board/boardFile/downFile.do?atchFileId=…&fileSn=1)
+  for (const sn of ["1", "2", "3"]) {
+    if (budget.n <= 0) break;
+    budget.n--;
+    try {
+      // ⚠ filePath 는 URL 인코딩해서 넘긴다. 안 하면 주소 안의 & 에서 잘려 엉뚱한 것을
+      //    변환한다 — status 의 format 이 PDF 가 아니라 TXT 로 오고 글자가 스물몇 자만 온다.
+      //    지금 서울 CMS 주소에는 & 가 없어서 우연히 되고 있을 뿐이다.
+      const inner = origin + ":443/dggb/cnvrFileDown.do?atchFileId=" + fid + ":" + sn;
+      const job = SYNAP + "/job?fid=" + fid + "_" + sn +
+        "&filePath=" + encodeURIComponent(inner) +
+        "&convertType=1&fileType=URL&sync=true";
+      const r = await fetch(job, { headers: UA, redirect: "follow" });
+      const key = (r.url.match(/key=([0-9a-f]+)/) || [])[1];
+      if (!key) continue;
+      const st = await (await fetch(SYNAP + "/status/" + key, { headers: UA })).json().catch(() => null);
+      const pages = Math.min((st && st.pageNum) || 1, 14);
+      let text = "";
+      for (let pg = 0; pg < pages; pg++) {
+        if (budget.n <= 0) break;
+        budget.n--;
+        const x = await (await fetch(SYNAP + "/thumbnailxml/" + key + "/" + pg + "?dpi=96", { headers: UA })).text();
+        text += x.replace(/<[^>]+>/g, " ")
+                 .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
+                 .replace(/\s+/g, "");
+      }
+      if (text.length > 400 && /(고사|평가)/.test(text)) return { text, title: hit.title };
+    } catch (e) { /* 다음 첨부 */ }
+  }
+  return null;
+}
+
+// 그 날 숫자가 원문에서 정말 시험 낱말 바로 앞에 붙어 있나.
+// 앞에 다른 숫자가 없어야 한다는 조건은 못 건다 — 표에서는 날짜가 "…10 12중간고사…"
+// 처럼 줄줄이 붙어 나와서 앞 글자가 숫자인 게 정상이다.
+// **고른 시험 종류만** 본다. 아무 시험 낱말이나 받아주면, 2학기 구간의
+// "27기말고사"에 붙은 "7기말" 때문에 10월 7일이 중간고사로 통과해 버린다.
+const DAY_WORD = {
+  "중간": "(?:중간|1\\s*차\\s*(?:지필|정기))",
+  "기말": "(?:기말|2\\s*차\\s*(?:지필|정기))",
+};
+function dayHasExam(text, ymdStr, kind) {
+  const d = Number(ymdStr.slice(8, 10));
+  const w = DAY_WORD[kind] || "(?:중간|기말|지필|정기)";
+  return new RegExp("" + d + "\\s*(?:2?학기)?\\s*" + w).test(text);
+}
+// 검증에 쓸 구간을 학기로 좁힌다. 한 문서에 1학기·2학기가 다 들어 있어서,
+// 전체를 훑으면 1학기의 "27중간고사"가 2학기 10월 7일을 통과시켜 버린다.
+function semesterSlice(text, from) {
+  const mm = Number(from.slice(4, 6));
+  const second = mm >= 8 || mm <= 2;          // 8월~2월이면 2학기
+  const mark = text.indexOf(second ? "2학기" : "1학기");
+  if (mark < 0) return text;
+  if (!second) {
+    const nxt = text.indexOf("2학기", mark);
+    return nxt > mark ? text.slice(mark, nxt) : text.slice(mark);
+  }
+  return text.slice(mark);
+}
+
+// 왜 못 읽었는지 화면에 보여주려고 남긴다. 조용히 null 만 돌려주면 어디서 막혔는지 알 수 없다.
+let lastDocReason = "";
+async function examFromDoc(text, school, from, to, kind, grades) {
+  const GS = grades && grades.length ? grades : ["고1", "고2", "고3"];
+  lastDocReason = "";
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) { lastDocReason = "AI 키 없음"; return null; }
+  const body = {
+    system_instruction: { parts: [{ text:
+      "너는 한국 중·고등학교 학사일정 표에서 시험 기간만 뽑아내는 도구다. " +
+      "JSON 하나만 출력한다. 설명·코드블록·군더더기 금지. " +
+      "원문에 없는 날짜는 절대 만들지 마라. 확실하지 않으면 {\"none\":true} 를 내라." }] },
+    contents: [{ role: "user", parts: [{ text:
+      school + " 학사일정 문서에서 뽑은 글자다. 표라서 칸 구분이 없어졌고 띄어쓰기도 지워졌다.\n" +
+      "여기서 " + from.slice(0, 4) + "-" + from.slice(4, 6) + "-" + from.slice(6, 8) + " 부터 " +
+      to.slice(0, 4) + "-" + to.slice(4, 6) + "-" + to.slice(6, 8) + " 사이에 있는 " +
+      (kind || "중간") + "고사(지필평가) 기간을 찾아라.\n" +
+      "시작일 = 첫 시험날, 종료일 = 마지막 시험날. 중간에 공휴일로 끊겨도 처음과 끝으로 잡는다.\n" +
+      "1학기 시험이나 모의고사·학력평가는 제외한다.\n\n" +
+      "형식: {\"start\":\"YYYY-MM-DD\",\"end\":\"YYYY-MM-DD\",\"grades\":[" +
+        GS.map((g) => "\"" + g + "\"").join(",") + "]}\n" +
+      "학년 구분이 없으면 grades 는 세 학년 모두 넣는다. 못 찾으면 {\"none\":true}\n\n" +
+      "--- 원문 ---\n" + text.slice(0, 12000) + "\n--- 끝 ---" }] }],
+    // ⚠ gemini-2.5 계열은 답하기 전에 "생각"에 토큰을 쓴다. maxOutputTokens 가 작으면
+    // 생각만 하다 끝나서 **빈 답**이 온다(오류가 아니라 그냥 비어 있어서 알아채기 어렵다).
+    // 생각을 끄고, 상한도 넉넉히 준다.
+    generationConfig: { temperature: 0, maxOutputTokens: 800, responseMimeType: "application/json",
+                        thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { lastDocReason = "AI 호출 실패 " + r.status; return null; }
+  const j = await r.json().catch(() => null);
+  const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
+  const rawTxt = out.map((x) => x.text || "").join("").trim();
+  if (!rawTxt) {
+    const fin = (((j || {}).candidates || [])[0] || {}).finishReason || "";
+    lastDocReason = "AI가 빈 답" + (fin ? " (" + fin + ")" : "");
+    return null;
+  }
+  let v = null;
+  try { v = JSON.parse(rawTxt); } catch (e) { lastDocReason = "AI 답을 못 읽음: " + rawTxt.slice(0, 60); return null; }
+  if (!v || v.none || !v.start || !v.end) { lastDocReason = "문서에서 못 찾음"; return null; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.start) || !/^\d{4}-\d{2}-\d{2}$/.test(v.end)) {
+    lastDocReason = "날짜 모양이 이상함"; return null;
+  }
+
+  // ---- 검증 ---- 지어낸 날짜를 걸러낸다
+  const a = ymd(v.start), b = ymd(v.end);
+  if (a < from || b > to || a > b) { lastDocReason = "기간 밖: " + v.start + "~" + v.end; return null; }
+  const scope = semesterSlice(text, from);
+  if (!dayHasExam(scope, v.start, kind) || !dayHasExam(scope, v.end, kind)) {
+    lastDocReason = "원문에 없는 날짜라 막음: " + v.start + "~" + v.end; return null;
+  }
+
+  const got = Array.isArray(v.grades) && v.grades.length ? v.grades : GS;
+  const byGrade = {};
+  got.forEach((g) => { if (GS.indexOf(g) >= 0) byGrade[g] = { start: v.start, end: v.end, days: 0, name: (kind || "중간") + "고사" }; });
+  return Object.keys(byGrade).length ? byGrade : null;
+}
+
+// ---- 4단계: 메뉴 페이지에 **그림으로** 붙여둔 학사일정 ----
+//
+// 서울 웹호스팅 학교 중에는 학사일정을 게시판 글이 아니라 **메뉴 본문(subMenu.do)** 에 두고,
+// 그것도 표가 아니라 **이미지로 붙여넣은** 곳이 있다(서운중). 글자가 하나도 없으니
+// 목록형 긁기도, 게시판 문서 읽기도 통째로 헛돈다 — "아무 데도 없음"으로 보고했던 학교들이다.
+//
+// 그림은 눈으로 읽을 수밖에 없다. 그래서 AI에게 그림을 준다. 대신 **요일로 검증한다.**
+// 학사일정 표는 요일이 열이라, AI가 "21일 · 월요일 칸"이라고 읽었으면 2026-09-21 이 실제로
+// 월요일이어야 한다. 해를 잘못 잡거나 줄을 밀려 읽으면 요일이 어긋나므로 거기서 걸린다.
+// (같은 수법을 학사력 PDF에서 이미 쓰고 있다)
+
+const CONTENT_IMG = /<img[^>]+src="([^"]+)"[^>]*>/g;
+function contentImages(html, base) {
+  // ⚠ 머리말·옆단의 배너도 selectImageView.do 로 나온다. 문서 차례로 주우면 그것들이 먼저
+  //    잡혀서 **정작 달력 그림이 밀려난다**(서운중은 배너 셋이 앞에 있었다). 두 겹으로 막는다.
+  // (1) 본문이 시작되는 자리부터만 본다
+  const i = html.search(/id="cntTitle"|id="cntBody"|class="[^"]*cntBody/);
+  const scope = i >= 0 ? html.slice(i) : html;
+  // (2) 편집기로 붙여넣은 그림을 앞세운다 — 본문 그림은 거의 그쪽이다
+  const paste = [], other = [];
+  let m;
+  CONTENT_IMG.lastIndex = 0;
+  while ((m = CONTENT_IMG.exec(scope))) {
+    const tag = m[0], src = m[1];
+    if (/로고|logo|배너|banner|icon|아이콘/i.test(tag)) continue;
+    const isPaste = /crosseditor\/binary\/images\//.test(src);
+    const isFile = /selectImageView\.do/.test(src) && /atchFileId=/.test(src) && !/usrimgId=/.test(src);
+    if (!isPaste && !isFile) continue;
+    let u;
+    try { u = src.startsWith("http") ? src : new URL(src, base).toString(); } catch (e) { continue; }
+    const box = isPaste ? paste : other;
+    if (box.indexOf(u) < 0) box.push(u);
+  }
+  return paste.concat(other).slice(0, 6);
+}
+async function menuImages(url, web) {
+  if (web.n <= 0) return [];
+  web.n--;
+  const r = await fetch(url, { headers: UA, redirect: "follow" });
+  if (!r.ok) return [];
+  const html = await r.text();
+  return contentImages(html, url);
+}
+// 그림을 받아 base64 로. 너무 큰 것은 버린다(AI 요청이 통째로 실패한다).
+const IMG_MAX = 4 * 1024 * 1024;
+async function fetchImage(url, web) {
+  if (web.n <= 0) return null;
+  web.n--;
+  const r = await fetch(url, { headers: UA, redirect: "follow" });
+  if (!r.ok) return null;
+  const ct = (r.headers.get("content-type") || "").split(";")[0].trim();
+  if (!/^image\/(png|jpeg|jpg|gif|webp)$/.test(ct)) return null;
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (!buf.length || buf.length > IMG_MAX) return null;
+  return { mime: ct === "image/jpg" ? "image/jpeg" : ct, data: buf.toString("base64") };
+}
+const WD_KO = "일월화수목금토";
+function dowOf(d) { return WD_KO[new Date(d + "T00:00:00").getDay()]; }
+// ⚠ 이 파일의 ymd()는 하이픈만 지운다. 2026-02-30 처럼 **없는 날짜**는 그대로 통과하므로
+//    실재하는 날인지는 따로 봐야 한다(Date 가 다음 달로 넘겨버린다).
+function realDate(d) {
+  const dt = new Date(d + "T00:00:00");
+  if (isNaN(dt.getTime())) return false;
+  const back = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
+  return back === d;
+}
+
+let lastImgReason = "";
+async function examFromImage(school, imgUrls, from, to, kind, grades, web) {
+  const GS = grades && grades.length ? grades : ["고1", "고2", "고3"];
+  lastImgReason = "";
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) { lastImgReason = "AI 키 없음"; return null; }
+  const imgs = [];
+  for (const u of imgUrls) {
+    const im = await fetchImage(u, web).catch(() => null);
+    if (im) imgs.push(im);
+    if (imgs.length >= 3) break;
+  }
+  if (!imgs.length) { lastImgReason = "그림을 못 받음"; return null; }
+
+  const parts = [{ text:
+    school + " 학사일정 표 그림이다. 세로가 월/주, 가로가 요일(월·화·수·목·금)인 달력표다.\n" +
+    "여기서 " + from.slice(0, 4) + "-" + from.slice(4, 6) + "-" + from.slice(6, 8) + " 부터 " +
+    to.slice(0, 4) + "-" + to.slice(4, 6) + "-" + to.slice(6, 8) + " 사이의 " +
+    (kind || "중간") + "고사(지필평가·정기고사) 기간을 찾아라.\n" +
+    "시작일 = 첫 시험날, 종료일 = 마지막 시험날. 중간이 공휴일로 끊겨도 처음과 끝으로 잡는다.\n" +
+    "모의고사·학력평가·수능·체험학습은 시험이 아니다. 1학기 시험도 제외한다.\n" +
+    "학년이 적혀 있으면(\"3학년 기말고사\") 그 학년만, \"1,2,3학년\"이면 전부 해당한다.\n\n" +
+    "**시작일과 종료일이 그림에서 어느 요일 칸에 있었는지도 함께 답하라.** 칸을 잘못 읽었는지 검사하는 데 쓴다.\n\n" +
+    "형식: {\"start\":\"YYYY-MM-DD\",\"end\":\"YYYY-MM-DD\",\"startDow\":\"월\",\"endDow\":\"화\"," +
+    "\"evidence\":\"그 칸에 적힌 글자 그대로\",\"grades\":[" + GS.map((g) => "\"" + g + "\"").join(",") + "]}\n" +
+    "학년 구분이 없으면 grades 는 위의 학년을 모두 넣는다. 못 찾으면 {\"none\":true}" }];
+  imgs.forEach((im) => parts.push({ inline_data: { mime_type: im.mime, data: im.data } }));
+
+  const body = {
+    system_instruction: { parts: [{ text:
+      "너는 한국 중·고등학교 학사일정 표 그림에서 시험 기간만 읽어내는 도구다. " +
+      "JSON 하나만 출력한다. 설명·코드블록 금지. " +
+      "그림에 없는 날짜는 절대 만들지 마라. 확실하지 않으면 {\"none\":true} 를 내라." }] },
+    contents: [{ role: "user", parts }],
+    generationConfig: { temperature: 0, maxOutputTokens: 800, responseMimeType: "application/json",
+                        thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { lastImgReason = "AI 호출 실패 " + r.status; return null; }
+  const j = await r.json().catch(() => null);
+  const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
+  const rawTxt = out.map((x) => x.text || "").join("").trim();
+  if (!rawTxt) {
+    const fin = (((j || {}).candidates || [])[0] || {}).finishReason || "";
+    lastImgReason = "AI가 빈 답" + (fin ? " (" + fin + ")" : "");
+    return null;
+  }
+  let v = null;
+  try { v = JSON.parse(rawTxt); } catch (e) { lastImgReason = "AI 답을 못 읽음: " + rawTxt.slice(0, 60); return null; }
+  if (!v || v.none || !v.start || !v.end) { lastImgReason = "그림에서 못 찾음"; return null; }
+
+  const bad = verifyImagePick(v, from, to, kind);
+  if (bad) { lastImgReason = bad; return null; }
+
+  const got = Array.isArray(v.grades) && v.grades.length ? v.grades : GS;
+  const byGrade = {};
+  got.forEach((g) => { if (GS.indexOf(g) >= 0) byGrade[g] = { start: v.start, end: v.end, days: 0, name: (kind || "중간") + "고사" }; });
+  return Object.keys(byGrade).length ? byGrade : null;
+}
+// 그림에서 읽은 값을 믿을 수 있는지 본다. 글자를 대조할 원문이 없으므로
+// **날짜 자체가 스스로 증명하게** 한다 — 요일이 어긋나면 칸을 잘못 읽은 것이다.
+function verifyImagePick(v, from, to, kind) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.start) || !/^\d{4}-\d{2}-\d{2}$/.test(v.end)) return "날짜 모양이 이상함";
+  if (!realDate(v.start) || !realDate(v.end)) return "없는 날짜: " + v.start + "~" + v.end;
+  const a = ymd(v.start), b = ymd(v.end);
+  if (a > b) return "시작이 끝보다 늦음: " + v.start + "~" + v.end;
+  if (a < from || b > to) return "기간 밖: " + v.start + "~" + v.end;
+  // 시험은 한 주 안에서 끝난다. 열흘을 넘으면 다른 줄까지 삼킨 것이다.
+  const span = (new Date(v.end + "T00:00:00") - new Date(v.start + "T00:00:00")) / 86400000;
+  if (span > 10) return "기간이 너무 김(" + (span + 1) + "일): " + v.start + "~" + v.end;
+  // 시험은 주말에 안 본다
+  if (/[토일]/.test(dowOf(v.start)) || /[토일]/.test(dowOf(v.end))) return "주말로 읽음: " + v.start + "~" + v.end;
+  // ⚠ 여기가 핵심이다. 표는 요일이 열이므로, AI가 읽은 칸의 요일과 그 날짜의 진짜 요일이
+  //    같아야 한다. 해를 잘못 잡거나 줄을 밀려 읽으면 여기서 어긋난다.
+  if (v.startDow && dowOf(v.start) !== String(v.startDow).replace(/요일$/, ""))
+    return "요일이 안 맞음(" + v.start + "은 " + dowOf(v.start) + "요일인데 " + v.startDow + "로 읽음)";
+  if (v.endDow && dowOf(v.end) !== String(v.endDow).replace(/요일$/, ""))
+    return "요일이 안 맞음(" + v.end + "은 " + dowOf(v.end) + "요일인데 " + v.endDow + "로 읽음)";
+  // 읽었다는 글자에 시험이라는 말이 있어야 한다
+  if (v.evidence && !/고사|지필|평가|시험/.test(String(v.evidence))) return "시험 글자가 아님: " + String(v.evidence).slice(0, 30);
+  return "";
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "POST만 받습니다" }); return; }
-  let body = req.body;
-  if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = null; } }
-  body = body || {};
-
   try {
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    // 팀체크의 팀장만. 예전에는 여기서 팀 토큰을, 수업관리 앱에서 그쪽 토큰을 또 봤다 —
+    // 서버가 옮겨왔으니 검사도 한 겹이면 된다.
     const claims = await verifyIdToken(body.idToken);
-    if (!claims || claims.role !== "owner") { res.status(403).json({ error: "관리자만 쓸 수 있습니다" }); return; }
-    if (!body.classToken) { res.status(400).json({ error: "수업관리 앱 로그인이 풀렸습니다. 새로고침 해주세요" }); return; }
-
-    const r = await fetch(CLASS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        idToken: body.classToken,
-        school: body.school, from: body.from, to: body.to, kind: body.kind || "",
-      }),
-    });
-    let j = null;
-    try { j = await r.json(); } catch (e) {}
-    if (!r.ok) {
-      res.status(r.status).json({ error: (j && j.error) || ("수업관리 앱이 " + r.status + " 로 답했습니다") });
-      return;
+    if (!claims || claims.role !== "owner") {
+      res.status(403).json({ error: "관리자만 쓸 수 있습니다" }); return;
     }
-    res.status(200).json(j || {});
+    const school = String(body.school || "").trim();
+    const from = ymd(body.from), to = ymd(body.to);
+    if (!school) { res.status(400).json({ error: "학교를 넘겨주세요" }); return; }
+    if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to) || from > to) {
+      res.status(400).json({ error: "기간을 올바르게 넘겨주세요" }); return;
+    }
+    const kind = body.kind || "";
+    const budget = { n: BUDGET };        // 나이스
+    const web = { n: WEB_BUDGET };       // 학교 홈페이지 · 문서뷰어
+
+    const s = await resolveSchool(school, budget);
+    if (!s) { res.status(200).json({ school, error: "나이스에서 학교를 못 찾았어요", hasKey: !!KEY }); return; }
+
+    // 중3이 그 학기에 몇 번 보는지 먼저 본다 — 걸러내는 규칙이 여기에 달려 있다.
+    let plan = null;
+    if (s.kind === "중학교") plan = await examPlan(s.office, s.code, from, budget).catch(() => null);
+
+    // ⚠ 중3은 학기에 **한 번만** 보는 학교가 대부분이다(강남 중학교 실측).
+    //    그런데 그 한 번의 이름이 "기말고사"다 — 고입 원서 때문에 12월이 아니라
+    //    10월 말에 보기 때문이다(대명중 10/26, 아주중·원촌중 10/28, 언북중 10/29).
+    //    시기는 고등학교 중간고사와 겹치는데 차수 이름으로 거르면 정작 지금 관리해야 할
+    //    시험이 통째로 빠진다. 학기에 한 번뿐이면 차수를 안 따지고 기간으로만 거른다.
+    // 고등학교는 늘 두 번 본다. 중학교만 학기 계획을 보고 가른다.
+    // 덩어리 수를 세는 대신 이름으로 보니, 졸업고사가 두 덩어리로 잘린 학교도 제대로 잡힌다.
+    const twice = s.kind !== "중학교" || !!(plan && plan.twice);
+    const onceOnly = !twice;
+    const { rows, truncated } = await scheduleRows(s.office, s.code, from, to, budget);
+    let exams = rows.filter((r) => isExam(r.EVENT_NM, onceOnly ? "" : kind));
+    // ⚠ 차수를 이름에 안 밝히는 학교가 있다("3학년 지필고사" — 봉은중).
+    //    회차로 거르면 통째로 빠지는데, 선생님이 고른 기간이 이미 그 회차의 창이라
+    //    기간만으로 걸러도 엉뚱한 시험이 들어오지 않는다.
+    if (!exams.length) exams = rows.filter((r) => isExam(r.EVENT_NM, ""));
+    const byGrade = {};
+    const myGrades = gradesOf(s.kind);
+    const want = usedGrades(s.kind);
+    myGrades.forEach((g, gi) => {
+      if (want.indexOf(g) < 0) return;               // 중학교는 중3만
+      const f = fieldOf(s.kind, g);
+      const n = String(gi + 1);                       // 나이스 학년 번호 (중3·고3 모두 3)
+      // (1) 이름에 학년이 적힌 것은 이름대로.
+      const byName = exams.filter((r) => { const ng = nameGrades(r.EVENT_NM); return ng && ng.indexOf(n) >= 0; });
+      // (2) 이름에 학년이 없는 것은 학년칸으로. 학년 표시를 아예 안 하는 학교는 전 학년 공통.
+      const plain = exams.filter((r) => !nameGrades(r.EVENT_NM));
+      const flagged = plain.filter((r) => r[f] === "Y");
+      const cand = byName.concat(flagged.length ? flagged : plain.filter((r) => !r[f]));
+      if (!cand.length) return;
+      // (3) 차수가 분명한 시험이 있으면 그것만. 졸업고사 같은 건 그게 없을 때만 받는다 —
+      //     섞으면 중대부중처럼 "11/3 졸업고사 ~ 12/15 기말고사"로 기간이 늘어난다.
+      const exact = cand.filter((r) => !KIND_FREE.test(r.EVENT_NM));
+      const use = exact.length ? exact : cand;
+      const ds = Array.from(new Set(use.map((r) => r.AA_YMD))).sort();
+      byGrade[g] = { start: dash(ds[0]), end: dash(ds[ds.length - 1]),
+                     days: ds.length,
+                     // 나이스 이름을 그대로 쓰지 않는다 — 셋 중 하나로 못박는다
+                     name: examLabel(kind, twice), raw: use[0].EVENT_NM };
+    });
+    // 나이스에 시험이 없으면 학교 홈페이지를 본다 (달력 → 게시판 문서 순)
+    let via = "", hasAny = rows.length > 0, hpUrl = "";
+    if (Object.keys(byGrade).length) via = "neis";
+    if (!via) {
+      lastMenus = [];
+      // 홈페이지·문서 경로는 학교 종류를 안 가린다. 중학교도 그대로 돈다.
+      // 학년은 앱이 쓰는 것만 넘긴다(중학교면 중3).
+      const hp = await homepageExams(s.hmpg, from, to, kind, web, want);
+      if (hp && hp.url) hpUrl = hp.url;
+      if (hp && Object.keys(hp.byGrade || {}).length) {
+        // 홈페이지·문서에서 읽어온 것도 이름은 똑같이 못박는다.
+        // 안 그러면 나이스로 채운 줄과 문서로 채운 줄의 양식이 갈린다.
+        Object.keys(hp.byGrade).forEach((g) => {
+          byGrade[g] = { ...hp.byGrade[g], raw: hp.byGrade[g].name || "", name: examLabel(kind, twice) };
+        });
+        via = "homepage"; hasAny = true;
+      } else if (hp) hasAny = true;
+    }
+    let docTitle = "", docUrl = "";
+    if (!via && lastMenus.length && web.n > 0) {
+      for (const url of lastMenus) {
+        const doc = await boardDocText(url, web).catch(() => null);
+        if (!doc) continue;
+        docUrl = url;
+        const g = await examFromDoc(doc.text, s.official, from, to, kind, want).catch(() => null);
+        if (g) {
+          Object.keys(g).forEach((k) => {
+            byGrade[k] = { ...g[k], raw: g[k].name || "", name: examLabel(kind, twice) };
+          });
+          via = "doc"; hasAny = true; docTitle = doc.title; break;
+        }
+        hasAny = true;
+      }
+    }
+    // 글자가 아예 없는 학교 — 메뉴 본문에 **그림으로** 붙여둔 학사일정을 읽는다
+    let imgPage = "";
+    if (!via && lastMenus.length && web.n > 0) {
+      for (const url of lastMenus) {
+        const imgs = await menuImages(url, web).catch(() => []);
+        if (!imgs.length) continue;
+        const g = await examFromImage(s.official, imgs, from, to, kind, want, web).catch(() => null);
+        hasAny = true;                       // 그림이 있다는 것 자체가 "일정이 있다"는 뜻이다
+        if (g) {
+          Object.keys(g).forEach((k) => {
+            byGrade[k] = { ...g[k], raw: g[k].name || "", name: examLabel(kind, twice) };
+          });
+          via = "image"; imgPage = url; break;
+        }
+      }
+    }
+    // ---- 근거 링크 ----
+    // 선생님이 "정말 이 날짜가 맞나" 확인하려면 **클릭 한 번**으로 원문에 닿아야 한다.
+    // 나이스 API 주소는 JSON이 열릴 뿐이라 확인이 안 된다 — 사람이 볼 수 있는 자리로 보낸다.
+    let src = { url: "", name: "" };
+    if (via === "doc") src = { url: docUrl, name: docTitle || "게시판 문서" };
+    else if (via === "image") src = { url: imgPage, name: "학사일정 (그림)" };
+    else if (via === "homepage") src = { url: hpUrl || s.hmpg, name: "학교 학사일정" };
+    else if (via === "neis") {
+      const c = await calendarUrl(school, s, web).catch(() => "");
+      src = { url: c || s.hmpg, name: c ? "학교 학사일정" : "학교 홈페이지" };
+    }
+
+    res.status(200).json({ school, official: s.official, officeName: s.officeName, plan, src,
+                           // 이름이 같은 학교가 또 있으면 알려준다 — 잘못 고르면 남의 학교
+                           // 시험 날짜가 통째로 들어오는데, 날짜만 봐서는 알 길이 없다
+                           dupes: s.dupes || [],
+                           byGrade, found: exams.length,
+                           // 나이스에 일정이 아예 없는 학교와, 일정은 있는데 시험만 안 올린 학교는 다르다
+                           hasAny, via, docTitle,
+                           docReason: via === "doc" || via === "image" ? "" : (lastImgReason || lastDocReason),
+                           homepage: s.hmpg || "",
+                           truncated, hasKey: !!KEY });
   } catch (e) {
     console.error("[schedule]", e);
     res.status(500).json({ error: "서버 오류: " + e.message });
