@@ -1636,6 +1636,9 @@ function rebuildTasks(part, items) {
   if (part === "own") S.own = items;
   S.tasks = (S.tasksOpen || []).concat(S.tasksLead || []).concat(ownTasks());
   initNewTasks();
+  // ⚠ 그릴 자리가 없을 수 있다 — 로그아웃하는 사이에 스냅샷이 한 번 더 오면 화면은 이미 로그인 칸이다.
+  //   renderTasks 는 el 이 없으면 그 자리에서 터진다(다른 render 와 달리 막는 줄이 없다).
+  if (!$("#sec-tasks")) return;
   renderBell();
   renderTasks();
   renderCal();

@@ -168,6 +168,15 @@ const setup = (marks, who) => run(`
   ok("각자 적은 것도 목록에 합쳐진다", val("S.tasks").filter((t) => t.id === "d1").length === 1);
   ok("그런데 내 메모라 종은 그대로", JSON.stringify(val("S.newIds")) === '["c7"]');
 
+  // ---- 그릴 자리가 없을 때 (로그아웃하는 사이에 스냅샷이 오면) ----
+  setup(`{ T2: { done:{}, seenTasks:["a1"] } }`);
+  const realQS = ctx.document.querySelector;
+  ctx.document.querySelector = () => null;          // 화면이 사라진 셈
+  let blew = "";
+  try { run(`rebuildTasks("open", S.tasksOpen)`); } catch (e) { blew = e.message; }
+  ctx.document.querySelector = realQS;
+  ok("화면이 없어도 안 터진다", !blew, blew);
+
   // ---- 지켜보기를 못 붙이는 자리에서도 안 터진다 ----
   setup("{}");
   ok("onSnapshot 이 없으면 조용히 넘어간다", (() => { try { run("watchTasks(); stopWatch(); return 1"); return true; } catch (e) { return e.message; } })() === true);
