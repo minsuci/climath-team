@@ -52,20 +52,24 @@ const typeOf = (f) => vm.runInContext("typeof " + f, ctx);
   .forEach((f) => ok("로그인 길: " + f, typeOf(f) === "function", typeOf(f)));
 
 // ---- 메뉴마다 그릴 함수가 있고, 불러도 안 터진다 ----
-const RENDER = { cal: "renderCal", tasks: "renderTasks", minutes: "renderMinutes", dev: "renderDev", week: "renderWeek",
+const RENDER = { cal: "renderCal", tasks: "renderTasks", done: "renderDone", minutes: "renderMinutes", dev: "renderDev", week: "renderWeek",
   students: "renderStudents", terms: "renderTerms", exams: "renderExams", scores: "renderScores", sheets: "renderSheets" };
 const pages = JSON.parse(vm.runInContext("JSON.stringify(PAGES)", ctx));
-ok("메뉴가 열이다", pages.length === 10, String(pages.length));
+ok("메뉴가 열하나다", pages.length === 11, String(pages.length));
 
 // ---- 팀장만 보는 메뉴 ----
 // 9/7 오전에는 회의록 메뉴를 통째로 감췄다가, 오후에 **회의록 하나하나로** 갈랐다
-// (팀회의는 선생님도 본다). 그래서 지금 «owner» 표를 단 메뉴는 없지만 **장치는 살아 있어야** 한다 —
-// 다음에 팀장 전용 메뉴가 생길 때 이게 도는지가 여기서 갈린다.
+// (팀회의는 선생님도 본다). 9/8 부터 «완료 현황» 이 «owner» 표를 단 첫 메뉴다.
 {
   const mine = (ro) => JSON.parse(vm.runInContext(
     "(function(){ var b=S.ro; S.ro=" + ro + "; var r=JSON.stringify(myPages().map(function(p){return p[0]})); S.ro=b; return r; })()", ctx));
-  ok("팀장은 열 개를 다 본다", mine(false).length === 10, mine(false).join(","));
-  ok("선생님도 회의록 메뉴는 있다 (안이 갈린다)", mine(true).indexOf("minutes") >= 0 && mine(true).length === 10, mine(true).join(","));
+  ok("팀장은 열하나를 다 본다", mine(false).length === 11, mine(false).join(","));
+  ok("선생님에게는 «완료 현황» 이 안 보인다", mine(true).indexOf("done") < 0 && mine(true).length === 10, mine(true).join(","));
+  ok("선생님도 회의록 메뉴는 있다 (안이 갈린다)", mine(true).indexOf("minutes") >= 0);
+  ok("선생님이 주소에 #done 을 쳐도 안 열린다", (() => {
+    const r = vm.runInContext(`(function(){ var b=S.ro; S.ro=true; var v=isPage("done"); S.ro=b; return v; })()`, ctx);
+    return r === false;
+  })());
 
   // 장치가 도는지 — 아무 메뉴에나 «owner» 를 달아 본다
   const hid = JSON.parse(vm.runInContext(`(function(){

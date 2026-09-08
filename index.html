@@ -117,6 +117,16 @@
   .dvrow .dvmsg { color: inherit; text-decoration: none; }  .dvrow .dvmsg:hover { text-decoration: underline; }
   .dvrow .dvsha { font-size: 11px; margin-left: auto; font-family: monospace; }
 
+  /* 완료 현황 */
+  .dnp { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 8px 12px 4px; margin-top: 10px; }
+  .dnp h3 { margin: 0 0 4px; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dnp h3 .sp { flex: 1; }
+  .dnp .none { color: var(--muted); font-size: 13px; padding: 4px 0 6px; }
+  .dnrow { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; font-size: 13px;
+    border-top: 1px solid var(--line); }
+  .dnrow .d { color: var(--muted); font-size: 12px; flex: 0 0 62px; }
+  .dnrow .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
   /* 회의록 */
   .mdoc { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 14px 18px; margin-top: 10px; }
   .mdoc h2 { font-size: 17px; margin: 0 0 8px; }
@@ -496,6 +506,7 @@ var S = {
   tasks: [], tasksOpen: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
   marks: {},      // tid -> { done: {...}, seenTasks: [...], name } — «내 완료» 와 «어디까지 봤나»
   newIds: [], newSeen: true, bellOpen: false,   // 새로 온 할 일 (2026-09-08)
+  doneRange: "week", doneWho: "",               // 완료 현황 (2026-09-08)
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
@@ -674,10 +685,14 @@ function renderShell() {
   showPage(currentPage());
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
-// 셋째 칸이 "owner" 면 팀장만 보는 메뉴다. 지금은 쓰는 데가 없다 —
+// 셋째 칸이 "owner" 면 팀장만 보는 메뉴다 — «완료 현황» 이 그것이다.
 // 회의록은 **메뉴째 감추다가(9/7 오전) 회의록 하나하나로 갈랐다**(9/7 오후).
 // 팀회의는 선생님도 보고 간부회의는 팀장만 본다. loadMinutes() 와 firestore.rules 를 볼 것.
-var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+//
+// ⚠ 메뉴를 감추는 것은 **화면 정리지 자물쇠가 아니다.** 팀장만 볼 자료라면 규칙으로도 막아야 한다.
+//   완료 현황이 쓰는 marks·myTasks 는 원래 팀 전체가 읽는 것이라(누가 끝냈나를 서로 본다)
+//   여기서 새로 여는 것이 없다. **모아 보는 화면만** 팀장 것이다.
+var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["done", "완료 현황", "owner"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
@@ -714,7 +729,7 @@ function navBadge(id, n, red) {
   var el = $("#nb-" + id); if (!el) return;
   el.hidden = !n; el.textContent = n; el.className = "b" + (red ? " red" : "");
 }
-function renderAll() { renderBanner(); renderCal(); renderTasks(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
+function renderAll() { renderBanner(); renderCal(); renderTasks(); renderDone(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
 // ---------- 불러오기 ----------
 // ---- 선생님 명단은 계정에 따라 오는 길이 다르다 ----
@@ -1673,6 +1688,7 @@ function rebuildTasks(part, items) {
   if (!$("#sec-tasks")) return;
   renderBell();
   renderTasks();
+  renderDone();
   renderCal();
   renderWeek();
 }
@@ -1692,6 +1708,15 @@ function watchTasks() {
   on(tdb.collection("myTasks"), function (s2) {
     var m = {}; s2.forEach(function (d) { m[d.id] = d.data() || {}; });
     rebuildTasks("own", m);
+  });
+  // 누가 «내 완료» 를 눌렀나. 안 지켜보면 **완료 현황이 로그인한 순간 그대로 멈춘다** —
+  // 강사가 지금 표시해도 팀장 화면은 새로고침 전까지 «안 했다» 로 보인다. 할 일의 2/3 도 같다.
+  // ⚠ 종과 달리 여기서는 **내가 누른 것도 센다.** 이건 «새로 온 것» 이 아니라 «누가 무엇을 끝냈나» 다.
+  on(tdb.collection("marks"), function (s2) {
+    var m = {}; s2.forEach(function (d) { m[d.id] = d.data() || {}; });
+    S.marks = m;
+    if (!$("#sec-tasks")) return;      // 로그아웃 중 스냅샷 방어
+    renderTasks(); renderDone();
   });
 }
 
@@ -2154,6 +2179,140 @@ function renderWeek() {
               : '<div class="whoat muted">이 학교·학년에 다니는 학생이 명단에 없다</div>') : "");
         }).join("<br>") + '</td></tr>';
     }).join("") + '</tbody></table></div>' : '<div class="empty">2주 안에 걸린 일정이 없다.</div>');
+}
+
+// ---------- 완료 현황 (팀장만) ----------
+// 강사들이 **무엇을 끝냈는지** 한 화면에 모은다. 할 일 목록은 «남은 것» 을 보는 자리라
+// 끝난 것은 접혀 있고 사람별로도 안 모인다 — «이번 주에 누가 무엇을 했나» 를 볼 데가 없었다.
+//
+// 끝났다는 표시가 **두 가지**다. 둘을 같이 세되 어느 쪽인지 남긴다.
+//   * marks/<tid>.done[할일id]                — 팀장이 시킨 일에 본인이 «내 완료» 를 누른 것
+//   * myTasks/<tid>.items[].status === "done" — 자기가 적고 자기가 끝낸 것
+var DONE_RANGES = [["week", "이번 주"], ["last", "지난 주"], ["month", "이번 달"], ["all", "전체"]];
+function doneRangeKey() { return S.doneRange || "week"; }
+function doneRange() {
+  var k = doneRangeKey(), w = weekStart(TODAY);
+  if (k === "last") return { from: addDays(w, -7), to: addDays(w, -1) };
+  if (k === "month") return { from: monthOf(TODAY) + "-01", to: "9999-12-31" };
+  if (k === "all") return { from: "", to: "" };
+  return { from: w, to: "9999-12-31" };
+}
+// ⚠ «전체» 에서는 **날짜 없는 것도 넣는다.** 옛 할 일에는 끝낸 날이 안 적혀 있다 —
+//   날짜로만 거르면 그것들이 어느 기간에도 안 나와 통째로 사라진다.
+function inDoneRange(d) {
+  var r = doneRange();
+  if (!r.from) return true;
+  return !!d && d >= r.from && d <= r.to;
+}
+function doneByTid() {
+  var out = {}, push = function (tid, o) { (out[tid] = out[tid] || []).push(o); };
+  var byId = {};
+  S.tasks.forEach(function (t) { if (t.id && !t.own) byId[t.id] = t; });
+  Object.keys(S.marks || {}).forEach(function (tid) {
+    var d = (S.marks[tid] || {}).done || {};
+    Object.keys(d).forEach(function (id) {
+      if (!inDoneRange(d[id])) return;
+      var t = byId[id];
+      // ⚠ 지워진 할 일의 표시가 남아 있을 수 있다. 그 줄을 버리면 **한 것이 조용히 줄어든다.**
+      push(tid, { date: d[id] || "", text: t ? t.text : "지워진 할 일", kind: "mark", gone: !t });
+    });
+  });
+  Object.keys(S.own || {}).forEach(function (tid) {
+    ((S.own[tid] || {}).items || []).forEach(function (t) {
+      if (t.status !== "done" || !inDoneRange(t.done)) return;
+      push(tid, { date: t.done || "", text: t.text, kind: "own", gone: false });
+    });
+  });
+  Object.keys(out).forEach(function (tid) {
+    out[tid].sort(function (a, b) { return a.date > b.date ? -1 : a.date < b.date ? 1 : 0; });
+  });
+  return out;
+}
+// 그 사람 앞에 **남은** 일. «한 것» 만 보면 아무 일도 안 맡은 사람과 맡고 안 한 사람이 똑같아 보인다.
+function doneLeft(tid, name) {
+  var left = 0, late = 0;
+  S.tasks.forEach(function (t) {
+    if (t.status === "done") return;
+    if (t.own) { if (t.own !== tid) return; }
+    else if (!taskIsFor(t, name) || markDate(tid, t.id)) return;
+    left++;
+    var n = daysFromToday(t.due); if (n !== null && n < 0) late++;
+  });
+  return { left: left, late: late };
+}
+function doneRowHtml(o) {
+  return '<div class="dnrow"><span class="d">' + (o.date ? esc(fmtMD(o.date)) : "날짜 없음") + '</span>' +
+    '<span class="t' + (o.gone ? " muted" : "") + '">' + esc(o.text) + '</span>' +
+    '<span class="pill' + (o.kind === "own" ? "" : " blue") + '">' + (o.kind === "own" ? "직접 적은 것" : "시킨 일") + '</span></div>';
+}
+function doneRows() {
+  var by = doneByTid();
+  // 세울 사람: **한 것이 있는 사람 + 담당 칩에 서는 사람.** 0건인 사람도 세운다 —
+  // 안 한 사람이 목록에서 사라지면 «아무도 안 했다» 가 «아무 일도 없었다» 처럼 보인다.
+  var tids = {};
+  Object.keys(by).forEach(function (t) { tids[t] = 1; });
+  S.teachers.forEach(function (t) { if (WHO_CHIPS.indexOf(t.name) >= 0) tids[t.tid] = 1; });
+  var rows = Object.keys(tids).map(function (tid) {
+    var nm = teacherName(tid);
+    if (nm === "?") nm = ((S.marks[tid] || {}).name || (S.own[tid] || {}).name || tid);
+    return { tid: tid, name: nm, items: by[tid] || [], left: doneLeft(tid, nm) };
+  });
+  rows.sort(function (a, b) {
+    if (a.items.length !== b.items.length) return b.items.length - a.items.length;
+    return a.name < b.name ? -1 : 1;
+  });
+  return rows;
+}
+// 아무도 «내 완료» 를 안 누른 채 닫힌 팀 할 일. 이것을 안 보여주면 위 숫자가
+// «아무도 안 했다» 로 읽힌다 — 실은 팀장이 목록에서 바로 완료로 바꾼 것들이다.
+function doneQuiet() {
+  return S.tasks.filter(function (t) {
+    return !t.own && t.status === "done" && inDoneRange(t.done) && !taskDoneBy(t).length;
+  });
+}
+function renderDone() {
+  var el = $("#sec-done"); if (!el) return;      // 선생님 화면에는 이 칸이 아예 없다
+  var rows = doneRows();
+  var total = rows.reduce(function (n, r) { return n + r.items.length; }, 0);
+  var didN = rows.filter(function (r) { return r.items.length; }).length;
+  var zero = rows.filter(function (r) { return !r.items.length; });
+  var quiet = doneQuiet();
+  var show = S.doneWho ? rows.filter(function (r) { return r.tid === S.doneWho; }) : rows;
+  navBadge("done", total, false);
+  el.innerHTML =
+    '<h2>완료 현황 <span class="n">' + esc((DONE_RANGES.filter(function (r) { return r[0] === doneRangeKey(); })[0] || ["", ""])[1]) + '</span></h2>' +
+    '<div class="chips">' + DONE_RANGES.map(function (r) {
+      return '<button class="mini ' + (doneRangeKey() === r[0] ? "on" : "") + '" data-dnr="' + r[0] + '">' + r[1] + '</button>';
+    }).join("") + '</div>' +
+    '<div class="stat"><div class="' + (total ? "good" : "") + '"><b>' + total + '</b><span>끝낸 일</span></div>' +
+    '<div><b>' + didN + '</b><span>한 사람</span></div>' +
+    '<div class="' + (zero.length ? "bad" : "") + '"><b>' + zero.length + '</b><span>표시 없는 사람</span></div></div>' +
+    '<div class="chips"><button class="mini ' + (!S.doneWho ? "on" : "") + '" data-dnw="">모두</button>' +
+    rows.map(function (r) {
+      return '<button class="mini ' + (S.doneWho === r.tid ? "on" : "") + '" data-dnw="' + esc(r.tid) + '">' + esc(r.name) + " " + r.items.length + '</button>';
+    }).join("") + '</div>' +
+    (rows.length ? show.map(function (r) {
+      return '<div class="dnp"><h3>' + esc(r.name) +
+        '<span class="pill' + (r.items.length ? " green" : "") + '">' + r.items.length + '건</span>' +
+        '<span class="sp"></span>' +
+        '<span class="muted">남은 일 ' + r.left.left + '</span>' +
+        (r.left.late ? '<span class="pill red">기한 지남 ' + r.left.late + '</span>' : "") + '</h3>' +
+        (r.items.length ? r.items.map(doneRowHtml).join("")
+          : '<div class="none">' + (r.left.left
+              ? "이 기간에 끝냈다고 표시한 것이 없다. 맡은 일은 " + r.left.left + "건 남아 있다."
+              : "이 기간에 끝냈다고 표시한 것도, 맡은 일도 없다.") + '</div>') + '</div>';
+    }).join("") : '<div class="empty">아직 아무도 완료 표시를 하지 않았다.</div>') +
+    (quiet.length ? '<details><summary>«내 완료» 표시 없이 닫힌 팀 할 일 ' + quiet.length + '건</summary><div class="dnp">' +
+      quiet.map(function (t) {
+        return '<div class="dnrow"><span class="d">' + (t.done ? esc(fmtMD(t.done)) : "날짜 없음") + '</span>' +
+          '<span class="t">' + esc(t.text) + '</span><span class="pill">' + esc(t.who || "담당 없음") + '</span></div>';
+      }).join("") + '<div class="none">팀장이 목록에서 바로 완료로 바꾼 것들이다. 위 사람별 숫자에는 안 들어간다.</div></div></details>' : "");
+  $$("[data-dnr]", el).forEach(function (b) {
+    b.onclick = function () { S.doneRange = b.getAttribute("data-dnr"); renderDone(); };
+  });
+  $$("[data-dnw]", el).forEach(function (b) {
+    b.onclick = function () { S.doneWho = b.getAttribute("data-dnw"); renderDone(); };
+  });
 }
 
 // ---------- 학생 명단 ----------
