@@ -504,6 +504,25 @@ async function homepageExams(hmpg, from, to, kind, budget, grades) {
 // 앞에 붙어 있어야만 받아들인다.
 const SYNAP = "http://viewhosting.ssem.or.kr:8080/SynapDocViewServer";
 
+// 글에 적힌 첨부 목록에서 번호를 뽑는다. 못 읽으면 옛날처럼 0·1·2 를 찍어 본다(빈손보다 낫다).
+function fileSnsIn(html) {
+  const out = [];
+  const re = /serverFileObj\["fileSn"\]\s*=\s*"(\d+)"/g;
+  let m;
+  while ((m = re.exec(html))) if (out.indexOf(m[1]) < 0) out.push(m[1]);
+  // 목록에 적힌 번호를 먼저 쓰고, 그래도 못 열면 옛날처럼 찍어 본다.
+  // 중대부고 PDF 가 목록 번호로는 변환이 안 됐다 (2026-09-08).
+  ["0", "1", "2"].forEach((x) => { if (out.indexOf(x) < 0) out.push(x); });
+  return out.slice(0, 6);
+}
+// 첨부 파일 이름들 — 어느 것이 시간표인지 고를 때 쓴다.
+function fileNamesIn(html) {
+  const out = [];
+  const re = /serverFileObj\["name"\]\s*=\s*"([^"]+)"/g;
+  let m;
+  while ((m = re.exec(html))) out.push(m[1]);
+  return out;
+}
 async function boardDocText(menuUrl, budget) {
   const origin = new URL(menuUrl).origin;
   budget.n--;
@@ -542,10 +561,11 @@ async function boardDocText(menuUrl, budget) {
   const fid = (html.match(/name="atchFileId"[^>]*value="([^"]+)"/) || [])[1];
   if (!fid) return null;
 
-  // ⚠ fileSn 은 **1부터** 시작한다. 0으로 부르면 빈 HTML 이 200 으로 와서
-  //    "첨부가 없다"로 잘못 읽힌다. 경기고 학사일정 PDF 가 여기서 안 잡혔다.
-  //    (실제 다운로드 경로는 /dggb/board/boardFile/downFile.do?atchFileId=…&fileSn=1)
-  for (const sn of ["1", "2", "3"]) {
+  // ⚠ fileSn 을 **찍어 보지 않는다.** 글 안에 파일 목록이 적혀 있다:
+  //      serverFileObj["name"]="....hwp"; serverFileObj["atchFileId"]="FILE_…"; serverFileObj["fileSn"]="0";
+  //    학교마다 0부터인 곳과 1부터인 곳이 있다 — 단대부고는 0, 세화고는 1. 찍어 보면 한쪽이 통째로 «첨부 없음» 이 된다
+  //    (2026-09-08에 단대부고 2학기 시간표가 이래서 안 잡혔다). 목록에 있는 번호만 연다.
+  for (const sn of fileSnsIn(html)) {
     if (budget.n <= 0) break;
     budget.n--;
     try {
@@ -816,6 +836,221 @@ function verifyImagePick(v, from, to, kind) {
   return "";
 }
 
+
+// ---------- 가정통신문에서 수학시험 날짜 (2026-09-08) ----------
+//
+// 학사일정에는 «2학기 중간고사» 까지만 있고 과목별 시간표는 없다. 그건 학교가 가정통신문으로 따로 낸다.
+// 열 학교를 실제로 훑어 보고 만들었다(그 표본이 이 규칙의 근거다):
+//
+//   단대부고  «2026학년도 2학기 중간고사 시간표 안내 가정통신문»  ← 첨부 HWP 에 표가 통째로. 제일 좋은 모양
+//   중대부고  «2026학년도 2학기 중간고사 안내 가정통신문»
+//   은광여고  «1학기 기말고사 시간표 및 시험범위표»            ← 게시판 이름이 «알림마당»
+//   세화고    «1학기 중간고사 시간표, 범위표 안내»              ← 게시판 이름이 «학교소식». 첨부는 범위표뿐이라 날짜가 없다
+//   경기고 · 숙명여고 · 진선여고                                 ← 최근 글에 아예 없다
+//   휘문고                                                       ← 학교 CMS 가 아니라 게시판을 못 읽는다
+//
+// 그래서 **찾으면 좋고 못 찾아도 정상**으로 만든다. 못 찾으면 글 링크만이라도 돌려준다 —
+// 팀장이 눌러 보고 붙여넣으면 되니까. 조용히 «없다» 로 끝내지 않는다.
+//
+// ⚠ 여기서 아무것도 안 쓴다. 날짜는 화면에서 팀장이 한 줄씩 «넣기» 를 눌러야 들어간다.
+
+// 게시판스러운 메뉴. 학교마다 이름이 다르다 — 가정통신문 · 학교소식 · 알림마당.
+function findNoticeMenus(html, base) {
+  const re = /href="([^"]*\/\d+\/subMenu\.do[^"]*)"[^>]*>([\s\S]{0,120}?)<\/a>/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(html))) {
+    const t = m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, "");
+    if (!/가정통신|공지|알림|소식|게시/.test(t)) continue;
+    if (/급식|채용|입찰|보건|방과후|입학|교육청/.test(t)) continue;   // 교육청 가정통신문은 학교 것이 아니다
+    const href = m[1].startsWith("http") ? m[1] : new URL(m[1], base).toString();
+    if (out.indexOf(href) < 0) out.push(href);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+// 시험 시간표 글의 제목. «범위표» 만 있는 글도 받는다 — 시간표가 같이 붙는 학교가 있다.
+const TIME_TITLE = /(중간|기말|지필|정기)\s*(고사|평가)[\s\S]{0,20}(시간표|시험\s*시간|일정|안내)|시험\s*시간표|고사\s*시간표/;
+// 그 회차의 글인가. 2학기 것을 찾는데 1학기 글이 걸리면 지난 날짜가 들어간다.
+function titleFitsTerm(title, from) {
+  const mm = Number(from.slice(4, 6));
+  const second = mm >= 7 || mm <= 2;
+  // ⚠ 학년도는 3월에 바뀐다. 1·2월 시험은 **앞 해의 학년도** 글이다.
+  //   여기를 느슨하게 뒀더니 2026년 2학기를 찾는데 은광여고의 «2025학년도 2학기 기말고사 시간표» 가 걸렸다
+  //   (2026-09-08 실제로 물어 왔다). 지난해 날짜를 그대로 넣을 뻔했다.
+  const yr = Number(from.slice(0, 4));
+  const schoolYear = mm <= 2 ? yr - 1 : yr;
+  if (/(\d{4})\s*학년도/.test(title) && Number(RegExp.$1) !== schoolYear) return false;
+  if (second && /1\s*학기/.test(title)) return false;
+  if (!second && /2\s*학기/.test(title)) return false;
+  return true;
+}
+
+// 게시판 하나에서 시간표 글을 찾아 글자를 꺼낸다. 본문·첨부를 다 본다.
+async function timetableFromBoard(menuUrl, from, kind, budget) {
+  const origin = new URL(menuUrl).origin;
+  budget.n--;
+  const first = await fetch(menuUrl, { headers: UA });
+  const cookie = (first.headers.getSetCookie ? first.headers.getSetCookie() : [])
+    .map((c) => c.split(";")[0]).join("; ");
+  const page = await first.text();
+  const bbsId = (page.match(/name="bbsId"[^>]*value="([^"]+)"/) || [])[1];
+  if (!bbsId) return null;
+  const H = { ...UA, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+              "X-Requested-With": "XMLHttpRequest", Referer: menuUrl, Cookie: cookie };
+  budget.n--;
+  const list = await (await fetch(origin + "/dggb/module/board/selectBoardListAjax.do", {
+    method: "POST", headers: H,
+    body: new URLSearchParams({ bbsId, bbsTyCode: "base", pageIndex: "1",
+      customRecordCountPerPage: "60", searchCondition: "", searchKeyword: "", cmntSe: "N" }),
+  })).text();
+  const re = /fnView\('([^']+)',\s*'([^']+)'\)[^>]*>([\s\S]{0,140}?)<\/a>/g;
+  const posts = [];
+  let m;
+  while ((m = re.exec(list))) posts.push({ bbsId: m[1], nttId: m[2],
+    title: m[3].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() });
+  // 시간표라고 말하는 글이 먼저, 없으면 «고사 안내» 라도.
+  const cands = posts.filter((x) => TIME_TITLE.test(x.title) && titleFitsTerm(x.title, from));
+  const hit = cands.find((x) => /시간표|시험\s*시간/.test(x.title))
+           || cands.find((x) => !kind || new RegExp(kind).test(x.title))
+           || cands[0];
+  if (!hit) return null;
+
+  budget.n--;
+  const html = await (await fetch(origin + "/dggb/module/board/selectBoardDetailAjax.do", {
+    method: "POST", headers: H,
+    body: new URLSearchParams({ bbsId: hit.bbsId, nttId: hit.nttId, bbsTyCode: "base",
+      pageIndex: "1", cmntSe: "N", customRecordCountPerPage: "60" }),
+  })).text();
+  const post = { title: hit.title, url: menuUrl, files: fileNamesIn(html) };
+
+  // 본문에 표를 그대로 적어 두는 학교도 있다.
+  const bodyText = html.replace(/<script[\s\S]*?<\/script>/g, " ").replace(/<style[\s\S]*?<\/style>/g, " ")
+    .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/\s+/g, " ");
+  if (looksLikeTimetable(bodyText)) return { ...post, text: bodyText, via: "본문" };
+
+  const fid = (html.match(/name="atchFileId"[^>]*value="([^"]+)"/) || [])[1];
+  if (!fid) return { ...post, text: "", via: "" };
+  const names = post.files;
+  const sns = fileSnsIn(html);
+  for (let i = 0; i < sns.length; i++) {
+    if (budget.n <= 0) break;
+    const t = await synapText(origin, fid, sns[i], budget).catch(() => "");
+    if (looksLikeTimetable(t)) return { ...post, text: t, via: names[i] || ("첨부" + sns[i]) };
+  }
+  return { ...post, text: "", via: "" };
+}
+// 시간표처럼 생겼나 — 날짜와 교시와 과목이 같이 있어야 한다.
+// 범위표에는 과목은 있지만 날짜가 없다(세화고가 그랬다). 그걸 시간표로 받으면 엉뚱한 날이 들어간다.
+function looksLikeTimetable(t) {
+  const x = String(t || "");
+  if (x.length < 200) return false;
+  if (!/교시|시험\s*시간|\d{1,2}:\d{2}/.test(x)) return false;
+  if (!/\d{1,2}\s*[\/월]\s*\d{1,2}/.test(x)) return false;
+  return /수학|미적분|확률과통계|기하|대수/.test(x);
+}
+// 첨부 하나를 글자로. boardDocText 안에 있던 것을 꺼내 함께 쓴다.
+async function synapText(origin, fid, sn, budget) {
+  budget.n--;
+  const inner = origin + ":443/dggb/cnvrFileDown.do?atchFileId=" + fid + ":" + sn;
+  const job = SYNAP + "/job?fid=" + fid + "_" + sn + "&filePath=" + encodeURIComponent(inner) +
+              "&convertType=1&fileType=URL&sync=true";
+  const r = await fetch(job, { headers: UA, redirect: "follow" });
+  const key = (r.url.match(/key=([0-9a-f]+)/) || [])[1];
+  if (!key) return "";
+  const st = await (await fetch(SYNAP + "/status/" + key, { headers: UA })).json().catch(() => null);
+  const pages = Math.min((st && st.pageNum) || 1, 8);
+  let text = "";
+  for (let pg = 0; pg < pages; pg++) {
+    if (budget.n <= 0) break;
+    budget.n--;
+    const x = await (await fetch(SYNAP + "/thumbnailxml/" + key + "/" + pg + "?dpi=96", { headers: UA })).text();
+    text += x.replace(/<[^>]+>/g, " ")
+             .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/\s+/g, "");
+  }
+  return text;
+}
+
+// 꺼낸 글자에서 «학년마다 수학 보는 날» 을 뽑는다.
+//
+// ⚠ 손으로 못 가른다. 변환된 글자는 **칸이 다 뭉개져** 한 줄로 온다 —
+//   "10/1(목)108:30~09:20(50)영어Ⅱ[35]*언어와매체[17]*화법과작문[18]" 처럼.
+//   1학년·2학년·3학년이 열이었는데 그 경계가 사라졌다. 그래서 AI 에게 표를 되읽힌다.
+// ⚠ 그래도 **날짜는 지어내지 못하게** 한다. 원문에 없는 날은 버린다(verifyMath).
+async function mathFromDoc(text, school, from, to, grades) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { error: "AI 키 없음" };
+  const GS = grades && grades.length ? grades : ["고1", "고2", "고3"];
+  const body = {
+    system_instruction: { parts: [{ text:
+      "너는 한국 고등학교 지필평가 시간표에서 수학 과목 시험일만 뽑아내는 도구다. " +
+      "JSON 하나만 출력한다. 설명·코드블록 금지. 원문에 없는 날짜는 절대 만들지 마라." }] },
+    contents: [{ role: "user", parts: [{ text:
+      school + " 시험 시간표에서 뽑은 글자다. 표라서 칸 구분이 없어졌다. " +
+      "표는 보통 «월/일(요일) · 교시 · 시험시간 · 1학년 · 2학년 · 3학년» 순서로 이어진다.\n" +
+      "기간은 " + from.slice(0, 4) + "-" + from.slice(4, 6) + "-" + from.slice(6, 8) + " ~ " +
+      to.slice(0, 4) + "-" + to.slice(4, 6) + "-" + to.slice(6, 8) + " 다.\n\n" +
+      "학년마다 **수학 계열 과목**을 보는 날을 찾아라. 수학 계열은 공통수학·대수·미적분·확률과 통계·기하·" +
+      "심화수학·인공지능수학·수학Ⅰ·수학Ⅱ 같은 것이다. 국어·영어·과학·사회는 아니다.\n" +
+      "한 학년에 수학 과목이 여럿이면 과목마다 한 줄씩 낸다.\n\n" +
+      "형식: {\"rows\":[{\"grade\":1,\"subject\":\"공통수학2\",\"date\":\"YYYY-MM-DD\"}, …]}\n" +
+      "grade 는 1·2·3 중 하나(학교 학년). 못 찾으면 {\"rows\":[]}\n\n" +
+      "--- 원문 ---\n" + String(text).slice(0, 14000) + "\n--- 끝 ---" }] }],
+    generationConfig: { temperature: 0, maxOutputTokens: 900, responseMimeType: "application/json",
+                        thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) return { error: "AI 호출 실패 " + r.status };
+  const j = await r.json().catch(() => null);
+  const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
+  const raw = out.map((x) => x.text || "").join("").trim();
+  if (!raw) return { error: "AI가 빈 답" };
+  let v = null;
+  // AI 가 가끔 코드블록으로 감싼다. 첫 { 부터 마지막 } 까지만 떼어 읽는다.
+  const bare = raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
+  try { v = JSON.parse(bare); } catch (e) { return { error: "AI 답을 못 읽음" }; }
+  const rows = (v && v.rows) || [];
+  return { rows: rows.filter((x) => verifyMath(x, text, from, to)) };
+}
+// AI 가 지어낸 날짜를 거른다. 원문에 그 «월/일» 이 정말 있고, 기간 안이어야 한다.
+function verifyMath(x, text, from, to) {
+  const d = String((x && x.date) || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const y = d.replace(/-/g, "");
+  if (y < from || y > to) return false;
+  const mo = Number(d.slice(5, 7)), da = Number(d.slice(8, 10));
+  const flat = String(text).replace(/\s+/g, "");
+  return flat.indexOf(mo + "/" + da) >= 0 || flat.indexOf(mo + "월" + da + "일") >= 0;
+}
+
+// 학교 하나에서 수학시험 날짜를 찾아온다.
+async function mathDates(school, from, to, kind, grades, budget, web) {
+  const s = await resolveSchool(school, budget);
+  if (!s) return { school, error: "나이스에서 학교를 못 찾았어요" };
+  if (!s.hmpg) return { school, error: "학교 홈페이지 주소를 몰라요" };
+  const base = s.hmpg.replace(/^http:/, "https:").replace(/\/+$/, "") + "/";
+  let html = "";
+  web.n--;
+  try { html = await (await fetch(base, { headers: UA, redirect: "follow" })).text(); }
+  catch (e) { return { school, error: "학교 홈페이지를 못 열었어요" }; }
+  const menus = findNoticeMenus(html, base);
+  if (!menus.length) return { school, error: "게시판을 못 찾았어요 (학교 홈페이지 모양이 다르다)" };
+  for (const url of menus) {
+    if (web.n <= 0) break;
+    let got = null;
+    try { got = await timetableFromBoard(url, from, kind, web); } catch (e) { continue; }
+    if (!got) continue;
+    if (!got.text) return { school, post: got.title, url: got.url, rows: [],
+                            note: "시간표 글은 찾았는데 글자를 못 꺼냈어요. 눌러서 보고 붙여넣어 주세요" };
+    const ai = await mathFromDoc(got.text, school, from, to, grades);
+    if (ai.error) return { school, post: got.title, url: got.url, rows: [], note: ai.error };
+    return { school, post: got.title, url: got.url, via: got.via, rows: ai.rows };
+  }
+  return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "POST만 받습니다" }); return; }
   try {
@@ -835,6 +1070,13 @@ export default async function handler(req, res) {
     const kind = body.kind || "";
     const budget = { n: BUDGET };        // 나이스
     const web = { n: WEB_BUDGET };       // 학교 홈페이지 · 문서뷰어
+
+    // 수학시험 날짜만 찾는 길. 학사일정과 달리 **가정통신문 게시판**을 뒤진다.
+    if (body.want === "math") {
+      const out = await mathDates(school, from, to, kind, body.grades || [], budget, web);
+      res.status(200).json(out);
+      return;
+    }
 
     const s = await resolveSchool(school, budget);
     if (!s) { res.status(200).json({ school, error: "나이스에서 학교를 못 찾았어요", hasKey: !!KEY }); return; }

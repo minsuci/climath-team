@@ -3538,6 +3538,19 @@ function jobSnap() { var o = {}; for (var k in PULL_JOB) if (k !== "subs") o[k] 
 function jobEmit() { var sn = jobSnap(); PULL_JOB.subs.slice().forEach(function (f) { try { f(sn); } catch (e) {} }); }
 function jobSub(fn) { PULL_JOB.subs.push(fn); fn(jobSnap()); return function () { var i = PULL_JOB.subs.indexOf(fn); if (i >= 0) PULL_JOB.subs.splice(i, 1); }; }
 
+// 수학시험 날짜만 찾아오는 길. 같은 서버의 다른 갈래다(want:"math") — 학사일정이 아니라 가정통신문 게시판을 본다.
+async function fetchMathDates(school, from, to, grades) {
+  var tu = teamAuth.currentUser;
+  if (!tu) throw new Error("로그인이 풀렸습니다");
+  var r = await fetch("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken: await tu.getIdToken(), want: "math",
+      school: school, from: ymdNum(from), to: ymdNum(to), kind: S.pullKind || "중간", grades: grades }) });
+  var j = await r.json().catch(function () { return null; });
+  if (!r.ok) throw new Error((j && j.error) || ("서버가 " + r.status + " 로 답했습니다"));
+  return j || {};
+}
+function ymdNum(d) { return String(d || "").replace(/-/g, ""); }
+
 // ⚠ 2026-09-08부터 찾아오기 서버가 **이 앱 안에** 있다. 수업관리 앱 토큰을 더 안 보낸다 —
 //   저쪽에 중계하던 때의 흔적이라, 남겨 두면 «왜 앱 로그인이 필요하지» 로 읽힌다.
 async function fetchSchedule(school, from, to, kind) {
@@ -3746,6 +3759,21 @@ function mathExamHits(text, year) {
   });
   return hits;
 }
+// 홈페이지에서 찾아온 줄({grade:1, subject:"공통수학2", date:"2026-10-01"})을 붙여넣기와 **같은 모양**으로 만든다.
+// 화면과 «넣기» 를 두 벌로 만들지 않으려는 것이다 — 어디서 왔든 팀장이 보는 것은 같아야 한다.
+function mathPlanFromRows(school, rows) {
+  const mine = termRows().filter(function (v) { return v.school === school; });
+  return mine.map(function (v) {
+    var gn = Number(String(v.grade).slice(1)) || 0;
+    var hit = (rows || []).filter(function (r) { return Number(r.grade) === gn; });
+    var dates = []; hit.forEach(function (r) { if (dates.indexOf(r.date) < 0) dates.push(r.date); });
+    var out = { school: school, grade: v.grade, cur: v.math || "", start: v.start || "", end: v.end || "",
+                date: dates.length === 1 ? dates[0] : "", many: dates.length > 1 ? dates : null,
+                why: hit.map(function (r) { return r.subject; }).filter(Boolean).join(" · ") };
+    if (out.date && v.start && v.end && (out.date < v.start || out.date > v.end)) out.warn = "시험 기간 밖";
+    return out;
+  });
+}
 // 찾은 것을 이 회차의 «학교|학년» 줄에 붙인다. 학년 표시가 아예 없으면 그 학교의 모든 학년에 같은 날.
 function mathPlan(text, school) {
   var rows = termRows().filter(function (v) { return v.school === school; });
@@ -3917,6 +3945,7 @@ function drawMathBox() {
     }).join("") + '</select>' +
     '<span class="muted" id="tm-mleft"></span>' +
     '<span class="sp" style="flex:1"></span>' +
+    '<button class="mini" id="tm-mfind" title="학교 홈페이지의 가정통신문·공지에서 시험 시간표 글을 찾아본다">홈페이지에서 찾아오기</button>' +
     '<button class="btn o" id="tm-mgo">찾기</button>' +
     '<button class="mini" id="tm-mclose">닫기</button></div>' +
     '<textarea id="tm-mtext" rows="5" style="width:100%" placeholder="가정통신문·공지사항의 시험 시간표를 그대로 붙여넣기 (표를 끌어 복사하면 칸이 그대로 온다)"></textarea>' +
@@ -3927,7 +3956,25 @@ function drawMathBox() {
   $("#tm-msch").onchange = function () { S.mathSchool = this.value; S.mathPlan = null; drawMathRes(); };
   $("#tm-mgo").onclick = function () {
     S.mathText = $("#tm-mtext").value;
+    S.mathPost = null;
     S.mathPlan = mathPlan(S.mathText, S.mathSchool);
+    drawMathRes();
+  };
+  // 홈페이지에서 시간표 글을 찾아온다. **찾기만 한다** — 넣는 것은 줄마다 눌러야 한다.
+  // 못 찾거나 글자를 못 꺼내도 글 링크는 준다. 그게 붙여넣기보다 한 걸음 앞이다.
+  $("#tm-mfind").onclick = async function () {
+    var b = this, rows = termRows().filter(function (v) { return v.school === S.mathSchool; });
+    var span = rows.filter(function (v) { return v.start; })[0];
+    b.disabled = true; b.textContent = "찾는 중…";
+    S.mathPost = { busy: true }; S.mathPlan = null; drawMathRes();
+    try {
+      var r = await fetchMathDates(S.mathSchool,
+        (span && span.start) || addDays(TODAY, -7), (span && span.end) || addDays(TODAY, 60),
+        rows.map(function (v) { return v.grade; }));
+      S.mathPost = r;
+      S.mathPlan = (r.rows && r.rows.length) ? mathPlanFromRows(S.mathSchool, r.rows) : null;
+    } catch (e) { S.mathPost = { error: e.message }; }
+    b.disabled = false; b.textContent = "홈페이지에서 찾아오기";
     drawMathRes();
   };
   if (S.mathText) $("#tm-mtext").value = S.mathText;
@@ -3937,10 +3984,20 @@ function drawMathRes() {
   var el = $("#tm-mres"); if (!el) return;
   var rows = termRows().filter(function (v) { return v.school === S.mathSchool; });
   var left = $("#tm-mleft"); if (left) left.textContent = rows.filter(function (v) { return !v.math; }).length + "줄 비어 있음";
+  var p0 = S.mathPost, head = "";
+  if (p0) {
+    head = p0.busy ? '<div class="muted" style="margin-top:8px;font-size:13px">학교 홈페이지를 뒤지는 중… 20~30초 걸린다</div>'
+      : p0.error ? '<div class="err" style="margin-top:8px">' + esc(p0.error) + '</div>'
+      : '<div style="margin-top:8px;font-size:13px">' +
+        (p0.post ? '<b>' + esc(p0.post) + '</b>' + (p0.via ? ' <span class="muted">· ' + esc(p0.via) + '</span>' : "") : "") +
+        (p0.url ? ' <a href="' + esc(p0.url) + '" target="_blank">게시판 열기 →</a>' : "") +
+        (p0.note ? '<div class="muted">' + esc(p0.note) + ' — 글을 열어 시간표를 복사해 위에 붙여넣으면 읽어 준다.</div>' : "") +
+        '</div>';
+  }
   var plan = S.mathPlan;
-  if (!plan) { el.innerHTML = ""; return; }
+  if (!plan) { el.innerHTML = head; return; }
   var found = plan.filter(function (p) { return p.date || p.many; });
-  el.innerHTML = !found.length
+  el.innerHTML = head + (!found.length
     ? '<div class="muted" style="margin-top:8px;font-size:13px">수학 보는 날을 못 찾았다. 날짜와 «수학» 이 같은 줄이나 같은 칸에 있어야 한다 — ' +
       '시간표 부분만 다시 붙여넣거나, 표의 그 자리를 표에 바로 적는다.</div>'
     : '<div style="margin-top:8px">' + plan.map(function (p, i) {
@@ -3954,7 +4011,7 @@ function drawMathRes() {
           (p.why ? '<span class="muted" style="font-size:12px">' + esc(p.why) + '</span>' : "") +
           '<span class="sp" style="flex:1"></span>' +
           '<button class="mini" data-mput="' + i + '">넣기</button></div>';
-      }).join("") + '</div>';
+      }).join("") + '</div>');
   $$("#tm-mres [data-mput]").forEach(function (b) {
     b.onclick = async function () {
       var p = S.mathPlan[Number(b.getAttribute("data-mput"))];
