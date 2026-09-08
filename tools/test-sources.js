@@ -33,7 +33,8 @@ ok("빈 칸도 빈 값", run(`return sheetIdFrom("")`) === "");
 // ---- 어느 메뉴가 근거를 갖나 ----
 const SRC = JSON.parse(run(`return JSON.stringify(SOURCES)`));
 ok("메뉴마다 한 줄씩 있다", SRC.length >= 5, String(SRC.length));
-ok("시트로 대는 것은 시험 성적뿐", SRC.filter((x) => x.sheet).map((x) => x.menu).join(",") === "시험 성적",
+// 2026-09-08 학생 명단 «대조용» 시트가 늘었다 — 명단의 근거지는 그대로 앱 DB 고, 이건 맞춰 보는 자료다
+ok("시트로 대는 것은 시험 성적과 명단 대조용 둘", SRC.filter((x) => x.sheet).map((x) => x.key).sort().join(",") === "roster,scores",
   SRC.filter((x) => x.sheet).map((x) => x.menu).join(","));
 ok("시트인 줄에는 열쇠가 있다", SRC.filter((x) => x.sheet).every((x) => x.key), JSON.stringify(SRC.filter((x) => x.sheet)));
 ok("시트가 아닌 줄에도 «무엇을·어디서»가 적혀 있다",

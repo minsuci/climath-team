@@ -117,6 +117,15 @@
   .dvrow .dvmsg { color: inherit; text-decoration: none; }  .dvrow .dvmsg:hover { text-decoration: underline; }
   .dvrow .dvsha { font-size: 11px; margin-left: auto; font-family: monospace; }
 
+  /* 시트와 대조 */
+  .dfbox { border: 1px solid #f2c94c; background: #fffbea; border-radius: 10px; padding: 8px 12px; margin: 0 0 10px; }
+  .dfhead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dfhead .sp { flex: 1; }
+  .dfrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 4px 0; font-size: 13px; border-top: 1px solid #f2e2a8; }
+  .dfrow .sp { flex: 1; }
+  .dfsub { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .dfbox .err { color: var(--red); font-size: 13px; margin-top: 4px; }
+
   /* 한 줄 보고 */
   .rep { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 5px; }
   .rep input { flex: 1; min-width: 150px; font-size: 13px; padding: 4px 7px;
@@ -517,6 +526,8 @@ var S = {
   marks: {},      // tid -> { done: {...}, seenTasks: [...], name } — «내 완료» 와 «어디까지 봤나»
   newIds: [], newSeen: true, bellOpen: false,   // 새로 온 할 일 (2026-09-08)
   doneRange: "week", doneWho: "",               // 완료 현황 (2026-09-08)
+  // 시트와 명단 대조 (2026-09-08) — 팀장 화면에서만 돈다
+  sheetCols: null, diff: null, diffErr: "", diffAt: 0, diffBusy: false, diffSig: "", diffN: 0, diffTab: "", diffDoc: null, stDiffOpen: true,
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
@@ -660,6 +671,7 @@ async function boot() {
   loadExams().then(renderExams);
   loadScores().then(renderScores);
   loadSheetsAll();
+  checkRosterSheet();     // 팀장만. 시트 한 번 읽고 명단과 맞춰 본다 — 다르면 종
 }
 // 두 프로젝트의 로그인 복구가 따로 끝난다. 둘 다 첫 응답을 준 뒤에만 boot 한다 —
 // 안 그러면 한쪽만 복구된 순간 로그인 화면이 잠깐 떴다가 대시보드로 바뀐다.
@@ -814,6 +826,7 @@ async function loadCore() {
       .then(function (d) { S.stLog = (d.exists && d.data().items) || []; }).catch(function () { S.stLog = []; }),
     dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sources: {} }, d.data()) : { sources: {} }; })
       .catch(function () {}),
+    dashDoc("rosterDiff").get().then(function (d) { S.diffDoc = d.exists ? d.data() : null; }).catch(function () {}),
   ];
   await Promise.all(jobs);
   S.tasks = S.tasks.concat(S.tasksLead || []);   // 팀장에게는 한 목록으로 보인다
@@ -1632,13 +1645,24 @@ function saveLocalSeen(ids) {
   var tid = myTid(); if (!tid) return;
   try { localStorage.setItem(SEEN_KEY + tid, JSON.stringify(ids)); } catch (e) {}
 }
+// 명단 대조도 종에 실린다. «어디까지 봤나» 는 할 일과 달리 id 목록이 아니라 **차이의 지문**(sig) 하나다 —
+// 차이가 같으면 다시 안 울리고, 한 줄이라도 바뀌면 다시 울린다.
+var SEEN_DIFF_KEY = "dash.seenDiff.";
+function localSeenDiff() { var tid = myTid(); if (!tid) return ""; try { return localStorage.getItem(SEEN_DIFF_KEY + tid) || ""; } catch (e) { return ""; } }
+function diffUnseen() {
+  if (!S.diffSig || S.ro) return false;
+  var m = S.marks[myTid()] || {};
+  return m.seenDiff !== S.diffSig && localSeenDiff() !== S.diffSig;
+}
 // 지금 있는 것만 적는다 — 지워진 할 일 id 를 계속 이고 가지 않는다.
-async function saveSeen(ids) {
+async function saveSeen(ids, diffSig) {
   var tid = myTid(); if (!tid) return;
   saveLocalSeen(ids);
+  if (diffSig) { try { localStorage.setItem(SEEN_DIFF_KEY + tid, diffSig); } catch (e) {} }
   if (!S.teamOk) return;
   var cur = S.marks[tid] || {};
   var doc = Object.assign({}, cur, { seenTasks: ids, name: myName(), updated: Date.now() });
+  if (diffSig) doc.seenDiff = diffSig;
   S.marks[tid] = doc;
   try { await passWrite(function () { return tdb.collection("marks").doc(tid).set(doc); }); }
   catch (e) { /* 못 적어도 화면은 돈다. 다음에 다시 «새로 옴» 으로 뜰 뿐이다 */ }
@@ -1648,19 +1672,23 @@ async function saveSeen(ids) {
 //   순간 종이 저 혼자 꺼져서 무엇이 왔는지 못 본다.
 // «새로 옴» 표(S.newIds)는 그 판까지 남긴다 — 종만 끄고 표까지 지우면 목록에서 못 찾는다.
 function markTasksSeen() {
-  if (S.newSeen) return;
+  var d = diffUnseen();
+  if (S.newSeen && !d) return;
   S.newSeen = true;
-  saveSeen(seenIds());
+  saveSeen(seenIds(), d ? S.diffSig : "");
   renderBell();
 }
 function renderBell() {
   var el = $("#bell-wrap"); if (!el) return;
-  var n = S.newSeen ? 0 : S.newIds.length;
+  var n = (S.newSeen ? 0 : S.newIds.length) + (diffUnseen() ? 1 : 0);
   var list = S.tasks.filter(isNewTask);
+  // 명단이 시트와 다르면 종에 한 줄 더 — 누르면 학생 명단으로 간다
+  var diffLine = (!S.ro && S.diffSig) ? '<div class="bi" data-bell-diff="1"><b>명단이 시트와 다르다 ' + S.diffN + '건</b>' +
+    '<div class="muted" style="font-size:12px">' + esc(S.diffTab || "") + ' · 학생 명단에서 한 줄씩 정한다</div></div>' : "";
   el.innerHTML =
     '<button class="bell" id="bell-btn" title="새로 온 할 일">🔔' +
       (n ? '<span class="bn">' + (n > 99 ? "99+" : n) + '</span>' : "") + '</button>' +
-    (S.bellOpen ? '<div class="bellbox" id="bell-box"><h4>새로 온 할 일 ' + list.length + '</h4>' +
+    (S.bellOpen ? '<div class="bellbox" id="bell-box">' + diffLine + '<h4>새로 온 할 일 ' + list.length + '</h4>' +
       (list.length ? list.slice(0, 8).map(function (t) {
         return '<div class="bi" data-bell="1"><b>' + esc(t.text) + '</b>' +
           '<div class="muted" style="font-size:12px">' + esc(t.who || "담당 없음") +
@@ -1675,6 +1703,9 @@ function renderBell() {
   };
   $$("[data-bell]", el).forEach(function (b) {
     b.onclick = function () { markTasksSeen(); S.bellOpen = false; showPage("tasks"); renderBell(); };
+  });
+  $$("[data-bell-diff]", el).forEach(function (b) {
+    b.onclick = function () { markTasksSeen(); S.bellOpen = false; S.stDiffOpen = true; showPage("students"); renderStudents(); renderBell(); };
   });
 }
 // ---- 지켜보기 ----
@@ -2471,7 +2502,9 @@ function renderStudents() {
     chip("none", "학년 없음", noGrade) +
     '<input type="text" id="st-q" class="mini" placeholder="이름·학교·담임 찾기" value="' + esc(S.stQuery || "") + '" style="min-width:170px">' +
     (unassigned.length ? '<button class="mini warn" data-gf="un">반 미배정 ' + unassigned.length + '</button>' : "") + '</div>' +
+    rosterDiffBox() +
     '<div id="st-body">' + studentBodyHtml(view, assigned) + '</div>';
+  bindRosterDiff(el);
   $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); keepScroll(renderStudents); }; });
   $$("[data-view]", el).forEach(function (b) { b.onclick = function () { S.stView = b.getAttribute("data-view"); renderStudents(); }; });
   // 찾기 칸은 아래만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
@@ -2957,6 +2990,322 @@ async function stSyncRosters(person) {
     });
   }
 }
+// ---- 시트와 대조 (2026-09-08) ----
+//
+// 데스크의 «인원 현황» 시트가 있다. 반이 열이고 학생이 줄이다. 그것과 앱 명단을 맞춰 보고
+// **다른 곳만** 팀장에게 보인다. 마왕님 말씀 — "스프레드시트 명단이 바뀐다고 학생 명단이 휙휙 바뀌면 안 돼.
+// 달라진 부분이 있는지 확인하고 알림으로 알려줘. 내가 그걸 보고 바꿀지 말지 결정한다."
+//
+// 그래서 여기서는 **아무것도 저절로 바꾸지 않는다.** 차이를 줄로 세우고, 줄마다 «반영»·«무시» 를 팀장이 누른다.
+//
+// 시트 모양 (26년 9월 예상 탭):
+//   ┌ 인원 줄 · 요일 줄(월금/화목/토)
+//   ├ «반» 줄 — C열이 "반", D열부터 반 이름 ("고1S\n(201호)" 처럼 줄바꿈·호수가 섞인다)
+//   ├ «담임» 줄
+//   ├ B열 «재원» 부터 1~18번 — 지금 다니는 학생. 칸은 "김서진10" = 이름 + 학년 숫자(7=중1 … 12=고3),
+//   │   앞의 N 은 이번 달 신입, 뒤의 a·b·A 는 동명이인 표시(앱도 A·B 로 가른다 — 이름의 일부로 본다)
+//   ├ B열 «신입예정» 1~10번 — 아직 안 온 사람. 예고로만 보인다
+//   └ B열 «퇴원» — 나가는 사람. 예고로만 보인다
+//   이 덩어리가 요일별로 셋(월금 / 화목 / 다른 관) 이어진다. 오른쪽에 FP 강좌 격자가 같은 줄을 나눠 쓴다.
+//
+// ⚠ 이름으로 맞춘다. 시트에 학생 번호가 없어서다. 그래서 **같은 이름이 둘이면 손을 뗀다**(«확인» 줄) —
+//   동명이인을 섞어 남의 기록에 붙이면 되돌리기 어렵다.
+// ⚠ 퇴원은 «반에서 빼기»다. 사람 문서를 지우는 일은 여기서 **절대** 안 한다 —
+//   출결·과제·참여표가 그 번호에 달려 있고, 다시 오면 번호를 되써야 이어진다(stUnassign 이 pastIds 에 적는다).
+var SHEET_GRADE = { 7: "중1", 8: "중2", 9: "중3", 10: "고1", 11: "고2", 12: "고3" };
+var SHEET_WORDS = /^(재원|신입예정|신입|퇴원|휴원|반|담임|강좌명|구분|인원|합계)$/;
+function parseSheetName(cell) {
+  var t = String(cell == null ? "" : cell).trim();
+  if (!t || SHEET_WORDS.test(t)) return null;
+  var m = /^(N)?\s*([가-힣]{2,5}[A-Za-z]?)\s*(\d{1,2})?$/.exec(t);
+  if (!m) return null;
+  return { name: m[2], grade: m[3] ? (SHEET_GRADE[Number(m[3])] || "") : "", isNew: !!m[1], raw: t };
+}
+// 반 이름 열쇠 — 줄바꿈·빈칸·괄호(호수)·끝의 «반» 을 떼고 대문자로. "고1S\n(201호)" 와 "고1S (201호)" 와 "고1s" 가 같아진다.
+function normClassKey(v) {
+  return String(v || "").replace(/\([^)]*\)/g, "").replace(/[\s·・ㆍ,_\-]/g, "").replace(/반$/, "").toUpperCase();
+}
+var DAY_WORDS = ["월수금", "월금", "화목", "수토", "월", "화", "수", "목", "금", "토", "일"];
+function stripDays(k) {
+  for (var i = 0; i < DAY_WORDS.length; i++) {
+    var d = DAY_WORDS[i];
+    if (k.length > d.length && k.slice(-d.length) === d) return k.slice(0, -d.length);
+  }
+  return k;
+}
+function parseRosterSheet(values) {
+  var rows = values || [], cols = [], i = 0;
+  var cell = function (r, c) { var row = rows[r] || []; return String(row[c] == null ? "" : row[c]).trim(); };
+  var empty = function (r) { return !(rows[r] || []).some(function (x) { return String(x == null ? "" : x).trim(); }); };
+  while (i < rows.length) {
+    if (cell(i, 2) !== "반") { i++; continue; }
+    var head = i, r = head + 2, sect = "재원", groups = { "재원": [], "신입": [], "퇴원": [] };
+    for (; r < rows.length; r++) {
+      if (cell(r, 2) === "반") break;                              // 다음 덩어리
+      var b = cell(r, 1);
+      if (/^신입/.test(b)) sect = "신입"; else if (/^퇴원/.test(b)) sect = "퇴원"; else if (/^재원/.test(b)) sect = "재원";
+      if (sect === "퇴원" && !b && empty(r)) break;                // 퇴원 뒤 빈 줄이면 덩어리 끝
+      groups[sect].push(r);
+    }
+    var width = 0;
+    for (var k = head; k < r; k++) width = Math.max(width, (rows[k] || []).length);
+    for (var c = 3; c < width; c++) {
+      var label = cell(head, c);
+      if (!label || SHEET_WORDS.test(label)) continue;
+      var col = { label: label, day: cell(head - 1, c), teacher: cell(head + 1, c), key: normClassKey(label), students: [], joining: [], leaving: [] };
+      groups["재원"].forEach(function (rr) { var p = parseSheetName(cell(rr, c)); if (p) col.students.push(p); });
+      groups["신입"].forEach(function (rr) { var p = parseSheetName(cell(rr, c)); if (p) col.joining.push(p); });
+      groups["퇴원"].forEach(function (rr) { var p = parseSheetName(cell(rr, c)); if (p) col.leaving.push(p); });
+      cols.push(col);
+    }
+    i = r;
+  }
+  return cols;
+}
+// 시트 열 ↔ 앱 반. 손으로 정한 것(config.rosterMap)이 먼저, 없으면 이름 열쇠로.
+// 요일까지 붙인 열쇠("예비고1S화목")가 맞으면 그것을, 안 맞으면 요일 뗀 열쇠("고1S")로 본다.
+// **둘 이상 맞으면 안 맞춘 것으로 둔다** — 팀장이 고른다.
+function colMapKey(col) { return col.label.replace(/\s+/g, " ") + "|" + col.day; }
+function classKeys(c) { var k = normClassKey(c.name), t = stripDays(k); return t !== k ? [k, t] : [k]; }
+function sheetColKeys(col) { var k = col.key, d = normClassKey(col.day); return d ? [k + d, k] : [k]; }
+function matchSheetCols(cols) {
+  var map = (S.config && S.config.rosterMap) || {}, classes = activeClasses();
+  return (cols || []).map(function (col) {
+    var manual = map[colMapKey(col)];
+    if (manual !== undefined) return { col: col, cid: manual || "", manual: true, hits: [] };
+    var keys = sheetColKeys(col), hits = [];
+    for (var i = 0; i < keys.length && !hits.length; i++) {
+      hits = classes.filter(function (c) { return classKeys(c).indexOf(keys[i]) >= 0; });
+    }
+    return { col: col, cid: hits.length === 1 ? hits[0].id : "", manual: false, hits: hits.map(function (c) { return c.id; }) };
+  });
+}
+// 차이 줄. 맞춘 반만 본다 — 시트에 없는 앱 반, 앱에 없는 시트 반은 서로 할 말이 없다.
+//   신입: 시트에 있는데 앱에 그 사람이 아예 없다        → 사람 만들고 반에 넣는다
+//   배정: 사람은 있는데 그 반에 없다                  → 반에 넣는다
+//   전반: 앱은 이 반, 시트는 저 반                     → 빼고 넣는다
+//   퇴원: 앱 그 반에 있는데 시트 어디에도 없다           → 반에서 뺀다 (사람은 남긴다)
+//   확인: 같은 이름이 앱에 둘 이상                     → 손으로 본다
+function rosterDiff(cols) {
+  var matched = matchSheetCols(cols).filter(function (m) { return m.cid; });
+  var mcid = {}; matched.forEach(function (m) { mcid[m.cid] = 1; });
+  var A = {}, B = {}, pidOf = {}, gradeOf = {}, dup = {};
+  activeClasses().forEach(function (c) {
+    if (!mcid[c.id]) return;
+    rosterStudents(c).forEach(function (r) {
+      if (!r.name) return;
+      (A[r.name] = A[r.name] || {})[c.id] = 1;
+      if (pidOf[r.name] && r.pid && pidOf[r.name] !== r.pid) dup[r.name] = 1;
+      if (r.pid) pidOf[r.name] = r.pid;
+      gradeOf[r.name] = gradeOf[r.name] || r.grade || "";
+    });
+  });
+  matched.forEach(function (m) {
+    m.col.students.forEach(function (p) { (B[p.name] = B[p.name] || {})[m.cid] = 1; gradeOf[p.name] = gradeOf[p.name] || p.grade || ""; });
+  });
+  var names = {}; Object.keys(A).concat(Object.keys(B)).forEach(function (n) { names[n] = 1; });
+  var items = [];
+  Object.keys(names).sort().forEach(function (n) {
+    var a = Object.keys(A[n] || {}), b = Object.keys(B[n] || {});
+    var onlyA = a.filter(function (x) { return !(B[n] && B[n][x]); }), onlyB = b.filter(function (x) { return !(A[n] && A[n][x]); });
+    if (!onlyA.length && !onlyB.length) return;
+    var g = gradeOf[n] || "";
+    if (dup[n]) { items.push({ kind: "확인", name: n, grade: g, why: "앱에 같은 이름이 둘 이상이다" }); return; }
+    if (onlyA.length === 1 && onlyB.length === 1) { items.push({ kind: "전반", name: n, grade: g, pid: pidOf[n], from: onlyA[0], to: onlyB[0] }); return; }
+    onlyA.forEach(function (cid) { items.push({ kind: "퇴원", name: n, grade: g, pid: pidOf[n], from: cid }); });
+    onlyB.forEach(function (cid) {
+      if (pidOf[n]) { items.push({ kind: "배정", name: n, grade: g, pid: pidOf[n], to: cid }); return; }
+      var ppl = S.students.filter(function (x) { return x.name === n; });
+      if (ppl.length > 1) items.push({ kind: "확인", name: n, grade: g, to: cid, why: "앱에 같은 이름이 둘 이상이다" });
+      else if (ppl.length === 1) items.push({ kind: "배정", name: n, grade: g, pid: ppl[0].pid, to: cid });
+      else items.push({ kind: "신입", name: n, grade: g, to: cid });
+    });
+  });
+  return items;
+}
+function diffKey(it) { return [it.kind, it.name, it.from || "", it.to || ""].join("|"); }
+// 차이의 지문. 줄 순서가 달라도 같다 — 같은 차이에 종이 두 번 울리면 안 된다.
+function sigOf(keys) {
+  var t = keys.slice().sort().join("\n"), h = 5381;
+  for (var i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return keys.length + ":" + h.toString(36);
+}
+// 시트는 그대로 두고 셈만 다시 한다 — 반영·무시·반 맞추기 뒤에 부른다.
+function applyRosterDiff() {
+  var cols = S.sheetCols || [];
+  var all = rosterDiff(cols);
+  var ign = (S.config && S.config.rosterIgnore) || {};
+  // 무시한 줄이 시트에서도 사라졌으면 잊는다 — 그 사람이 나중에 다시 오면 다시 물어야 한다
+  if (cols.length) { var have = {}; all.forEach(function (it) { have[diffKey(it)] = 1; }); Object.keys(ign).forEach(function (k) { if (!have[k]) delete ign[k]; }); }
+  var shown = all.filter(function (it) { return !ign[diffKey(it)]; });
+  S.diff = { all: all, items: shown, ignored: all.length - shown.length,
+    unmatched: matchSheetCols(cols).filter(function (m) { return !m.cid && m.col.students.length; }) };
+  S.diffN = shown.length;
+  S.diffSig = shown.length ? sigOf(shown.map(diffKey)) : "";
+}
+// 마지막 대조가 언제였고 몇 건이었는지만 남긴다 — 학생 이름은 팀 DB 에 안 적는다.
+// 다음에 아침 10시 크론을 붙이면 같은 문서에 같은 모양으로 적으면 된다.
+async function saveRosterDiff() {
+  if (!S.teamOk || S.ro) return;
+  var doc = { at: S.diffAt || Date.now(), sig: S.diffSig, n: S.diffN, tab: S.diffTab || "", by: "팀체크" };
+  if (S.diffDoc && S.diffDoc.sig === doc.sig && S.diffDoc.n === doc.n && S.diffDoc.tab === doc.tab) return;
+  S.diffDoc = doc;
+  try { await dashDoc("rosterDiff").set(doc); } catch (e) {}
+}
+// 시트를 읽고 맞춰 본다. 팀장만 — 선생님 화면에서는 시트도 안 부른다.
+// ⚠ 실패는 화면에 적는다. 조용히 «같다» 로 보이면 안 된다 — 그건 안 본 것이지 같은 것이 아니다.
+async function checkRosterSheet(force) {
+  if (S.ro) return;
+  var sh = sourceOf("roster");
+  if (!sh || !sh.id) { S.diff = null; S.diffSig = ""; S.diffN = 0; return; }
+  if (S.diffBusy) return;
+  S.diffBusy = true; S.diffErr = "";
+  try {
+    var meta = await sheetsApi({ action: "meta", spreadsheetId: sh.id });
+    var tabs = meta.tabs || [];
+    var tab = tabs.filter(function (t) { return sh.gid && String(t.gid) === String(sh.gid); })[0] || tabs[0];
+    if (!tab) throw new Error("시트에 탭이 없다");
+    var r = await sheetsApi({ action: "values", spreadsheetId: sh.id, range: "'" + tab.title.replace(/'/g, "''") + "'!A1:BZ400" });
+    var cols = parseRosterSheet(r.values || []);
+    if (!cols.length) throw new Error("«반» 줄을 못 찾았다 — 탭이 인원 현황 모양이 아니다: " + tab.title);
+    S.sheetCols = cols; S.diffTab = tab.title; S.diffAt = Date.now();
+    applyRosterDiff();
+    await saveRosterDiff();
+  } catch (e) { S.diffErr = e.message || String(e); }
+  S.diffBusy = false;
+  renderBell();
+  if ($("#sec-students")) renderStudents();
+}
+// «반영» — 앱 명단을 시트 쪽으로 한 줄 옮긴다. 사람 문서는 어떤 경우에도 지우지 않는다.
+async function applyDiffItem(it) {
+  if (!S.byPid || !Object.keys(S.byPid).length) { S.byPid = {}; S.students.forEach(function (x) { S.byPid[x.pid] = x; }); }
+  if (it.kind === "신입") {
+    var p = await stCreate({ name: it.name, grade: it.grade || "", school: "", homeroom: "" });
+    await stAssign(it.to, p);
+  } else if (it.kind === "배정") {
+    var q = S.byPid[it.pid]; if (!q) throw new Error("그 사람이 명단에 없다");
+    await stAssign(it.to, q);
+  } else if (it.kind === "전반") {
+    var w = S.byPid[it.pid]; if (!w) throw new Error("그 사람이 명단에 없다");
+    await stUnassign(it.from, it.pid);
+    await stAssign(it.to, w);
+  } else if (it.kind === "퇴원") {
+    await stUnassign(it.from, it.pid);
+  } else throw new Error("이 줄은 손으로 본다");
+}
+async function ignoreDiffItem(it) {
+  S.config.rosterIgnore = S.config.rosterIgnore || {};
+  S.config.rosterIgnore[diffKey(it)] = Date.now();
+  await saveConfig();
+}
+var DIFF_KIND = { "신입": ["blue", "사람을 만들고 반에 넣는다 (학교는 나중에 적는다)"], "배정": ["blue", "반에 넣는다"],
+  "전반": ["yellow", "옛 반에서 빼고 새 반에 넣는다. 번호는 이어진다"], "퇴원": ["red", "반에서 뺀다. 사람 문서는 남는다 — 다시 오면 기록이 이어진다"],
+  "확인": ["", "손으로 본다"] };
+function diffLabel(it) {
+  var cn = function (cid) { return cid ? className(cid) : ""; };
+  if (it.kind === "전반") return esc(cn(it.from)) + " → " + esc(cn(it.to));
+  if (it.kind === "퇴원") return esc(cn(it.from));
+  return esc(cn(it.to));
+}
+function rosterDiffBox() {
+  if (S.ro) return "";
+  var sh = sourceOf("roster");
+  if (!sh || !sh.id) {
+    return '<div class="dfbox"><b>시트와 대조</b> <span class="muted">대조용 시트가 아직 없다.</span> ' +
+      '<button class="mini" data-goto="sheets">근거 자료에서 등록</button></div>';
+  }
+  var d = S.diff, open = S.stDiffOpen !== false;
+  var when = S.diffAt ? new Date(S.diffAt) : (S.diffDoc && S.diffDoc.at ? new Date(S.diffDoc.at) : null);
+  var head = '<div class="dfhead"><b>시트와 대조</b>' +
+    (S.diffBusy ? '<span class="pill">읽는 중…</span>'
+      : S.diffErr ? '<span class="pill red">못 읽었다</span>'
+      : d ? (d.items.length ? '<span class="pill orange">' + d.items.length + '건 다르다</span>' : '<span class="pill green">같다</span>') : "") +
+    (S.diffTab ? '<span class="muted">' + esc(S.diffTab) + '</span>' : "") +
+    (when ? '<span class="muted">' + esc(fmtMD(ymd(when))) + " " + ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2) + '</span>' : "") +
+    '<span class="sp"></span>' +
+    '<button class="mini" data-diff-run="1"' + (S.diffBusy ? " disabled" : "") + '>다시 대조</button>' +
+    '<button class="mini" data-diff-toggle="1">' + (open ? "접기" : "펼치기") + '</button></div>';
+  if (!open) return '<div class="dfbox">' + head + '</div>';
+  var body = "";
+  if (S.diffErr) body += '<div class="err">' + esc(S.diffErr) + '</div>';
+  if (d) {
+    body += d.items.length ? d.items.map(function (it, i) {
+      var k = DIFF_KIND[it.kind] || DIFF_KIND["확인"];
+      return '<div class="dfrow" data-diff-i="' + i + '"><span class="pill ' + k[0] + '" title="' + esc(k[1]) + '">' + it.kind + '</span>' +
+        '<b>' + esc(it.name) + '</b>' + (it.grade ? '<span class="pill ' + gradeCls(it.grade) + '">' + esc(it.grade) + '</span>' : "") +
+        '<span class="muted">' + diffLabel(it) + (it.why ? " · " + esc(it.why) : "") + '</span><span class="sp"></span>' +
+        (it.kind === "확인" ? "" : '<button class="mini" data-diff-apply="' + i + '" title="' + esc(k[1]) + '">반영</button>') +
+        '<button class="mini" data-diff-skip="' + i + '" title="이번 차이는 안 본다. 시트가 또 바뀌면 다시 묻는다">무시</button></div>';
+    }).join("") : (S.diffErr ? "" : '<div class="muted" style="font-size:13px;padding:4px 0">맞춘 반은 시트와 명단이 같다.</div>');
+    if (d.unmatched.length) {
+      body += '<div class="dfsub">시트의 이 반은 앱의 어느 반인지 모른다 — 골라 주면 다음부터 맞춰 본다</div>' +
+        d.unmatched.map(function (m) {
+          return '<div class="dfrow"><span class="pill yellow">시트</span><b>' + esc(m.col.label.replace(/\s+/g, " ")) + '</b>' +
+            '<span class="muted">' + esc(m.col.day || "") + (m.col.teacher ? " · " + esc(m.col.teacher) : "") + " · " + m.col.students.length + "명</span><span class=\"sp\"></span>" +
+            '<select class="mini" data-diff-map="' + esc(colMapKey(m.col)) + '"><option value="">— 앱에 없는 반 (무시)</option>' +
+            activeClasses().map(function (c) { return '<option value="' + esc(c.id) + '"' + (m.hits.indexOf(c.id) >= 0 ? "" : "") + '>' + esc(c.name) + '</option>'; }).join("") +
+            '</select></div>';
+        }).join("");
+    }
+    var joining = [], leaving = [];
+    matchSheetCols(S.sheetCols || []).forEach(function (m) {
+      if (!m.cid) return;
+      m.col.joining.forEach(function (p) { joining.push(p.name + (p.grade ? " " + p.grade : "") + " → " + className(m.cid)); });
+      m.col.leaving.forEach(function (p) { leaving.push(p.name + (p.grade ? " " + p.grade : "") + " ← " + className(m.cid)); });
+    });
+    if (joining.length || leaving.length) {
+      body += '<div class="dfsub">시트의 예고 — 아직 반영할 것은 아니다</div>' +
+        (joining.length ? '<div class="dfrow"><span class="pill">신입 예정</span><span class="muted">' + esc(joining.join(" · ")) + '</span></div>' : "") +
+        (leaving.length ? '<div class="dfrow"><span class="pill">퇴원 예정</span><span class="muted">' + esc(leaving.join(" · ")) + '</span></div>' : "");
+    }
+    if (d.ignored) body += '<div class="dfsub muted">무시한 줄 ' + d.ignored + '건 <button class="mini" data-diff-unignore="1">되살리기</button></div>';
+  } else if (!S.diffBusy && !S.diffErr) {
+    body += '<div class="muted" style="font-size:13px;padding:4px 0">아직 안 맞춰 봤다.</div>';
+  }
+  return '<div class="dfbox">' + head + body + '</div>';
+}
+function bindRosterDiff(el) {
+  $$("[data-goto]", el).forEach(function (b) { b.onclick = function () { showPage(b.getAttribute("data-goto")); }; });
+  $$("[data-diff-run]", el).forEach(function (b) { b.onclick = function () { checkRosterSheet(true); renderStudents(); }; });
+  $$("[data-diff-toggle]", el).forEach(function (b) { b.onclick = function () { S.stDiffOpen = S.stDiffOpen === false; keepScroll(renderStudents); }; });
+  var item = function (b, attr) { return (S.diff && S.diff.items[Number(b.getAttribute(attr))]) || null; };
+  $$("[data-diff-apply]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var it = item(b, "data-diff-apply"); if (!it) return;
+      var k = DIFF_KIND[it.kind] || DIFF_KIND["확인"];
+      if (!confirm(it.kind + " — " + it.name + (it.grade ? " " + it.grade : "") + "\n" + diffLabel(it).replace(/&gt;/g, ">").replace(/&lt;/g, "<") + "\n\n" + k[1] + "\n반영할까?")) return;
+      b.disabled = true;
+      try { await applyDiffItem(it); applyRosterDiff(); await saveRosterDiff(); }
+      catch (e) { alert("반영하지 못했다: " + e.message); }
+      renderBell(); keepScroll(renderStudents);
+    };
+  });
+  $$("[data-diff-skip]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var it = item(b, "data-diff-skip"); if (!it) return;
+      b.disabled = true;
+      try { await ignoreDiffItem(it); applyRosterDiff(); await saveRosterDiff(); }
+      catch (e) { alert("저장하지 못했다: " + e.message); }
+      renderBell(); keepScroll(renderStudents);
+    };
+  });
+  $$("[data-diff-unignore]", el).forEach(function (b) {
+    b.onclick = async function () {
+      S.config.rosterIgnore = {};
+      try { await saveConfig(); } catch (e) { alert("저장하지 못했다: " + e.message); }
+      applyRosterDiff(); await saveRosterDiff(); renderBell(); keepScroll(renderStudents);
+    };
+  });
+  $$("[data-diff-map]", el).forEach(function (sel) {
+    sel.onchange = async function () {
+      S.config.rosterMap = S.config.rosterMap || {};
+      S.config.rosterMap[sel.getAttribute("data-diff-map")] = sel.value;   // "" 도 저장한다 — «앱에 없는 반» 으로 정한 것
+      try { await saveConfig(); } catch (e) { alert("저장하지 못했다: " + e.message); }
+      applyRosterDiff(); await saveRosterDiff(); renderBell(); keepScroll(renderStudents);
+    };
+  });
+}
+
 // 반 명단의 미러가 사람 정보와 어긋난 것
 function rosterDrift() {
   var out = [];
@@ -4742,6 +5091,11 @@ var SOURCES = [
   { key: "", menu: "학교 일정", sheet: false,
     what: "학교별 내신 기간",
     how: "시트가 아니다. 나이스 → 학교 홈페이지 → 게시판 첨부문서 → 붙여둔 그림 차례로 찾는다. 줄마다 근거 링크가 붙는다." },
+  { key: "roster", menu: "학생 명단 — 대조용 시트", sheet: true,
+    what: "인원 현황 시트와 명단 맞춰 보기",
+    how: "명단의 근거지는 여전히 수업관리 앱 DB 다 — 사본이 없다. 여기 시트는 **대조용**이다. " +
+         "팀장이 앱을 열 때마다 시트의 반별 명단과 앱 명단을 맞춰 보고, 다른 곳이 있으면 종으로 알린다. " +
+         "반영할지는 학생 명단 화면에서 한 줄씩 팀장이 정한다. 주소에 탭(gid)까지 붙여 넣으면 그 탭을 본다." },
   { key: "", menu: "학생 명단 · 내신 참여표", sheet: false,
     what: "학생·반·담임·제출",
     how: "수업관리 앱 DB에서 바로 읽고 쓴다. 사본이 없다." },
@@ -4754,12 +5108,15 @@ var SOURCES = [
 ];
 
 async function saveConfig() {
-  await dashDoc("config").set({ sources: S.config.sources || {}, updated: Date.now() }, { merge: true });
+  await dashDoc("config").set({ sources: S.config.sources || {}, rosterMap: S.config.rosterMap || {},
+    rosterIgnore: S.config.rosterIgnore || {}, updated: Date.now() }, { merge: true });
 }
 function sheetIdFrom(s) {
   var m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(s) || /^([A-Za-z0-9_-]{20,})$/.exec(String(s).trim());
   return m ? m[1] : "";
 }
+// 주소 끝의 #gid=… — 탭 하나를 가리킨다. 없으면 첫 탭.
+function sheetGidFrom(s) { var m = /[#&?]gid=(\d+)/.exec(String(s || "")); return m ? m[1] : ""; }
 // 옛 자리(config.scoreSheet)에 있던 것도 읽어준다 — 한 번 저장하면 새 자리로 옮겨간다.
 function sourceOf(key) {
   var m = S.config.sources || {};
@@ -4837,7 +5194,7 @@ function bindSources() {
       if (!id) { err.textContent = "시트 주소를 못 읽었다. 주소창의 주소를 그대로 붙여넣는다."; return; }
       b.disabled = true; err.textContent = "";
       try {
-        await saveSource(key, { id: id, url: raw, updated: Date.now() });
+        await saveSource(key, { id: id, url: raw, gid: sheetGidFrom(raw), updated: Date.now() });
         S.srcEdit = "";
         try { await checkSource(key); } catch (e) { err.textContent = e.message; }
         S.sheetScan = null;                 // 근거가 바뀌었으니 훑어둔 것은 버린다

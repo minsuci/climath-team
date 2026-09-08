@@ -37,13 +37,13 @@ export default async function handler(req, res) {
     const h = { Authorization: "Bearer " + token };
 
     if (body.action === "meta") {
-      const r = await fetch(BASE + id + "?fields=properties.title,sheets.properties(title,index,gridProperties(rowCount,columnCount))", { headers: h });
+      const r = await fetch(BASE + id + "?fields=properties.title,sheets.properties(sheetId,title,index,gridProperties(rowCount,columnCount))", { headers: h });
       const j = await r.json().catch(() => null);
       if (!r.ok) { res.status(r.status).json({ error: explain(r.status, j, sa) }); return; }
       res.status(200).json({
         title: j.properties && j.properties.title,
         tabs: (j.sheets || []).map((s) => ({
-          title: s.properties.title, index: s.properties.index,
+          title: s.properties.title, index: s.properties.index, gid: s.properties.sheetId,
           rows: s.properties.gridProperties && s.properties.gridProperties.rowCount,
           cols: s.properties.gridProperties && s.properties.gridProperties.columnCount,
         })),
