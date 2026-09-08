@@ -177,6 +177,18 @@ Object.values(RENDER).forEach((f) => {
     iSet < 0 ? "CORE_READY 를 안 건다" : "");
 }
 
+// ---- CSS 변수는 정의된 것만 쓴다 ----
+// 2026-09-08 종 상자가 color: var(--ink) 를 썼는데 --ink 는 어디에도 없었다. 브라우저는 조용히 무시하고
+// 머리띠의 흰 글자색을 물려줘서 **흰 바탕에 흰 글자** — 종을 만든 날부터 제목이 안 보였다. 시험은 HTML 만 보고 색을 못 본다.
+{
+  const css = (/<style>([sS]*?)</style>/.exec(fs.readFileSync("index.html", "utf8")) || [])[1] || "";
+  const used = {}; (css.match(/var(--[a-z0-9-]+)/g) || []).forEach((v) => { used[v.slice(4, -1)] = 1; });
+  const defined = {}; (css.match(/--[a-z0-9-]+s*:/g) || []).forEach((v) => { defined[v.replace(/s*:$/, "")] = 1; });
+  const missing = Object.keys(used).filter((k) => !defined[k]);
+  ok("쓰는 CSS 변수는 전부 정의돼 있다", missing.length === 0, missing.join(","));
+  ok("종 상자는 글자색을 되돌린다 (머리띠가 흰색을 물려준다)", /.bellboxs*{[^}]*color:s*var(--text)/.test(css));
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
