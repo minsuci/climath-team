@@ -116,6 +116,15 @@
   .src .row { margin: 6px 0 4px; }
   .src input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
   .src .err:empty { display: none; }
+  .hbox { margin-top: 14px; }
+  .hq { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: #f7f8fb;
+        color: var(--muted); font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer; padding: 0; }
+  .hq:hover { border-color: var(--navy); color: var(--navy); }
+  .hq.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+  .hbody { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+           background: #fafbfc; color: var(--text); font-size: 12px; }
+  .hbody p { margin: 0 0 6px; line-height: 1.55; }
+  .hbody p:last-child { margin-bottom: 0; }
   .dvday { margin: 12px 0 4px; font-size: 13px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
   .dvrow { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 3px 0; font-size: 13px; }
   .dvrow .dvmsg { color: inherit; text-decoration: none; }  .dvrow .dvmsg:hover { text-decoration: underline; }
@@ -5239,17 +5248,31 @@ function renderSheets() {
   var n = SOURCES.filter(function (x) { return x.sheet && !sourceOf(x.key); }).length;
   navBadge("sheets", n, true);
   el.innerHTML = '<h2>근거 자료 <span class="n">이 앱이 어디서 자료를 가져오나</span></h2>' +
-    '<p class="muted" style="font-size:12px;margin:0 0 10px">여기서 바꾸면 그 메뉴가 바로 그걸 쓴다. ' +
-    '시트는 ' + (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "이 앱의 서비스 계정") +
-    ' 에게 <b>뷰어</b>로 공유해야 읽힌다 — 남이 만든 시트도 편집 권한이 있으면 공유할 수 있다. 읽기만 하고 쓰지 않는다.</p>' +
-    '<div class="srcs">' + SOURCES.map(srcRowHtml).join("") + '</div>';
+    '<div class="srcs">' + SOURCES.map(srcRowHtml).join("") + '</div>' + srcHelpHtml();
   bindSources();
+}
+// ---------- 설명은 물음표 안에 (2026-09-08) ----------
+//
+// 마왕님 말씀 — "근거자료에 자질구레한 설명들 다 빼고 맨 아래 물음표 아이콘 만들어서 거기에 넣어".
+// 줄마다 붙던 «어떻게 쓰나»(SOURCES[].how)와 머리말의 서비스 계정 안내를 여기로 모았다.
+// **글은 안 지웠다** — 처음 보는 사람에게는 그게 다 필요한 말이라 접어 둘 뿐이다.
+// 화면에 남는 것은 메뉴 이름 · 무엇을 대나 · 연결됨 여부 · 단추들이다.
+function srcHelpHtml() {
+  var open = !!S.srcHelp;
+  return '<div class="hbox">' +
+    '<button class="hq' + (open ? " on" : "") + '" data-keep data-shelp="1" title="' + (open ? "설명 접기" : "이건 뭔가 — 설명 펼치기") + '" aria-label="설명">?</button>' +
+    (open ? '<div class="hbody">' +
+      '<p><b>여기서 바꾸면 그 메뉴가 바로 그걸 쓴다.</b> 시트는 ' +
+      (S.saEmail ? '<b>' + esc(S.saEmail) + '</b>' : "이 앱의 서비스 계정") +
+      ' 에게 <b>뷰어</b>로 공유해야 읽힌다 — 남이 만든 시트도 편집 권한이 있으면 공유할 수 있다. 읽기만 하고 쓰지 않는다.</p>' +
+      SOURCES.map(function (x) {
+        return '<p><b>' + esc(x.menu) + '</b> — ' + esc(x.how) + '</p>';
+      }).join("") + '</div>' : "") + '</div>';
 }
 function srcRowHtml(x) {
   if (!x.sheet) {
     return '<div class="src"><div class="sh"><b>' + esc(x.menu) + '</b>' +
-      '<span class="pill">' + esc(x.what) + '</span></div>' +
-      '<div class="muted" style="font-size:12px">' + esc(x.how) + '</div></div>';
+      '<span class="pill">' + esc(x.what) + '</span></div></div>';
   }
   var sh = sourceOf(x.key), edit = S.srcEdit === x.key || !sh;
   return '<div class="src on" data-src="' + esc(x.key) + '"><div class="sh"><b>' + esc(x.menu) + '</b>' +
@@ -5268,11 +5291,13 @@ function srcRowHtml(x) {
       '<button class="btn" data-ssave="' + esc(x.key) + '">저장</button>' +
       (sh ? '<button class="mini" data-scancel="1">취소</button>' +
             '<button class="mini" data-sdel="' + esc(x.key) + '">연결 끊기</button>' : "") + '</div>' : "") +
-    '<div class="muted" style="font-size:12px">' + esc(x.how) + '</div>' +
     '<div class="err" data-serr="' + esc(x.key) + '"></div></div>';
 }
 function bindSources() {
   var el = $("#sec-sheets");
+  // ⚠ data-keep 이 있어야 한다. 물음표는 읽기 계정도 눌러야 하는데 «관리» 같은 글자가 아니라 지금은 안 걸리지만,
+  //   RO_WORDS 가 늘면 조용히 사라진다. 감추기가 손대지 않게 못 박아 둔다.
+  $$("[data-shelp]", el).forEach(function (b) { b.onclick = function () { S.srcHelp = !S.srcHelp; renderSheets(); }; });
   $$("[data-sedit]", el).forEach(function (b) { b.onclick = function () { S.srcEdit = b.getAttribute("data-sedit"); renderSheets(); }; });
   $$("[data-scancel]", el).forEach(function (b) { b.onclick = function () { S.srcEdit = ""; renderSheets(); }; });
   $$("[data-ssave]", el).forEach(function (b) {

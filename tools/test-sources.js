@@ -55,6 +55,30 @@ ok("시험 성적이 등록된 근거를 읽는다", run(`return scoreSheet().id
 ok("근거가 없으면 시험 성적도 없다고 본다",
   run(`S.config = { sources: {} }; return scoreSheet()`) === null);
 
+// ---- 설명은 물음표 안에 (2026-09-08) ----
+// "자질구레한 설명들 다 빼고 맨 아래 물음표 아이콘 만들어서 거기에 넣어"
+run(`S.config = { sources: { scores: { id:"ABC", url:"https://x", title:"성적 시트" } } }; S.saEmail = "team@x.iam.gserviceaccount.com"; S.srcHelp = false;`);
+const rows = () => SRC.map((x) => run("return srcRowHtml(SOURCES[" + SRC.indexOf(x) + "])")).join("");
+{
+  const all = rows(), help0 = run("return srcHelpHtml()");
+  ok("줄에는 «어떻게 쓰나» 가 없다", !SRC.some((x) => all.indexOf(x.how.slice(0, 20)) >= 0),
+    SRC.filter((x) => all.indexOf(x.how.slice(0, 20)) >= 0).map((x) => x.menu).join(","));
+  ok("메뉴 이름과 «무엇을» 은 그대로 보인다", SRC.every((x) => all.indexOf(x.menu) >= 0 && all.indexOf(x.what) >= 0));
+  ok("연결됨·단추도 그대로", all.indexOf("연결됨") >= 0 && all.indexOf("data-scheck=") >= 0);
+  ok("접혀 있으면 물음표만 있고 글은 없다",
+    /data-shelp/.test(help0) && help0.indexOf("hbody") < 0 && help0.indexOf("뷰어") < 0, help0);
+  ok("물음표는 감추기가 안 지운다 (data-keep)", /data-keep/.test(help0), help0);
+  run("S.srcHelp = true");
+  const help1 = run("return srcHelpHtml()");
+  ok("펼치면 줄마다의 설명이 다 들어 있다", SRC.every((x) => help1.indexOf(x.how.slice(0, 20)) >= 0),
+    SRC.filter((x) => help1.indexOf(x.how.slice(0, 20)) < 0).map((x) => x.menu).join(","));
+  ok("서비스 계정 안내도 여기로 왔다", /뷰어/.test(help1) && /team@x\.iam/.test(help1));
+  ok("펼친 물음표에 표가 난다", /class="hq on"/.test(help1));
+  ok("계정을 아직 모르면 그렇게 적는다",
+    /이 앱의 서비스 계정/.test(run(`S.saEmail = ""; return srcHelpHtml()`)));
+  run("S.srcHelp = false; S.saEmail = ''");
+}
+
 // ⚠ 비동기 시험은 **맨 마지막에** 건다. await 로 양보하는 사이에
 //   뒤의 동기 줄이 S.config 를 갈아치워서, 있지도 않은 버그가 보인다(2026-09-05에 헛짚었다).
 vm.runInContext(`globalThis.__t = (async function(){
