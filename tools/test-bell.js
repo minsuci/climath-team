@@ -45,13 +45,17 @@ function el(id) {
     querySelector: () => null, querySelectorAll: () => [], onclick: null, focus() {}, closest: () => o };
   return o;
 }
+// 이 기기에 남는 것. getItem 이 늘 null 이면 «오프라인에서 눌러도 살아나는가» 를 아예 못 본다
+const LSDATA = {};
+const LS = { getItem: (k) => (k in LSDATA ? LSDATA[k] : null), setItem: (k, v) => { LSDATA[k] = String(v); }, removeItem: (k) => { delete LSDATA[k]; } };
+
 const PAGES_SEEN = [];
 const ctx = vm.createContext({
   console, setTimeout, clearTimeout, Date, Math, JSON, Object, Array, String, Number, Promise, RegExp, isNaN, parseInt,
   firebase: { initializeApp: () => ({}), firestore: firestoreFn, auth: () => ({ onAuthStateChanged() {}, currentUser: null, signOut: () => Promise.resolve() }) },
   document: { querySelector: (s) => (EL[s] = EL[s] || el(s)), querySelectorAll: () => [], addEventListener() {} },
   window: { addEventListener() {}, scrollTo() {} }, location: { hash: "" }, history: { replaceState() {} },
-  localStorage: { getItem: () => null, setItem() {} },
+  localStorage: LS,
   MutationObserver: function () { return { observe() {} }; },
   fetch: () => Promise.reject(new Error("no net")), alert() {}, confirm: () => true, prompt: () => null,
 });
@@ -65,7 +69,7 @@ const TASKS = `[
   { id:"a3", text:"내 메모", who:"이현우", status:"open", own:"T2" },
   { id:"a4", text:"팀장 몫", who:"한민수", status:"open" }
 ]`;
-const setup = (marks, who) => run(`
+const setup = (marks, who) => (Object.keys(LSDATA).forEach((k) => delete LSDATA[k]), run(`
   S.teamOk = true;
   S.claims = ${who === "owner" ? `{ role:"owner", tid:"T1", name:"한민수" }` : `{ role:"teacher", tid:"T2", name:"이현우" }`};
   S.ro = ${who === "owner" ? "false" : "true"};
@@ -76,7 +80,7 @@ const setup = (marks, who) => run(`
   S.marks = ${marks};
   S.newIds = []; S.newSeen = true; S.bellOpen = false;
   MY_NEW = {};
-`);
+`));
 
 (async () => {
   // ---- 종이 세는 대상 ----
@@ -98,11 +102,11 @@ const setup = (marks, who) => run(`
   ok("그 줄만 새것으로 표시된다", run(`return isNewTask({id:"a4"}) && !isNewTask({id:"a1"})`) === true);
   ok("id 가 없는 줄은 새것이 아니다", run(`return isNewTask({text:"x"})`) === false);
 
-  // ---- 할 일 화면을 열면 본 것으로 ----
+  // ---- 종을 눌러야 꺼진다 ----
   WRITES.length = 0;
   run("markTasksSeen()");
   await new Promise((r) => setTimeout(r, 0));
-  ok("화면을 열면 종이 꺼진다", val("S.newSeen") === true);
+  ok("종을 누르면 꺼진다", val("S.newSeen") === true);
   ok("«새로 옴» 표는 그 판까지 남는다 — 안 그러면 무엇이 새것이었는지 못 본다", JSON.stringify(val("S.newIds")) === '["a4"]');
   ok("본 것으로 적는다", JSON.stringify(DB["marks/T2"].seenTasks) === '["a1","a2","a4"]');
   WRITES.length = 0;
@@ -188,6 +192,50 @@ const setup = (marks, who) => run(`
   run("initNewTasks()");
   await new Promise((r) => setTimeout(r, 0));
   ok("규칙이 막혀 있으면 적으려 들지 않는다", WRITES.length === 0);
+
+  // ---- 누르기 전까지 안 꺼진다 (2026-09-08) ----
+  // 전에는 할 일 «화면을 열면» 꺼졌다. 이 앱은 마지막에 보던 메뉴를 기억했다가 다시 여니,
+  // 할 일에서 닫은 사람은 다음에 켜는 순간 종이 저 혼자 꺼졌다.
+  ok("메뉴를 여는 자리에서는 종을 안 끈다", src.indexOf('if (id === "tasks") markTasksSeen()') < 0);
+  setup(`{ T2: { done:{}, seenTasks:["a1","a2"] } }`);
+  run(`initNewTasks(); showPage("tasks")`);
+  await new Promise((r) => setTimeout(r, 0));
+  ok("할 일 화면을 열어도 종은 그대로 있다", val("S.newSeen") === false, JSON.stringify(val("S.newIds")));
+  run(`S.bellOpen = false; renderBell(); document.querySelector("#bell-btn").onclick({ stopPropagation(){} })`);
+  await new Promise((r) => setTimeout(r, 0));
+  ok("종을 눌러야 꺼진다", val("S.newSeen") === true && val("S.bellOpen") === true);
+  setup(`{ T2: { done:{}, seenTasks:["a1","a2"] } }`);
+  run(`initNewTasks(); S.bellOpen = true; renderBell()`);
+  ok("펼친 상태에서도 무엇이 왔는지 그대로 보인다", EL["#bell-wrap"].innerHTML.indexOf("팀장 몫") >= 0);
+
+  // ---- 오프라인에서 눌러도 살아난다 ----
+  // 팀 DB 쓰기는 연결이 없으면 줄에 선다. 그 사이에 새로고침하면 큐가 날아가 알림이 되살아난다.
+  setup(`{ T2: { done:{}, seenTasks:["a1","a2"] } }`);
+  run("initNewTasks()");
+  run("markTasksSeen()");
+  await new Promise((r) => setTimeout(r, 0));
+  ok("«봤다» 를 이 기기에도 적는다", JSON.parse(LSDATA["dash.seen.T2"] || "[]").indexOf("a4") >= 0, JSON.stringify(LSDATA));
+  run(`S.marks = { T2: { done:{}, seenTasks:["a1","a2"] } }; S.newIds = []; S.newSeen = true; initNewTasks()`);
+  ok("팀 DB 에 못 올라갔어도 다시 안 울린다", val("S.newIds").length === 0, JSON.stringify(val("S.newIds")));
+
+  setup(`{ T2: { done:{}, seenTasks:["a1","a2","a4"] } }`);
+  run("initNewTasks()");
+  ok("이 기기 기록이 없어도 팀 DB 것을 쓴다", val("S.newIds").length === 0);
+
+  setup(`{ T2: { done:{}, seenTasks:["a1"] } }`);
+  LSDATA["dash.seen.T2"] = JSON.stringify(["a2", "a4"]);
+  run("initNewTasks()");
+  ok("폰에서 본 것과 PC 에서 본 것을 합친다", val("S.newIds").length === 0, JSON.stringify(val("S.newIds")));
+
+  setup(`{}`);
+  LSDATA["dash.seen.T9"] = JSON.stringify(["a1", "a2", "a4"]);
+  run("initNewTasks()");
+  await new Promise((r) => setTimeout(r, 0));
+  ok("남의 기록을 내 것으로 쓰지 않는다", LSDATA["dash.seen.T2"] !== undefined);
+
+  // ---- 오프라인 캐시는 팀 DB 만 ----
+  // 수업관리 DB 까지 캐시하면 학생 이름·성적이 공용 PC 브라우저에 통째로 남는다.
+  ok("캐시는 팀 DB 하나만 켠다", src.split("enablePersistence(").length === 2 && src.indexOf("tdb.enablePersistence(") >= 0);
 
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
