@@ -37,6 +37,19 @@
   .top h1 b { color: var(--orange); }
   .top .date { opacity: .85; font-size: 13px; }
   .top .sp { flex: 1; }
+  .top { position: relative; }
+  .bell { background: none; border: 0; color: #fff; font-size: 15px; cursor: pointer; padding: 3px 7px;
+    border-radius: 6px; opacity: .9; position: relative; }
+  .bell:hover { opacity: 1; background: rgba(255,255,255,.1); }
+  .bell .bn { position: absolute; top: -2px; right: -3px; background: var(--orange); color: #fff;
+    font-size: 10px; font-weight: 700; min-width: 14px; padding: 0 3px; border-radius: 7px; line-height: 14px; }
+  .bellbox { position: absolute; right: 12px; top: 100%; margin-top: 4px; z-index: 30; width: 320px; max-width: calc(100vw - 24px);
+    background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    padding: 8px 10px; text-align: left; }
+  .bellbox h4 { margin: 0 0 6px; font-size: 13px; }
+  .bellbox .bi { padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+  .bellbox .bi:hover { background: #f5f7fb; }
+  .bellbox .bi b { font-weight: 600; }
   .top a, .top button.link { color: #fff; opacity: .9; font-size: 13px; background: none;
     border: 1px solid rgba(255,255,255,.35); border-radius: 6px; padding: 4px 10px; }
   .top a:hover, .top button.link:hover { opacity: 1; background: rgba(255,255,255,.1); }
@@ -82,6 +95,7 @@
   .pill.red { background: #fde8e8; color: #b42318; }
   .pill.green { background: #e3f5ea; color: #1f7a45; }
   .pill.yellow { background: #fff4d6; color: #8a5a00; }
+  .pill.orange { background: #ffe2cc; color: #9a4a00; font-weight: 700; }
   .pill.blue { background: #e4ecfb; color: #234e9e; }
   /* 앞으로 2주 — 내신 시작에 붙는 학생 이름 */
   .whoat { margin: 3px 0 2px; line-height: 1.9; }
@@ -468,7 +482,8 @@ var S = {
   exCls: "",      // 참여표 반 거르기. 비면 그 학년 전체
   scores: {},     // cid -> [ {date, ...score} ]
   tasks: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
-  marks: {},      // tid -> { done: { 할일id: 표시한날 }, name } — 선생님이 «내 완료» 로 적은 것
+  marks: {},      // tid -> { done: {...}, seenTasks: [...], name } — «내 완료» 와 «어디까지 봤나»
+  newIds: [], newSeen: true, bellOpen: false,   // 새로 온 할 일 (2026-09-08)
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
@@ -605,6 +620,8 @@ async function boot() {
   CORE_READY = loadCore();
   renderShell();
   await CORE_READY;
+  initNewTasks();
+  renderBell();
   renderAll();
   loadExams().then(renderExams);
   loadScores().then(renderScores);
@@ -629,6 +646,7 @@ function renderShell() {
     '<div class="top"><h1><b>팀체크</b></h1>' +
     (S.ro ? '<span class="pill yellow" title="' + esc(RO_MSG) + '">' + esc(S.claims.name || S.claims.tid || "") + ' · 읽기만</span>' : "") +
     '<span class="date">' + fmtMD(TODAY) + '</span><span class="sp"></span>' +
+    '<span id="bell-wrap"></span>' +
     '<button class="link" id="btn-reload">새로고침</button>' +
     '<button class="link" id="btn-out">로그아웃</button></div>' +
     '<div class="wrap"><div id="banner"></div><div class="nav">' +
@@ -639,6 +657,7 @@ function renderShell() {
   $("#btn-out").onclick = function () { signOutAll(); };
   $("#btn-reload").onclick = function () { location.reload(); };
   $$(".nav button").forEach(function (b) { b.onclick = function () { showPage(b.getAttribute("data-page")); }; });
+  renderBell();
   showPage(currentPage());
 }
 // 한 페이지에 상자 하나. 마지막에 본 페이지를 기억하고, 주소의 #페이지 로도 연다.
@@ -668,6 +687,7 @@ function showPage(id) {
     var done = function () { S.minutesLoading = false; renderMinutes(); renderTasks(); };
     loadMinutes().then(done).catch(function (e) { S.minutesErr = e.message; done(); });
   }
+  if (id === "tasks") markTasksSeen();
   // 개발 현황은 깃허브를 부른다. 이것도 그 메뉴를 열 때만.
   if (id === "dev" && S.dev === null && !S.devLoading) {
     S.devLoading = true;
@@ -1510,11 +1530,81 @@ async function toggleMyMark(id) {
   if (!tid) throw new Error("누구인지 알 수 없다");
   var cur = S.marks[tid] || {}, done = Object.assign({}, cur.done || {});
   if (done[id]) delete done[id]; else done[id] = TODAY;
-  var doc = { done: done, name: myName(), updated: Date.now() };
+  // ⚠ set() 은 문서를 통째로 갈아친다. 있던 칸(seenTasks)을 얹지 않으면 «어디까지 봤나»가 날아가고
+  //   다음에 열 때 할 일 전체가 «새로 옴» 으로 뜬다.
+  var doc = Object.assign({}, cur, { done: done, name: myName(), updated: Date.now() });
   S.marks[tid] = doc;                       // 화면은 바로 바뀐다
   try { await passWrite(function () { return tdb.collection("marks").doc(tid).set(doc); }); }
   catch (e) { S.marks[tid] = cur; throw e; }   // 못 썼으면 되돌린다 — 안 그러면 표시만 되고 남이 못 본다
 }
+// ---------- 새로 온 할 일 (2026-09-08) ----------
+//
+// «할 일에 내용이 추가될 때마다» 알린다. 알림은 **앱 안에서만** — 머리띠의 종에 숫자가 뜨고
+// 목록의 그 줄에 «새로 옴» 이 붙는다. 앱을 닫아둬도 오는 푸시는 아직 아니다.
+//
+// 어디까지 봤나는 **사람마다 자기 marks 문서**에 적는다(`seenTasks`). 새 컬렉션을 만들면
+// 규칙을 콘솔에 다시 붙여넣어야 하는데, marks 는 이미 «자기 문서만 쓴다» 로 열려 있다.
+// 기기가 바뀌어도 따라온다 — 브라우저에 두면 폰과 PC 가 따로 센다.
+//
+// ⚠ 각자 적은 할 일(`own`)은 안 센다. 남의 개인 메모까지 알리면 종이 금방 소음이 된다.
+//   종은 **팀 할 일이 늘었을 때**만 울린다.
+function bellTasks() { return S.tasks.filter(function (t) { return !t.own && t.id; }); }
+function bellIds() { return bellTasks().map(function (t) { return t.id; }); }
+// ⚠ 처음 들어온 사람에게 지난 할 일을 전부 «새로 옴» 으로 쏟으면 안 된다.
+//   `seenTasks` 칸 자체가 없으면 지금 것을 기준선으로 적어두고 조용히 넘어간다.
+function initNewTasks() {
+  var m = S.marks[myTid()] || {}, seen = m.seenTasks;
+  var ids = bellIds();
+  if (!Array.isArray(seen)) { S.newIds = []; S.newSeen = true; saveSeen(ids); return; }
+  var have = {}; seen.forEach(function (x) { have[x] = 1; });
+  S.newIds = ids.filter(function (id) { return !have[id]; });
+  S.newSeen = !S.newIds.length;
+}
+function isNewTask(t) { return !!t.id && S.newIds.indexOf(t.id) >= 0; }
+// 지금 있는 것만 적는다 — 지워진 할 일 id 를 계속 이고 가지 않는다.
+async function saveSeen(ids) {
+  var tid = myTid(); if (!tid || !S.teamOk) return;
+  var cur = S.marks[tid] || {};
+  var doc = Object.assign({}, cur, { seenTasks: ids, name: myName(), updated: Date.now() });
+  S.marks[tid] = doc;
+  try { await passWrite(function () { return tdb.collection("marks").doc(tid).set(doc); }); }
+  catch (e) { /* 못 적어도 화면은 돈다. 다음에 다시 «새로 옴» 으로 뜰 뿐이다 */ }
+}
+// 할 일 화면을 열면 본 것으로 친다. **«새로 옴» 표는 이번 판까지 남긴다** —
+// 종만 지우고 표까지 지우면 무엇이 새것이었는지 볼 새가 없다.
+function markTasksSeen() {
+  if (S.newSeen) return;
+  S.newSeen = true;
+  saveSeen(bellIds());
+  renderBell();
+}
+function renderBell() {
+  var el = $("#bell-wrap"); if (!el) return;
+  var n = S.newSeen ? 0 : S.newIds.length;
+  var list = S.tasks.filter(isNewTask);
+  el.innerHTML =
+    '<button class="bell" id="bell-btn" title="새로 온 할 일">🔔' +
+      (n ? '<span class="bn">' + (n > 99 ? "99+" : n) + '</span>' : "") + '</button>' +
+    (S.bellOpen ? '<div class="bellbox" id="bell-box"><h4>새로 온 할 일 ' + list.length + '</h4>' +
+      (list.length ? list.slice(0, 8).map(function (t) {
+        return '<div class="bi" data-bell="1"><b>' + esc(t.text) + '</b>' +
+          '<div class="muted" style="font-size:12px">' + esc(t.who || "담당 없음") +
+          (t.due ? " · " + esc(fmtMD(t.due)) : "") + (taskIsMine(t) ? ' · <b>내 것</b>' : "") + '</div></div>';
+      }).join("") + (list.length > 8 ? '<div class="bi muted" data-bell="1">외 ' + (list.length - 8) + '건</div>' : "")
+        : '<div class="bi muted">새로 온 것이 없다.</div>') + '</div>' : "");
+  $("#bell-btn").onclick = function (e) {
+    e.stopPropagation();
+    S.bellOpen = !S.bellOpen;
+    renderBell();
+  };
+  $$("[data-bell]", el).forEach(function (b) {
+    b.onclick = function () { S.bellOpen = false; showPage("tasks"); renderBell(); };
+  });
+}
+// 딴 데를 누르면 닫는다
+if (typeof document !== "undefined" && document.addEventListener)
+  document.addEventListener("click", function () { if (S.bellOpen) { S.bellOpen = false; renderBell(); } });
+
 // 내가 눌러야 하는 줄이면 단추, 여럿이 걸린 줄이면 «몇 명 했나»
 function myMarkBtn(t) {
   if (t.own) return "";   // 자기가 적은 것은 체크칸으로 바로 끝낸다. 따로 표시할 상대가 없다
@@ -1702,6 +1792,7 @@ function taskRow(t) {
     '<div class="t' + (t.status === "done" ? " done" : "") + '">' +
     (S.ro || taskShared(t) || taskDraft(t) ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') + esc(t.text) +
     '<div class="m">' +
+    (isNewTask(t) ? '<span class="pill orange" title="지난번에 본 뒤로 새로 들어온 것">새로 옴</span>' : "") +
     (!S.ro && taskDraft(t) ? '<span class="pill yellow" title="아직 선생님에게 안 갔다. «보내기» 를 눌러야 간다">✎ 초안</span>' : "") +
     (t.grade ? '<span class="pill ' + gradeCls(t.grade) + '">' + esc(t.grade) + '</span>' : "") +
     (t.repeat ? '<span class="pill blue">매주 ' + t.repeat.dow.map(function (i) { return DOW_KO[i]; }).join("·") + '</span>' : "") +
