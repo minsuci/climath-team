@@ -116,6 +116,7 @@
   .src .row { margin: 6px 0 4px; }
   .src input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
   .src .err:empty { display: none; }
+  .mrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
   .hbox { margin-top: 14px; }
   .hq { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: #f7f8fb;
         color: var(--muted); font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer; padding: 0; }
@@ -3663,6 +3664,106 @@ function termRows() {
   return out;
 }
 
+
+// ---------- 수학시험 날짜 넣기 (2026-09-08) ----------
+//
+// 마왕님 말씀 — "학교일정에서 수학시험 날짜가 아직 등록이 안됐어. 요즘 슬슬 학교 홈페이지 가정통신문이나
+// 공지사항에 올라오는 것 같더라고. 수학시험날짜 넣기 기능 추가할 수 있을까?"
+//
+// 학사일정(나이스)에는 «2학기 중간고사» 까지만 있고 **과목별 시간표는 안 올라온다**. 그건 학교가 가정통신문·공지로 따로 낸다.
+// 그 글을 **그대로 붙여넣으면** 수학 보는 날을 찾아 준다. 학교마다 홈페이지가 달라 긁어오기는 다음 일이고
+// (그 파이프라인은 수업관리 앱에 있다), 붙여넣기는 어느 학교든 오늘 바로 된다.
+//
+// ⚠ 찾기만 하고 **넣는 것은 사람이 누른다.** 시간표를 잘못 읽으면 직보(수학시험 전날)까지 어긋나고,
+//   그 날짜로 참여표가 돌아간다. 한 줄씩 «넣기» 를 누른다.
+// ⚠ 시험 기간(start~end) 밖의 날짜는 빨갛게 짚어 준다 — 지난 회차 시간표를 붙여넣는 실수가 제일 흔하다.
+
+// 수학 계열 과목. «수학여행»·«수학능력» 같은 말은 뺀다 — 가정통신문에 흔하다.
+var MATH_WORD = /(공통수학|수학Ⅰ|수학Ⅱ|수학I|수학II|미적분|확률과\s*통계|확통|기하|대수|미적|수학)/;
+var MATH_NOT = /수학(여행|능력|경시|학습|올림피아드|과학축전|나눔)/;
+function hasMath(t) {
+  var x = String(t || "");
+  if (!MATH_WORD.test(x)) return false;
+  // «수학여행» 만 있는 칸은 수학이 아니다. 그 말을 지우고도 남으면 과목으로 본다.
+  return MATH_WORD.test(x.replace(new RegExp(MATH_NOT.source, "g"), ""));
+}
+// 붙여넣은 글에서 날짜 하나. 해가 없으면 회차의 해로 채운다.
+function pickDate(t, year) {
+  var x = String(t || ""), m;
+  if ((m = /(20\d{2})\s*[-.\/년]\s*(\d{1,2})\s*[-.\/월]\s*(\d{1,2})/.exec(x))) return ymdOf(m[1], m[2], m[3]);
+  if ((m = /(\d{1,2})\s*월\s*(\d{1,2})\s*일/.exec(x))) return ymdOf(year, m[1], m[2]);
+  // «10.15.» 처럼 끝에 점을 찍는 학교가 많다. 점은 받되 «10.15.2025» 같은 세 토막은 위에서 이미 걸렀어야 한다.
+  if ((m = /(?:^|[^\d])(\d{1,2})\s*[\/.]\s*(\d{1,2})(?!\d)(?!\s*[\/.]\s*\d)/.exec(x))) return ymdOf(year, m[1], m[2]);
+  return "";
+}
+function ymdOf(y, mo, d) {
+  y = Number(y); mo = Number(mo); d = Number(d);
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return "";
+  return y + "-" + ("0" + mo).slice(-2) + "-" + ("0" + d).slice(-2);
+}
+// «1학년»·«고2»·«중3» — 시간표가 학년마다 갈려 있을 때.
+function pickGrade(t) {
+  var x = String(t || ""), m;
+  if ((m = /(중|고)\s*([1-3])(?![0-9])/.exec(x))) return { kind: m[1], num: Number(m[2]) };
+  if ((m = /([1-3])\s*학\s*년/.exec(x))) return { kind: "", num: Number(m[1]) };
+  return null;
+}
+// 붙여넣은 글에서 «수학 보는 날» 을 뽑는다.
+//
+// 두 가지 모양을 본다:
+//   칸 모양 — 표를 복사하면 칸이 탭으로 온다. 날짜가 머리줄에 가로로 서고 과목이 그 아래 같은 칸에 온다.
+//             그래서 **같은 칸 번호**의 위쪽 날짜를 쓴다.
+//   줄 모양 — "10/15(수) 1교시 국어 2교시 수학" 처럼 한 줄에 날짜와 과목이 같이 온다.
+//             날짜가 없으면 바로 위의 날짜 줄(«■ 10월 15일»)을 쓴다.
+function mathExamHits(text, year) {
+  var lines = String(text || "").replace(/\r/g, "").split("\n");
+  var colDate = {}, lastDate = "", lastDateAt = -99, grade = null, hits = [];
+  var add = function (date, g, why) {
+    if (!date) return;
+    var key = date + "|" + (g ? (g.kind || "") + g.num : "");
+    if (hits.some(function (h) { return h.key === key; })) return;
+    hits.push({ key: key, date: date, kind: g ? g.kind : "", num: g ? g.num : 0, why: String(why || "").trim().slice(0, 60) });
+  };
+  lines.forEach(function (line, i) {
+    var g = pickGrade(line); if (g) grade = g;
+    var cells = line.indexOf("\t") >= 0 ? line.split("\t") : null;
+    if (cells) {
+      // 머리줄이면 칸마다 날짜를 적어 둔다. 과목 칸이면 그 칸 번호의 날짜를 쓴다.
+      cells.forEach(function (c, ci) { var d = pickDate(c, year); if (d && !hasMath(c)) colDate[ci] = d; });
+      cells.forEach(function (c, ci) {
+        if (!hasMath(c)) return;
+        add(pickDate(c, year) || colDate[ci] || lastDate, grade, line);
+      });
+      var any = cells.map(function (c) { return pickDate(c, year); }).filter(Boolean)[0];
+      if (any) { lastDate = any; lastDateAt = i; }
+      return;
+    }
+    var d = pickDate(line, year);
+    if (hasMath(line)) add(d || (i - lastDateAt <= 6 ? lastDate : ""), grade, line);
+    else if (d) { lastDate = d; lastDateAt = i; }
+  });
+  return hits;
+}
+// 찾은 것을 이 회차의 «학교|학년» 줄에 붙인다. 학년 표시가 아예 없으면 그 학교의 모든 학년에 같은 날.
+function mathPlan(text, school) {
+  var rows = termRows().filter(function (v) { return v.school === school; });
+  // 가정통신문은 «10/15» 처럼 해를 안 적는다. 이 회차 시험이 있는 해로 채운다(없으면 오늘 해).
+  var year = Number(String(rows.map(function (v) { return v.start; }).filter(Boolean)[0] || TODAY).slice(0, 4));
+  var hits = mathExamHits(text, year);
+  var numbered = hits.filter(function (h) { return h.num; });
+  return rows.map(function (v) {
+    var gk = String(v.grade).charAt(0), gn = Number(String(v.grade).slice(1)) || 0;
+    var mine = numbered.length
+      ? numbered.filter(function (h) { return h.num === gn && (!h.kind || h.kind === gk); })
+      : hits;
+    var dates = []; mine.forEach(function (h) { if (dates.indexOf(h.date) < 0) dates.push(h.date); });
+    var out = { school: school, grade: v.grade, cur: v.math || "", start: v.start || "", end: v.end || "",
+                date: dates.length === 1 ? dates[0] : "", many: dates.length > 1 ? dates : null,
+                why: (mine[0] || {}).why || "" };
+    if (out.date && v.start && v.end && (out.date < v.start || out.date > v.end)) out.warn = "시험 기간 밖";
+    return out;
+  });
+}
 function renderTerms() {
   var el = $("#sec-terms");
   if (!S.term) {
@@ -3678,11 +3779,12 @@ function renderTerms() {
 
   el.innerHTML = '<h2>학교 일정 <span class="n">' + esc(S.term) + ' · ' + rows.length + '줄</span><span class="sp"></span>' +
     '<button class="mini" id="tm-pull">시험 기간 찾아오기</button>' +
+    '<button class="mini" id="tm-math">수학시험 날짜 넣기</button>' +
     '</h2>' +
     '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>기간 비어 있음</span></div>' +
     '<div class="' + (noMath.length ? "bad" : "good") + '"><b>' + noMath.length + '</b><span>수학시험 없음</span></div>' +
     '<div><b>' + rows.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= 0 && n <= 14; }).length + '</b><span>2주 안 시작</span></div></div>' +
-    '<div id="tm-pullbox"></div>' + jobBoxHtml(job) +
+    '<div id="tm-pullbox"></div><div id="tm-mathbox"></div>' + jobBoxHtml(job) +
     '<div class="tbl tall"><table class="sheet-t tm"><thead><tr>' +
     '<th style="width:110px">학교</th><th style="width:60px">학년</th><th style="width:46px">학생</th>' +
     '<th style="width:140px">시작</th><th style="width:140px">끝</th><th style="width:140px">수학시험</th><th style="width:140px">복귀</th>' +
@@ -3703,12 +3805,15 @@ function renderTerms() {
         (v.srcUrl ? ' <a href="' + esc(v.srcUrl) + '" target="_blank">' + esc(v.srcName || "근거") + '</a>' : "") + '</td></tr>';
     }).join("") + '</tbody></table></div>' +
     '<p class="muted" style="font-size:12px;margin:6px 0 0">학생이 다니는 학교·학년만 뜬다. ' +
-    '<b>수학시험 날짜는 학사일정에 없다</b> — 과목별 시간표는 안 올라오므로 손으로 넣거나 학생이 낸다. ' +
+    '<b>수학시험 날짜는 학사일정에 없다</b> — 과목별 시간표는 안 올라온다. ' +
+    '가정통신문·공지의 시험 시간표를 <b>수학시험 날짜 넣기</b> 에 붙여넣으면 찾아 준다. ' +
     '직보는 참여표에서 수학시험 전날로 자동으로 잡힌다.</p>';
 
   bindTerms();
   $("#tm-pull").onclick = function () { S.pullOpen = !S.pullOpen; drawPullBox(); };
+  $("#tm-math").onclick = function () { S.mathOpen = !S.mathOpen; drawMathBox(); };
   if (S.pullOpen) drawPullBox();
+  if (S.mathOpen) drawMathBox();
   if (!S.jobUnsub) S.jobUnsub = jobSub(function () { var b = $("#sec-terms"); if (b && !$("#sec-terms").hidden) renderTermsJobOnly(); });
 }
 function renderTermsJobOnly() {
@@ -3789,6 +3894,77 @@ function drawPullBox() {
       .then(function () { keepScrollIn("#sec-terms", renderTerms); });
     S.pullOpen = false; drawPullBox(); renderTermsJobOnly();
   };
+}
+
+// 붙여넣기 상자. **다시 그릴 때 붙여넣은 글을 안 날린다** — 결과만 아래 칸에 새로 그린다.
+// [[입력 중에 다시 그리면 한 글자만 쳐진다]] 와 같은 자리다.
+function drawMathBox() {
+  var box = $("#tm-mathbox"); if (!box) return;
+  if (!S.mathOpen) { box.innerHTML = ""; S.mathPlan = null; return; }
+  var rows = termRows();
+  var schools = []; rows.forEach(function (v) { if (schools.indexOf(v.school) < 0) schools.push(v.school); });
+  if (!S.mathSchool || schools.indexOf(S.mathSchool) < 0) {
+    var first = rows.filter(function (v) { return v.start && !v.math; })[0] || rows[0];
+    S.mathSchool = first ? first.school : "";
+  }
+  box.innerHTML = '<div class="entry"><div class="row">' +
+    '<span class="muted">학교</span><select id="tm-msch">' +
+    schools.map(function (sc) {
+      var left = rows.filter(function (v) { return v.school === sc && !v.math; }).length;
+      return '<option' + (sc === S.mathSchool ? " selected" : "") + '>' + esc(sc) + '</option>';
+    }).join("") + '</select>' +
+    '<span class="muted" id="tm-mleft"></span>' +
+    '<span class="sp" style="flex:1"></span>' +
+    '<button class="btn o" id="tm-mgo">찾기</button>' +
+    '<button class="mini" id="tm-mclose">닫기</button></div>' +
+    '<textarea id="tm-mtext" rows="5" style="width:100%" placeholder="가정통신문·공지사항의 시험 시간표를 그대로 붙여넣기 (표를 끌어 복사하면 칸이 그대로 온다)"></textarea>' +
+    '<div class="muted" style="font-size:12px">학교가 낸 글 그대로면 된다. 날짜와 «수학» 이 같은 칸·같은 줄에 있으면 찾는다. ' +
+    '<b>찾기만 하고 넣는 것은 눌러야 한다.</b></div>' +
+    '<div id="tm-mres"></div></div>';
+  $("#tm-mclose").onclick = function () { S.mathOpen = false; drawMathBox(); };
+  $("#tm-msch").onchange = function () { S.mathSchool = this.value; S.mathPlan = null; drawMathRes(); };
+  $("#tm-mgo").onclick = function () {
+    S.mathText = $("#tm-mtext").value;
+    S.mathPlan = mathPlan(S.mathText, S.mathSchool);
+    drawMathRes();
+  };
+  if (S.mathText) $("#tm-mtext").value = S.mathText;
+  drawMathRes();
+}
+function drawMathRes() {
+  var el = $("#tm-mres"); if (!el) return;
+  var rows = termRows().filter(function (v) { return v.school === S.mathSchool; });
+  var left = $("#tm-mleft"); if (left) left.textContent = rows.filter(function (v) { return !v.math; }).length + "줄 비어 있음";
+  var plan = S.mathPlan;
+  if (!plan) { el.innerHTML = ""; return; }
+  var found = plan.filter(function (p) { return p.date || p.many; });
+  el.innerHTML = !found.length
+    ? '<div class="muted" style="margin-top:8px;font-size:13px">수학 보는 날을 못 찾았다. 날짜와 «수학» 이 같은 줄이나 같은 칸에 있어야 한다 — ' +
+      '시간표 부분만 다시 붙여넣거나, 표의 그 자리를 표에 바로 적는다.</div>'
+    : '<div style="margin-top:8px">' + plan.map(function (p, i) {
+        if (!p.date && !p.many) return '<div class="mrow muted"><b>' + esc(p.grade) + '</b> 못 찾음</div>';
+        if (p.many) return '<div class="mrow"><b>' + esc(p.grade) + '</b><span class="pill red">여럿</span>' +
+          '<span class="muted">' + p.many.map(function (d) { return esc(fmtMD(d)); }).join(" · ") + ' — 어느 것인지 몰라 안 넣는다. 표에 직접 적는다</span></div>';
+        return '<div class="mrow"><b>' + esc(p.grade) + '</b>' +
+          '<span class="pill ' + (p.warn ? "red" : "blue") + '">' + esc(fmtMD(p.date)) + '</span>' +
+          (p.warn ? '<span class="pill red">' + esc(p.warn) + ' (' + esc(fmtMD(p.start) + "~" + fmtMD(p.end)) + ')</span>' : "") +
+          (p.cur ? '<span class="muted">지금 ' + esc(fmtMD(p.cur)) + ' — 덮어쓴다</span>' : "") +
+          (p.why ? '<span class="muted" style="font-size:12px">' + esc(p.why) + '</span>' : "") +
+          '<span class="sp" style="flex:1"></span>' +
+          '<button class="mini" data-mput="' + i + '">넣기</button></div>';
+      }).join("") + '</div>';
+  $$("#tm-mres [data-mput]").forEach(function (b) {
+    b.onclick = async function () {
+      var p = S.mathPlan[Number(b.getAttribute("data-mput"))];
+      b.disabled = true; b.textContent = "넣는 중…";
+      try {
+        await saveSchoolTerm(S.term, p.school, p.grade, { math: p.date });
+        p.cur = p.date; p.done = true;
+        b.textContent = "넣었다";
+        keepScrollIn("#sec-terms", renderTerms);
+      } catch (e) { b.disabled = false; b.textContent = "넣기"; alert("넣지 못했다: " + e.message); }
+    };
+  });
 }
 
 // ---------- 내신 참여표 ----------
