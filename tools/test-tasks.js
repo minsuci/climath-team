@@ -113,8 +113,44 @@ ok("팀 밖 사람 것은 아무도 안 걸린다", tids("d").length === 0);
 ok("내 것 칩이 내 줄만 남긴다",
   val("S.tasks.filter(function(t){ return taskMatchesWho(t, MINE) }).map(function(t){return t.id})").join(",") === "a,b",
   val("S.tasks.filter(function(t){ return taskMatchesWho(t, MINE) }).map(function(t){return t.id})").join(","));
-ok("담당 칩은 글자로 그대로 거른다", val("S.tasks.filter(function(t){ return taskMatchesWho(t,'김효상') }).length") === 1);
+ok("이름이 적힌 줄은 그 사람 칩에", val("S.tasks.filter(function(t){ return taskMatchesWho(t,'김효상') }).length") === 1);
 ok("아무것도 안 고르면 전부", val("S.tasks.filter(function(t){ return taskMatchesWho(t,'') }).length") === 4);
+
+// ---- 담당 칩 (2026-09-08) ----
+// 마왕님 말씀 — «전원은 그냥 각자 모두에게 들어가는 것으로, 고등부도 모두 들어가는 것으로».
+// 예전에는 담당 글자를 그대로 찾아서, «전원» 으로 걸린 일이 아무의 칩에도 안 나왔다.
+const chipHas = (who, id) => val("S.tasks.filter(function(t){ return taskMatchesWho(t," + JSON.stringify(who) + ") }).map(function(t){return t.id})").indexOf(id) >= 0;
+run(`S.tasks = [
+  { id:"p", text:"이름으로 걸린 것", who:"이현우",        status:"open" },
+  { id:"q", text:"전원",           who:"전원",          status:"open" },
+  { id:"r", text:"고등부",         who:"고등부",        status:"open" },
+  { id:"u", text:"담임 전원",       who:"담임 전원",      status:"open" },
+  { id:"v", text:"남의 것",         who:"정찬준",        status:"open" }
+];`);
+ok("이름으로 걸린 것은 그 사람 칩에", chipHas("이현우", "p"));
+ok("«전원» 은 각자 모두에게 들어간다", chipHas("이현우", "q") && chipHas("정찬준", "q"));
+ok("«고등부» 도 모두에게 들어간다", chipHas("이현우", "r") && chipHas("정찬준", "r"));
+ok("«담임 전원» 은 반이 있는 사람에게만", chipHas("이현우", "u") && !chipHas("새선생", "u"));
+ok("남의 이름으로 걸린 것은 안 들어간다", !chipHas("이현우", "v"));
+
+// 칩에 세우는 사람은 다섯. 할 일에 적힌 담당 글자를 전부 세우면 스물넷이 되어 아무도 안 누른다.
+ok("칩은 지정한 다섯 명뿐", val("whoChips()").join(",") === "이창혁A,이승엽,박준성,정찬준,이현우", val("whoChips()").join(","));
+ok("회의록에서 굴러온 말은 칩이 안 된다", (() => {
+  run(`S.tasks = S.tasks.concat([{ id:"w", text:"희망자", who:"희망자 · 해당 반 담당", status:"open" }])`);
+  return val("whoChips()").join(",").indexOf("희망자") < 0;
+})());
+// 담당을 **적을 때** 뜨는 추천은 좁히지 않는다 — 칩에 없는 것도 골라야 한다
+ok("적을 때 추천에는 «전원» 도 한민수도 있다",
+  val("whoOptions()").indexOf("전원") >= 0 && val("whoOptions()").indexOf("한민수") >= 0,
+  val("whoOptions()").join(","));
+
+// 아래 시험들이 쓰는 목록으로 되돌린다
+run(`S.tasks = [
+  { id:"a", text:"올케어 미작성 확인", who:"담임 전원", status:"open" },
+  { id:"b", text:"이번 주 업무 정리",   who:"한민수",   status:"open" },
+  { id:"c", text:"유튜브 촬영",        who:"예비고1 담당 강사", status:"open" },
+  { id:"d", text:"편제표 서초",        who:"김효상",   status:"open" }
+];`);
 
 // ---- 강사가 봐도 되는 할 일인가 ----
 // **출처(어느 회의)가 아니라 담당(누가 하나)으로 가른다.**

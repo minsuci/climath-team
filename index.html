@@ -1471,7 +1471,7 @@ function drawCalAdd() {
     '<input type="text" id="ca-who" placeholder="담당" list="who-list" style="flex:0 0 90px">' +
     '<label style="font-size:13px"><input type="checkbox" id="ca-rep"> 매주 ' + DOW_KO[parseYmd(d).getDay()] + '요일</label>' +
     '<button class="btn" id="ca-go">넣기</button><button class="mini" id="ca-x">닫기</button></div>' +
-    '<datalist id="who-list">' + whoChips().map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist></div>';
+    '<datalist id="who-list">' + whoOptions().map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist></div>';
   $("#ca-x").onclick = function () { S.calAdd = ""; drawCalAdd(); };
   var go = async function () {
     var text = $("#ca-text").value.trim(); if (!text) return;
@@ -1775,16 +1775,29 @@ function newId() { return Date.now().toString(36) + Math.random().toString(36).s
 //   자기 종이 울린다. 다른 사람 화면에서는 정상적으로 «새로 옴» 이 된다.
 var MY_NEW = {};
 function newTaskId() { var id = newId(); MY_NEW[id] = 1; return id; }
-function whoChips() {
+// 담당 칩에 세울 사람 (2026-09-08 마왕님 지정).
+// ⚠ 예전에는 할 일에 적힌 담당 글자를 **전부** 칩으로 세웠다. «전원 (팀 확인은 한민수)» ·
+//   «고등부 (한민수 진행)» · «해당 반 담당» · «희망자» 처럼 회의록에서 굴러 들어온 말까지 칩이 되어
+//   스물넷이 넘었다. 칩이 넉 줄이면 아무도 안 누른다 — 거르는 칸이 거르는 일을 못 한다.
+// 여기 없는 이름도 담당으로 **쓸 수는 있다.** 칩으로만 안 세운다 — 그런 할 일은 «전체» 와
+//   그 사람의 «@내 것» 에서 보인다.
+var WHO_CHIPS = ["이창혁A", "이승엽", "박준성", "정찬준", "이현우"];
+function whoChips() { return WHO_CHIPS.slice(); }
+// 담당 칸에 넣을 때 뜨는 추천은 **좁히지 않는다.** 칩은 보는 것이고 이건 적는 것이라,
+// «전원» · «담임 전원» · 한민수처럼 칩에 없는 것도 그대로 골라야 한다.
+function whoOptions() {
   var names = ["전원", "담임 전원", "고등부"].concat(S.teachers.map(function (t) { return t.name; }));
   var seen = {}; S.tasks.forEach(function (t) { (t.who || "").split(/[·,/]/).forEach(function (w) { w = w.trim(); if (w) seen[w] = 1; }); });
   names.forEach(function (n) { seen[n] = 1; });
   return Object.keys(seen);
 }
+// ⚠ 글자로 찾으면 안 된다. «전원» · «고등부» · «담임 전원» 으로 걸린 일은 **그 사람 일이기도 한데**
+//   담당 칸에 이름이 없어서 자기 칩에서 사라진다. 마왕님 말씀 — «전원은 그냥 각자 모두에게 들어가는 것».
+//   taskIsFor 가 이미 그 셈을 한다(«@내 것» 이 쓰는 것과 같은 셈).
 function taskMatchesWho(t, who) {
   if (!who) return true;
   if (who === MINE) return taskIsMine(t);
-  return (t.who || "").indexOf(who) >= 0;
+  return taskIsFor(t, who);
 }
 function renderTasks() {
   var el = $("#sec-tasks");
@@ -1809,7 +1822,10 @@ function renderTasks() {
     '<div><b>' + open.filter(function (t) { return !t.who; }).length + '</b><span>담당 없음</span></div></div>' +
     '<div class="chips"><button class="mini ' + (!S.filterWho ? "on" : "") + '" data-who="">전체</button>' +
     '<button class="mini ' + (S.filterWho === MINE ? "on" : "") + '" data-who="' + esc(MINE) + '">' + esc(MINE) + " " + mine.length + "</button>" +
-    chips.map(function (w) { return '<button class="mini ' + (S.filterWho === w ? "on" : "") + '" data-who="' + esc(w) + '">' + esc(w) + '</button>'; }).join("") + '</div>' +
+    chips.map(function (w) {
+      var n = open.filter(function (t) { return taskIsFor(t, w); }).length;
+      return '<button class="mini ' + (S.filterWho === w ? "on" : "") + '" data-who="' + esc(w) + '">' + esc(w) + " " + n + '</button>';
+    }).join("") + '</div>' +
     (S.ro ? '<div class="muted" style="margin:4px 0 8px">팀장이 시킨 일은 <b>내 완료</b> 를 눌러 표시한다 — 목록의 상태(열림·진행·완료)는 팀장이 바꾼다.<br>' +
       '<b>내가 적은 할 일</b>은 아래에서 직접 넣고, 상태도 지우기도 내가 한다. 남에게 시키는 것은 팀장만 한다.</div>' : "") +
     fromMinutesBox() + draftBox() +
@@ -1822,7 +1838,7 @@ function renderTasks() {
       : '<div class="row"><input type="text" id="tk-text" placeholder="새 할 일">' +
         '<input type="text" id="tk-who" placeholder="담당" style="flex:0 0 90px" list="who-list">' +
         '<input type="date" id="tk-due"><button class="btn" id="tk-add"' + (S.teamOk ? "" : " disabled") + '>추가</button></div>') +
-    '<datalist id="who-list">' + chips.map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist>' +
+    '<datalist id="who-list">' + whoOptions().map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist>' +
     '<div id="tk-imp" hidden><textarea id="tk-md" rows="6" style="width:100%" placeholder="볼트 「할 일 추적」의 표를 그대로 붙여넣기 (| 할 일 | 담당 | 기한 | 출처 | 상태 |)"></textarea>' +
     '<div class="row"><button class="btn o" id="tk-imp-go">가져오기</button><span class="muted" id="tk-imp-msg">같은 글자의 할 일은 건너뛴다</span></div></div>';
   $$("[data-who]", el).forEach(function (b) { b.onclick = function () { S.filterWho = b.getAttribute("data-who"); renderTasks(); }; });
