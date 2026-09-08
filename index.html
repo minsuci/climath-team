@@ -446,7 +446,8 @@ function applyReadOnly() {
   });
 }
 function dashDoc(name) { return tdb.collection("dash").doc(name); }
-async function signOutAll() { try { await teamAuth.signOut(); } catch (e) {} try { await firebase.auth().signOut(); } catch (e) {} }
+async function signOutAll() {
+  stopWatch(); try { await teamAuth.signOut(); } catch (e) {} try { await firebase.auth().signOut(); } catch (e) {} }
 
 var $ = function (s, el) { return (el || document).querySelector(s); };
 var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
@@ -481,7 +482,7 @@ var S = {
   examsDenied: {},  // cid -> true. 앱 규칙이 그 반 참여표 읽기를 막은 것 — «안 냈다»와 다르다
   exCls: "",      // 참여표 반 거르기. 비면 그 학년 전체
   scores: {},     // cid -> [ {date, ...score} ]
-  tasks: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
+  tasks: [], tasksOpen: [], config: { sources: {} }, teamOk: true, teamErr: "", readErr: [],   // readErr = 앱 DB 에서 못 읽은 것 이름
   marks: {},      // tid -> { done: {...}, seenTasks: [...], name } — «내 완료» 와 «어디까지 봤나»
   newIds: [], newSeen: true, bellOpen: false,   // 새로 온 할 일 (2026-09-08)
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
@@ -622,6 +623,7 @@ async function boot() {
   await CORE_READY;
   initNewTasks();
   renderBell();
+  watchTasks();
   renderAll();
   loadExams().then(renderExams);
   loadScores().then(renderScores);
@@ -760,7 +762,7 @@ async function loadCore() {
     coreRead("학생 명단", db.collection("students").get().then(function (s) { S.students = []; s.forEach(function (d) { S.students.push(Object.assign({ pid: d.id }, d.data())); }); })),
     coreRead("내신 회차", db.collection("appConfig").doc("examTerm").get().then(function (d) { S.term = d.exists ? (d.data().term || "") : ""; })),
     coreRead("학교 일정", db.collection("appConfig").doc("schoolTerms").get().then(function (d) { S.schoolTerms = d.exists ? d.data() : {}; })),
-    dashDoc("tasks").get().then(function (d) { S.tasks = d.exists ? (d.data().items || []) : []; S.teamOk = true; })
+    dashDoc("tasks").get().then(function (d) { S.tasksOpen = d.exists ? (d.data().items || []) : []; S.tasks = S.tasksOpen.slice(); S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
     // 팀장 전용 할 일. 선생님은 규칙이 막아 여기서 조용히 빈 배열이 된다 —
     // 그러면 할 일·업무 달력·앞으로 2주가 **저절로** 공개분만 그린다. 화면마다 거를 필요가 없다.
@@ -1464,7 +1466,7 @@ function drawCalAdd() {
   var go = async function () {
     var text = $("#ca-text").value.trim(); if (!text) return;
     var rep = $("#ca-rep").checked;
-    var one = { id: newId(), text: text, who: $("#ca-who").value.trim(),
+    var one = { id: newTaskId(), text: text, who: $("#ca-who").value.trim(),
       grade: $("#ca-grade").value === "공통" ? "" : $("#ca-grade").value,
       src: "업무 달력", status: "open", created: TODAY };
     if (rep) { one.repeat = { dow: [parseYmd(d).getDay()] }; one.doneOn = {}; }
@@ -1546,16 +1548,33 @@ async function toggleMyMark(id) {
 // 규칙을 콘솔에 다시 붙여넣어야 하는데, marks 는 이미 «자기 문서만 쓴다» 로 열려 있다.
 // 기기가 바뀌어도 따라온다 — 브라우저에 두면 폰과 PC 가 따로 센다.
 //
-// ⚠ 각자 적은 할 일(`own`)은 안 센다. 남의 개인 메모까지 알리면 종이 금방 소음이 된다.
-//   종은 **팀 할 일이 늘었을 때**만 울린다.
-function bellTasks() { return S.tasks.filter(function (t) { return !t.own && t.id; }); }
+// ⚠ **내가 넣은 줄은 안 센다**(`MY_NEW`). 팀 할 일은 팀장만 넣을 수 있어서, 이걸 안 빼면
+//   팀장이 할 일을 넣을 때마다 자기 종이 울린다. 남의 화면에서는 그대로 «새로 옴» 이다.
+// ⚠ 남이 **자기 앞으로 적은 할 일**(`own`)은 팀장만 센다. 선생님끼리 개인 메모를 알리면 소음이 된다.
+//   팀장에게는 «누가 무엇을 자기 몫으로 걸었나» 가 볼 값이 있다.
+function bellTasks() {
+  var me = myTid();
+  return S.tasks.filter(function (t) {
+    if (!t.id || MY_NEW[t.id]) return false;
+    if (t.own === me) return false;        // 내가 적은 내 할 일
+    if (t.own && S.ro) return false;       // 남의 개인 메모 — 선생님에게는 안 울린다
+    return true;
+  });
+}
+// 적어 둘 때는 **내가 만든 것까지** 넣는다. 안 그러면 다음에 열 때 그 줄이 «새로 옴» 으로 뜬다.
+function seenIds() {
+  var me = myTid();
+  return S.tasks.filter(function (t) {
+    return t.id && t.own !== me && !(t.own && S.ro);
+  }).map(function (t) { return t.id; });
+}
 function bellIds() { return bellTasks().map(function (t) { return t.id; }); }
 // ⚠ 처음 들어온 사람에게 지난 할 일을 전부 «새로 옴» 으로 쏟으면 안 된다.
 //   `seenTasks` 칸 자체가 없으면 지금 것을 기준선으로 적어두고 조용히 넘어간다.
 function initNewTasks() {
   var m = S.marks[myTid()] || {}, seen = m.seenTasks;
   var ids = bellIds();
-  if (!Array.isArray(seen)) { S.newIds = []; S.newSeen = true; saveSeen(ids); return; }
+  if (!Array.isArray(seen)) { S.newIds = []; S.newSeen = true; saveSeen(seenIds()); return; }
   var have = {}; seen.forEach(function (x) { have[x] = 1; });
   S.newIds = ids.filter(function (id) { return !have[id]; });
   S.newSeen = !S.newIds.length;
@@ -1575,7 +1594,7 @@ async function saveSeen(ids) {
 function markTasksSeen() {
   if (S.newSeen) return;
   S.newSeen = true;
-  saveSeen(bellIds());
+  saveSeen(seenIds());
   renderBell();
 }
 function renderBell() {
@@ -1601,6 +1620,46 @@ function renderBell() {
     b.onclick = function () { S.bellOpen = false; showPage("tasks"); renderBell(); };
   });
 }
+// ---- 지켜보기 ----
+// 여기까지는 «다시 열 때» 만 알렸다. 그러면 팀장이 할 일을 넣어도 선생님 화면은 그대로다 —
+// 알림이라 부를 수 없다. 그래서 할 일 문서를 **지켜본다**(onSnapshot).
+//
+// ⚠ 내 쓰기에도 곧바로 한 번 돈다(Firestore 가 서버 답을 기다리지 않고 먼저 알려준다).
+//   그래서 «내가 만든 줄»을 `MY_NEW` 로 빼 두는 것이 여기서도 필요하다.
+// ⚠ 처음 붙을 때도 한 번 돈다. 그때는 이미 loadCore 가 읽어둔 것과 같으므로 그냥 다시 셈하면 된다.
+// ⚠ `S.tasks` 는 세 곳을 합친 것이다(공개분·팀장분·각자분). 한 곳만 갈아 끼우고 다시 합친다.
+var WATCH = [];
+function stopWatch() { WATCH.forEach(function (f) { try { f(); } catch (e) {} }); WATCH = []; }
+function rebuildTasks(part, items) {
+  if (part === "open") S.tasksOpen = items;
+  if (part === "lead") S.tasksLead = items;
+  if (part === "own") S.own = items;
+  S.tasks = (S.tasksOpen || []).concat(S.tasksLead || []).concat(ownTasks());
+  initNewTasks();
+  renderBell();
+  renderTasks();
+  renderCal();
+  renderWeek();
+}
+function watchTasks() {
+  if (!S.teamOk || typeof tdb.collection("dash").doc("tasks").onSnapshot !== "function") return;
+  stopWatch();
+  var on = function (ref, fn) {
+    try { WATCH.push(ref.onSnapshot(fn, function () {})); } catch (e) {}
+  };
+  on(tdb.collection("dash").doc("tasks"), function (d) {
+    rebuildTasks("open", d.exists ? (d.data().items || []) : []);
+  });
+  // 팀장 전용 문서는 선생님이 못 읽는다. 붙이면 규칙 오류만 난다.
+  if (!S.ro) on(tdb.collection("dash").doc("tasksLead"), function (d) {
+    rebuildTasks("lead", d.exists ? (d.data().items || []) : []);
+  });
+  on(tdb.collection("myTasks"), function (s2) {
+    var m = {}; s2.forEach(function (d) { m[d.id] = d.data() || {}; });
+    rebuildTasks("own", m);
+  });
+}
+
 // 딴 데를 누르면 닫는다
 if (typeof document !== "undefined" && document.addEventListener)
   document.addEventListener("click", function () { if (S.bellOpen) { S.bellOpen = false; renderBell(); } });
@@ -1676,6 +1735,11 @@ async function saveTasks() {
   S.tasksLead = lead;
 }
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+// ⚠ **내가 넣은 줄이 내 종을 울리면 안 된다.** 할 일을 만드는 자리는 여기 하나로 모은다 —
+//   `newId()` 를 그냥 쓰면 그 줄이 남이 넣은 것과 구별되지 않아, 팀장이 할 일을 넣을 때마다
+//   자기 종이 울린다. 다른 사람 화면에서는 정상적으로 «새로 옴» 이 된다.
+var MY_NEW = {};
+function newTaskId() { var id = newId(); MY_NEW[id] = 1; return id; }
 function whoChips() {
   var names = ["전원", "담임 전원", "고등부"].concat(S.teachers.map(function (t) { return t.name; }));
   var seen = {}; S.tasks.forEach(function (t) { (t.who || "").split(/[·,/]/).forEach(function (w) { w = w.trim(); if (w) seen[w] = 1; }); });
@@ -1733,7 +1797,7 @@ function renderTasks() {
   $("#tk-import").onclick = function () { var d = $("#tk-imp"); d.hidden = !d.hidden; };
   $("#tk-add").onclick = async function () {
     var text = $("#tk-text").value.trim(); if (!text) return;
-    var t = { id: newId(), text: text, who: S.ro ? myName() : $("#tk-who").value.trim(),
+    var t = { id: newTaskId(), text: text, who: S.ro ? myName() : $("#tk-who").value.trim(),
               due: $("#tk-due").value, src: S.ro ? "직접 추가" : "팀체크", status: "open", created: TODAY };
     if (S.ro) t.own = myTid();
     S.tasks.push(t);
@@ -1860,7 +1924,7 @@ function newFromMinutes() {
 // ⚠ 여기서 들어오는 것은 **전부 초안**이다. 선생님에게는 팀장이 «보내기» 를 눌러야 간다.
 async function addFromMinutes(rows) {
   rows.forEach(function (r) {
-    S.tasks.push({ id: newId(), text: r.text, who: r.who, due: r.due, dueText: r.dueText,
+    S.tasks.push({ id: newTaskId(), text: r.text, who: r.who, due: r.due, dueText: r.dueText,
       src: r.src, from: r.from, status: "open", created: TODAY, draft: true });
   });
   await saveTasks();
@@ -1971,7 +2035,7 @@ function importMarkdown(md) {
     var st = cells[4] || "";
     var status = /완료|^\d{4}-/.test(st) ? "done" : /진행/.test(st) ? "doing" : /보류/.test(st) ? "hold" : "open";
     // 붙여넣기도 한 번에 여러 줄이 들어온다 — 회의록에서 끌어온 것과 같이 **초안**으로 받는다.
-    S.tasks.push({ id: newId(), text: text, who: cells[1] || "", due: parseDueText(cells[2] || ""), dueText: cells[2] || "",
+    S.tasks.push({ id: newTaskId(), text: text, who: cells[1] || "", due: parseDueText(cells[2] || ""), dueText: cells[2] || "",
       src: cells[3] || "", status: status, created: TODAY, draft: true,
       done: status === "done" ? (/^\d{4}-/.test(st) ? st.slice(0, 10) : TODAY) : "" });
     have[text] = 1; n++;

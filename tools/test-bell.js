@@ -65,14 +65,17 @@ const TASKS = `[
   { id:"a3", text:"내 메모", who:"이현우", status:"open", own:"T2" },
   { id:"a4", text:"팀장 몫", who:"한민수", status:"open" }
 ]`;
-const setup = (marks) => run(`
+const setup = (marks, who) => run(`
   S.teamOk = true;
-  S.claims = { role:"teacher", tid:"T2", name:"이현우" };
-  S.ro = true;
+  S.claims = ${who === "owner" ? `{ role:"owner", tid:"T1", name:"한민수" }` : `{ role:"teacher", tid:"T2", name:"이현우" }`};
+  S.ro = ${who === "owner" ? "false" : "true"};
   S.teachers = [{tid:"T1",name:"한민수",role:"owner"},{tid:"T2",name:"이현우",role:"teacher"}];
   S.tasks = ${TASKS};
+  S.tasksOpen = ${TASKS}.filter(function(t){ return !t.own; });
+  S.tasksLead = []; S.own = {};
   S.marks = ${marks};
   S.newIds = []; S.newSeen = true; S.bellOpen = false;
+  MY_NEW = {};
 `);
 
 (async () => {
@@ -134,6 +137,40 @@ const setup = (marks) => run(`
   ok("종 상자도 div 를 다 닫는다", (html.match(/<div/g) || []).length === (html.match(/<\/div>/g) || []).length);
   run("S.newSeen = true; renderBell()");
   ok("본 뒤에는 숫자가 사라진다", EL["#bell-wrap"].innerHTML.indexOf('class="bn"') < 0);
+
+  // ---- 내가 넣은 줄은 내 종을 안 울린다 (2026-09-08) ----
+  // 팀 할 일은 팀장만 넣는다. 이걸 안 빼면 팀장이 할 일을 넣을 때마다 자기 종이 울린다.
+  setup(`{ T1: { done:{}, seenTasks:["a1","a2","a3","a4"] } }`, "owner");
+  const mineId = run(`return newTaskId()`);
+  run(`S.tasks.push({ id:"${mineId}", text:"방금 내가 넣은 것", who:"전원", status:"open" }); initNewTasks()`);
+  ok("내가 넣은 줄은 내 종을 안 울린다", val("S.newIds").length === 0 && val("S.newSeen") === true, JSON.stringify(val("S.newIds")));
+  ok("그래도 본 것으로는 적어 둔다 — 다음에 열 때 새것이 되면 안 된다", val("seenIds()").indexOf(mineId) >= 0);
+  run(`S.tasks.push({ id:"b9", text:"남이 넣은 것", who:"전원", status:"open" }); initNewTasks()`);
+  ok("남이 넣은 줄은 울린다", JSON.stringify(val("S.newIds")) === '["b9"]', JSON.stringify(val("S.newIds")));
+
+  // ---- 남의 개인 메모: 팀장은 보고 선생님은 안 본다 ----
+  setup(`{ T1: { done:{}, seenTasks:["a1","a2","a4"] } }`, "owner");
+  run("initNewTasks()");
+  ok("팀장은 남이 자기 앞으로 적은 할 일도 «새로 옴» 으로 본다", JSON.stringify(val("S.newIds")) === '["a3"]', JSON.stringify(val("S.newIds")));
+  setup(`{ T2: { done:{}, seenTasks:["a1","a2","a4"] } }`);
+  run("initNewTasks()");
+  ok("선생님에게는 남의 개인 메모가 안 울린다", val("S.newIds").length === 0, JSON.stringify(val("S.newIds")));
+  ok("선생님이 적어 두는 목록에도 남의 개인 메모는 안 들어간다", val("seenIds()").indexOf("a3") < 0);
+
+  // ---- 지켜보기 — 다시 열지 않아도 뜬다 ----
+  setup(`{ T2: { done:{}, seenTasks:["a1","a2","a4"] } }`);
+  run("initNewTasks()");
+  ok("지켜보기 전에는 새것이 없다", val("S.newIds").length === 0);
+  run(`rebuildTasks("open", S.tasksOpen.concat([{ id:"c7", text:"팀장이 방금 넣음", who:"전원", status:"open" }]))`);
+  ok("문서가 바뀌면 그 자리에서 종이 울린다", JSON.stringify(val("S.newIds")) === '["c7"]', JSON.stringify(val("S.newIds")));
+  ok("세 곳을 다시 합친다 (공개분·팀장분·각자분)", val("S.tasks").length === 4, String(val("S.tasks").length));
+  run(`rebuildTasks("own", { T2: { name:"이현우", items:[{ id:"d1", text:"내 메모 둘", status:"open" }] } })`);
+  ok("각자 적은 것도 목록에 합쳐진다", val("S.tasks").filter((t) => t.id === "d1").length === 1);
+  ok("그런데 내 메모라 종은 그대로", JSON.stringify(val("S.newIds")) === '["c7"]');
+
+  // ---- 지켜보기를 못 붙이는 자리에서도 안 터진다 ----
+  setup("{}");
+  ok("onSnapshot 이 없으면 조용히 넘어간다", (() => { try { run("watchTasks(); stopWatch(); return 1"); return true; } catch (e) { return e.message; } })() === true);
 
   // ---- 팀 DB 가 막혀 있으면 조용히 넘어간다 ----
   setup("{}");
