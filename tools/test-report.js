@@ -207,6 +207,43 @@ const setup = (who) => {
     ACTIVE = null; sec._has = null;
   }
 
+  // ---- 끝낸 것은 아래로 (2026-09-08) ----
+  // "할일에서 내 완료 클릭한거나 보고한거는 아래로 뜨게 만들어".
+  // 상태는 팀장만 바꾸므로 «내 완료» 만으로는 줄이 그 자리에 있었다. 보는 사람이 끝낸 것은 열린 것 아래로.
+  const order = () => (EL["#sec-tasks"].innerHTML.match(/data-id="([^"]+)"/g) || []).map((m) => m.slice(9, -1));
+  const seps = () => (EL["#sec-tasks"].innerHTML.match(/class="tsep">([^<]*)</g) || []).map((m) => m.slice(13, -1));
+  setup();
+  run(`S.tasks = [
+    { id:"s1", text:"먼저 할 것",  who:"이현우", status:"open", due:"2026-09-20" },
+    { id:"s2", text:"이미 한 것",  who:"이현우", status:"open", due:"2026-09-01" },
+    { id:"s3", text:"보고한 것",   who:"전원",   status:"open", due:"2026-09-02", report:true },
+    { id:"s4", text:"남이 한 것",  who:"전원",   status:"open", due:"2026-09-03" }
+  ]; S.tasksOpen = S.tasks;
+  S.marks = {
+    T3: { name:"이현우", done: { s2:TODAY, s3:TODAY }, reports: { s3: { text:"다 했습니다", at:TODAY } } },
+    T2: { name:"이창혁A", done: { s4:TODAY } }
+  };`);
+  run("renderTasks()");
+  ok("내가 끝낸 것은 기한이 빨라도 아래", order().join(",") === "s4,s1,s2,s3", order().join(","));
+  ok("남이 끝낸 것은 내게는 아직 할 것", order().indexOf("s4") < order().indexOf("s2"));
+  ok("가르는 줄이 하나 선다", seps().join("|") === "내가 끝낸 것", seps().join("|"));
+  run("S.marks.T3 = {}; renderTasks()");
+  ok("내 완료를 되돌리면 다시 올라온다", order().join(",") === "s2,s3,s4,s1", order().join(","));
+  ok("끝낸 것이 없으면 가르는 줄도 없다", seps().length === 0, seps().join("|"));
+  // 팀장에게는 «걸린 사람이 다 끝낸 것» 이 내려간다. 남은 사람이 있으면 위에 남는다
+  setup("owner");
+  run(`S.tasks = [
+    { id:"o1", text:"둘 다 끝냄",   who:"이창혁A · 이현우", status:"open", due:"2026-09-01" },
+    { id:"o2", text:"하나만 끝냄",  who:"이창혁A · 이현우", status:"open", due:"2026-09-02" },
+    { id:"o3", text:"아직",         who:"이현우",         status:"open", due:"2026-09-03" },
+    { id:"o4", text:"닫은 것",      who:"이현우",         status:"done", due:"2026-08-01" }
+  ]; S.tasksOpen = S.tasks; S.showDone = true;
+  S.marks = { T2: { done: { o1:TODAY, o2:TODAY } }, T3: { done: { o1:TODAY } } };`);
+  run("renderTasks()");
+  ok("팀장: 다 끝낸 것만 내려가고 닫은 것은 맨 아래", order().join(",") === "o2,o3,o1,o4", order().join(","));
+  ok("팀장: 가르는 줄 둘", seps().join("|") === "내가 끝낸 것|팀장이 닫은 것", seps().join("|"));
+  run("S.showDone = false");
+
   // ---- 완료 현황에 글까지 ----
   setup("owner");
   run(`S.marks = { T3: { name:"이현우",
