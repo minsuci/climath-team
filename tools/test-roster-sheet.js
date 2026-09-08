@@ -285,6 +285,24 @@ const setup = (who) => {
     return /고등부 반.*없다.*중PL/.test(val("S.diffErr")) && val("S.diffSig") === "";
   })(), val("S.diffErr"));
 
+  // ---- 배치표는 고1 줄 · 예비고1 줄 (2026-09-08) ----
+  // "예비고1이랑 고1이랑 한줄에 있는데 위에 고1, 아래 예비고1로 정리하자"
+  setup();
+  {
+    const html = run("return classGridHtml()");
+    const heads = (html.match(/<h3 class="gh">.*?<\/h3>/g) || []).map((h) => h.replace(/<[^>]+>/g, ""));
+    ok("줄이 셋 — 고1 · 예비고1 · 반 미배정", heads.length === 3 && (html.match(/<table class="cgrid"/g) || []).length === 3, JSON.stringify(heads));
+    ok("고1 이 위, 예비고1 이 아래", heads[0].indexOf("고1") === 0 && heads[1].indexOf("예비고1") === 0, JSON.stringify(heads));
+    ok("고1 줄에 반 셋(고1S·고1 자사·고1T), 예비고1 줄에 둘", /고13반/.test(heads[0]) && /예비고12반/.test(heads[1]), JSON.stringify(heads));
+    ok("예비고1S 가 고1 줄로 새지 않는다", html.indexOf("예비고1S") > html.indexOf("예비고1</span>"), "");
+    ok("반 없는 사람은 맨 아래 «반 미배정»", heads[2].indexOf("반 미배정") === 0 && html.lastIndexOf("최은우") > html.lastIndexOf("class=\"gh\""));
+    ok("반 이름으로 가른다", val("classGroup({name:\"고1TOP (204호)\"})") === "고1" && val("classGroup({name:\"예비고1 A(401호)\"})") === "예비고1" && val("classGroup({name:\"개별반\"})") === "");
+    run("S.classes = S.classes.filter(function(c){ return /^고1/.test(c.name); }); S.students = S.students.filter(function(x){ return x.pid !== \"p8\"; })");
+    // 사람 중 반 없는 이가 더 있을 수 있다 — 고1 반만 남기면 다른 반 사람들이 미배정으로 몰린다. 그건 둘째 줄이다
+    const only = run("return classGridHtml()");
+    ok("줄이 «고1» 하나뿐이면(미배정 빼고) 고1 머리는 안 단다", !/class="gh">[^<]*<span class="pill g10">고1/.test(only), only.slice(0, 120));
+  }
+
   // ---- 읽어서 맞춰 보기 (checkRosterSheet) ----
   setup();
   await run("return checkRosterSheet()");

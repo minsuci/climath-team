@@ -256,6 +256,8 @@
 
   /* 반별 배치표 — 열 하나가 반 */
   .gridwrap { overflow: auto; max-height: calc(100vh - 300px); border: 1px solid var(--line); border-radius: 8px; }
+  .gh { margin: 14px 0 6px; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+  .gh:first-child { margin-top: 4px; }
   table.cgrid { border-collapse: separate; border-spacing: 0; width: auto; font-size: 12px; }
   table.cgrid th, table.cgrid td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
     padding: 3px 6px; white-space: nowrap; vertical-align: middle; }
@@ -2576,7 +2578,18 @@ function studentBodyHtml(view, assigned) {
   return view === "edit" ? studentEditHtml(assigned) : classGridHtml();
 }
 
-// ---- 반별 배치표 — 열 하나가 반, 아래로 학생 ----
+// ---- 반별 배치표 — 열 하나가 반, 아래로 학생. 고1 줄 · 예비고1 줄로 나눠 그린다 (2026-09-08) ----
+//
+// 마왕님 말씀 — "학생명단메뉴에 예비고1이랑 고1이랑 한줄에 있는데 위에 고1, 아래 예비고1로 정리하자".
+// 반 문서에 학년 칸이 없어서 **반 이름으로 가른다** — normClassKey 로 빈칸·호수를 뗀 뒤 앞글자.
+// «예비고1S» 는 «고1» 로 시작하지 않으니 /^고1/ 에 안 걸린다. 어디에도 안 걸리는 반은 «그 밖» 줄.
+// 줄이 하나뿐이면 머리를 안 단다 — 반이 다 고1 이면 «고1» 이라고 굳이 쓸 것 없다.
+var GRID_GROUPS = [["고3", /^고3/, "고3"], ["고2", /^고2/, "고2"], ["고1", /^고1/, "고1"], ["예비고1", /^예비고1/, "중3"]];
+function classGroup(c) {
+  var k = normClassKey(c.name);
+  for (var i = 0; i < GRID_GROUPS.length; i++) if (GRID_GROUPS[i][1].test(k)) return GRID_GROUPS[i][0];
+  return "";
+}
 function classGridHtml() {
   var me = S.claims ? teacherName(S.claims.tid) : "";
   var cols = activeClasses().map(function (c) {
@@ -2584,11 +2597,26 @@ function classGridHtml() {
     return { c: c, studs: rosterStudents(c), t: ts.length ? ts.join("·") : "", mine: ts.indexOf(me) >= 0 };
   });
   if (!cols.length) return '<div class="empty">반이 없다.</div>';
-  var maxN = cols.reduce(function (m, x) { return Math.max(m, x.studs.length); }, 0);
-  // 어느 반에도 없는 학생은 맨 오른쪽에 한 열로 모은다. 안 그러면 배치표에서 통째로 사라진다.
+  // 어느 반에도 없는 학생은 맨 아래 한 열로 모은다. 안 그러면 배치표에서 통째로 사라진다.
   var loose = S.students.filter(function (x) { return !assignedNames(x, cols); });
-  if (loose.length) { cols.push({ c: { id: "_loose", name: "반 미배정", classDays: [] }, studs: loose.map(looseRow), t: "", mine: false, loose: true }); maxN = Math.max(maxN, loose.length); }
-
+  var byG = {}, groups = [];
+  cols.forEach(function (x) { var g = classGroup(x.c); (byG[g] = byG[g] || []).push(x); });
+  GRID_GROUPS.forEach(function (p) { if (byG[p[0]]) groups.push({ name: p[0], grade: p[2], cols: byG[p[0]] }); });
+  if (byG[""]) groups.push({ name: "그 밖", grade: "", cols: byG[""] });
+  if (loose.length) groups.push({ name: "반 미배정", grade: "", cols: [{ c: { id: "_loose", name: "반 미배정", classDays: [] }, studs: loose.map(looseRow), t: "", mine: false, loose: true }] });
+  var one = groups.length === 1;
+  return groups.map(function (g) {
+    var n = g.cols.reduce(function (m, x) { return m + x.studs.length; }, 0);
+    var head = one ? "" : '<h3 class="gh">' +
+      (g.grade ? '<span class="pill ' + gradeCls(g.grade) + '">' + esc(g.name) + '</span>' : '<span class="pill' + (g.name === "반 미배정" ? " red" : "") + '">' + esc(g.name) + '</span>') +
+      '<span class="muted">' + (g.name === "반 미배정" ? "" : g.cols.length + "반 · ") + n + '명</span></h3>';
+    return head + classGridTable(g.cols);
+  }).join("") +
+    '<p class="muted" style="font-size:12px;margin:6px 0 0">이름 옆 숫자는 학년(중3=9 · 고1=10 · 고2=11 · 고3=12). ' +
+    '인원이 <span class="orange">주황</span>이면 5명 이하, <span class="red">빨강</span>이면 0명이다. 파란 머리는 내가 담당인 반.</p>';
+}
+function classGridTable(cols) {
+  var maxN = cols.reduce(function (m, x) { return Math.max(m, x.studs.length); }, 0);
   var head = cols.map(function (x) {
     var n = x.studs.length;
     var cnt = x.loose ? '<span class="cnt red">' + n + '</span>' : '<span class="cnt ' + (n === 0 ? "red" : n <= 5 ? "orange" : "") + '">' + n + '</span>';
@@ -2614,9 +2642,7 @@ function classGridHtml() {
         (ghost || !sch ? "" : '<span class="sch">' + esc(sch) + '</span>') + '</td>';
     }).join("") + '</tr>';
   }
-  return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
-    '<p class="muted" style="font-size:12px;margin:6px 0 0">이름 옆 숫자는 학년(중3=9 · 고1=10 · 고2=11 · 고3=12). ' +
-    '인원이 <span class="orange">주황</span>이면 5명 이하, <span class="red">빨강</span>이면 0명이다. 파란 머리는 내가 담당인 반.</p>';
+  return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 function assignedNames(person, cols) {
   for (var i = 0; i < cols.length; i++) {
