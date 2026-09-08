@@ -936,8 +936,9 @@ async function timetableFromBoard(menuUrl, from, kind, budget) {
   const sns = fileSnsIn(html);
   for (let i = 0; i < sns.length; i++) {
     if (budget.n <= 0) break;
-    const t = await synapText(origin, fid, sns[i], budget).catch(() => "");
-    if (looksLikeTimetable(t)) return { ...post, text: t, via: names[i] || ("첨부" + sns[i]) };
+    const pages = await synapPages(origin, fid, sns[i], budget).catch(() => []);
+    const t = xmlFlat(pages);
+    if (looksLikeTimetable(t)) return { ...post, text: t, pages, via: names[i] || ("첨부" + sns[i]) };
   }
   return { ...post, text: "", via: "" };
 }
@@ -951,32 +952,131 @@ function looksLikeTimetable(t) {
   return /수학|미적분|확률과통계|기하|대수/.test(x);
 }
 // 첨부 하나를 글자로. boardDocText 안에 있던 것을 꺼내 함께 쓴다.
-async function synapText(origin, fid, sn, budget) {
+async function synapPages(origin, fid, sn, budget) {
   budget.n--;
   const inner = origin + ":443/dggb/cnvrFileDown.do?atchFileId=" + fid + ":" + sn;
   const job = SYNAP + "/job?fid=" + fid + "_" + sn + "&filePath=" + encodeURIComponent(inner) +
               "&convertType=1&fileType=URL&sync=true";
   const r = await fetch(job, { headers: UA, redirect: "follow" });
   const key = (r.url.match(/key=([0-9a-f]+)/) || [])[1];
-  if (!key) return "";
+  if (!key) return [];
   const st = await (await fetch(SYNAP + "/status/" + key, { headers: UA })).json().catch(() => null);
   const pages = Math.min((st && st.pageNum) || 1, 8);
-  let text = "";
+  const out = [];
   for (let pg = 0; pg < pages; pg++) {
     if (budget.n <= 0) break;
     budget.n--;
-    const x = await (await fetch(SYNAP + "/thumbnailxml/" + key + "/" + pg + "?dpi=96", { headers: UA })).text();
-    text += x.replace(/<[^>]+>/g, " ")
-             .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/\s+/g, "");
+    out.push(await (await fetch(SYNAP + "/thumbnailxml/" + key + "/" + pg + "?dpi=96", { headers: UA })).text());
   }
-  return text;
+  return out;
+}
+// 쪽 XML 을 예전과 똑같은 «다 붙은 글자» 로 만든다. 학사일정 쪽이 이 꼴을 그대로 쓴다.
+function xmlFlat(pages) {
+  return (pages || []).map((x) => x.replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/\s+/g, "")).join("");
+}
+async function synapText(origin, fid, sn, budget) {
+  return xmlFlat(await synapPages(origin, fid, sn, budget));
 }
 
-// 꺼낸 글자에서 «학년마다 수학 보는 날» 을 뽑는다.
+// ── 좌표로 표를 되세운다 ────────────────────────────────────────────────
 //
-// ⚠ 손으로 못 가른다. 변환된 글자는 **칸이 다 뭉개져** 한 줄로 온다 —
-//   "10/1(목)108:30~09:20(50)영어Ⅱ[35]*언어와매체[17]*화법과작문[18]" 처럼.
-//   1학년·2학년·3학년이 열이었는데 그 경계가 사라졌다. 그래서 AI 에게 표를 되읽힌다.
+// 문서뷰어가 주는 XML 은 글자마다 l·t·w·h 가 붙어 있다. 그걸 버리고 글자만 이으면
+// "10/1(목)108:30~09:20(50)영어Ⅱ[35]*언어와매체[17]*화법과작문[18]" 처럼 한 줄이 되는데,
+// **1학년·2학년·3학년이 열이었다는 사실이 통째로 사라진다.**
+// 그 뭉갠 글자를 AI 에게 주면 학년을 찍는다 — 2026-09-08 단대부고에서 실제로
+// 고1 에 미적분Ⅰ·확률과통계·기하까지 다 붙여 놨다. 고1 은 공통수학2 하나뿐인데도.
+//
+// 그래서 좌표를 살려 쓴다. «1학년/2학년/3학년» 머리 칸의 가운데를 재서 열을 긋고,
+// 왼쪽 날짜 칸을 세로로 갈라 어느 날 줄인지 정한다. 이건 **추측이 아니라 측정**이다.
+// 머리 칸이 없는 모양(학교마다 다르다)일 때만 AI 로 넘어간다.
+function xmlFrags(xml) {
+  const re = /<text\s+l='([\d.]+)'\s+t='([\d.]+)'\s+w='([\d.]+)'\s+h='([\d.]+)'\s*>([\s\S]*?)<\/text>/g;
+  const ch = []; let m;
+  while ((m = re.exec(xml))) {
+    const c = String(m[5]).replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    if (!c) continue;
+    ch.push({ l: +m[1], t: +m[2], w: +m[3], h: +m[4], c });
+  }
+  ch.sort((a, b) => a.t - b.t || a.l - b.l);
+  const lines = [];
+  for (const x of ch) {
+    const L = lines[lines.length - 1];
+    if (L && Math.abs(x.t - L.t) <= Math.max(4, x.h * 0.5)) L.items.push(x);
+    else lines.push({ t: x.t, items: [x] });
+  }
+  const out = [];
+  for (const ln of lines) {
+    ln.items.sort((a, b) => a.l - b.l);
+    let cur = null;
+    // 사이가 9픽셀 넘게 벌어지면 다른 칸이다. 글자 사이 여백은 그보다 좁다.
+    for (const x of ln.items) {
+      if (cur && x.l - cur.r <= 9) { cur.text += x.c; cur.r = x.l + x.w; }
+      else { if (cur) out.push(cur); cur = { l: x.l, r: x.l + x.w, t: ln.t, text: x.c }; }
+    }
+    if (cur) out.push(cur);
+  }
+  return out.map((f) => ({ l: f.l, r: f.r, t: f.t, c: (f.l + f.r) / 2,
+                           text: f.text.replace(/\s+/g, " ").trim() })).filter((f) => f.text);
+}
+// 수학 과목인가. «인공지능 기초» 는 정보 과목이지 수학이 아니다 — 띄어쓰기를 지우고 본다.
+const MATH_SUBJ = /(공통수학|기본수학|대수|미적분|확률과통계|기하|심화수학|고급수학|경제수학|인공지능수학|직무수학|실용통계|수학과제탐구|수학Ⅰ|수학Ⅱ|수학１|수학Ⅲ)/;
+function cleanSubj(t) { return String(t).replace(/^[*※\s]+/, "").replace(/\s*\[\d+\]\s*$/, "").trim(); }
+function ymdIn(mo, da, from, to) {
+  const y0 = Number(from.slice(0, 4));
+  for (const y of [y0, y0 + 1]) {
+    const s = String(y) + String(mo).padStart(2, "0") + String(da).padStart(2, "0");
+    if (s >= from && s <= to) return s.slice(0, 4) + "-" + s.slice(4, 6) + "-" + s.slice(6, 8);
+  }
+  return null;
+}
+// 쪽 하나에서 «학년·과목·날짜» 를 읽는다. 머리 칸이나 날짜 칸이 없으면 null — AI 로 넘긴다.
+function gridMathPage(xml, from, to) {
+  const F = xmlFrags(xml);
+  const byG = {};
+  for (const f of F) { const m = /^([1-3])\s*학년$/.exec(f.text); if (m && !byG[m[1]]) byG[m[1]] = f; }
+  const gs = Object.keys(byG).map(Number).sort();
+  if (gs.length < 2) return null;
+  const cs = gs.map((g) => ({ g, c: byG[g].c }));
+  const headT = Math.max(...gs.map((g) => byG[g].t));
+  const bounds = cs.map((x, i) => ({ g: x.g,
+    lo: i === 0 ? x.c - (cs[1].c - cs[0].c) / 2 : (cs[i - 1].c + x.c) / 2,
+    hi: i === cs.length - 1 ? x.c + (x.c - cs[i - 1].c) / 2 : (x.c + cs[i + 1].c) / 2 }));
+  // 날짜는 학년 열보다 왼쪽에, 머리 칸보다 아래에 있다.
+  const dates = F.filter((f) => f.t > headT && f.l < bounds[0].lo && /^\d{1,2}\s*\/\s*\d{1,2}/.test(f.text))
+    .map((f) => { const m = /(\d{1,2})\s*\/\s*(\d{1,2})/.exec(f.text); return { t: f.t, mo: +m[1], da: +m[2] }; });
+  if (!dates.length) return null;
+  // 날짜 칸은 여러 줄을 아우르며 **가운데** 놓인다. 그래서 세로로 가장 가까운 날짜가 그 줄의 날이다.
+  const nearest = (t) => dates.reduce((b, d) => (Math.abs(d.t - t) < Math.abs(b.t - t) ? d : b), dates[0]);
+  const rows = [];
+  for (const f of F) {
+    if (f.t <= headT) continue;
+    const flat = f.text.replace(/\s+/g, "");
+    if (!MATH_SUBJ.test(flat)) continue;
+    const col = bounds.find((b) => f.c >= b.lo && f.c < b.hi);
+    if (!col) continue;
+    const d = nearest(f.t), date = ymdIn(d.mo, d.da, from, to);
+    if (!date) continue;
+    rows.push({ grade: col.g, subject: cleanSubj(f.text), date });
+  }
+  return rows;
+}
+function gridMath(pages, from, to) {
+  const seen = {}, out = [];
+  let any = false;
+  for (const xml of pages || []) {
+    const r = gridMathPage(xml, from, to);
+    if (!r) continue;
+    any = true;
+    for (const x of r) { const k = x.grade + "|" + x.subject + "|" + x.date;
+      if (!seen[k]) { seen[k] = 1; out.push(x); } }
+  }
+  return any ? out : null;
+}
+
+// 표를 못 되세울 때만 쓰는 뒷길 — 뭉갠 글자를 AI 에게 되읽힌다.
+// ⚠ 학년을 찍는다. 위의 좌표 읽기가 되면 그쪽을 쓴다.
 // ⚠ 그래도 **날짜는 지어내지 못하게** 한다. 원문에 없는 날은 버린다(verifyMath).
 async function mathFromDoc(text, school, from, to, grades) {
   const key = process.env.GEMINI_API_KEY;
@@ -1044,9 +1144,12 @@ async function mathDates(school, from, to, kind, grades, budget, web) {
     if (!got) continue;
     if (!got.text) return { school, post: got.title, url: got.url, rows: [],
                             note: "시간표 글은 찾았는데 글자를 못 꺼냈어요. 눌러서 보고 붙여넣어 주세요" };
+    // 좌표로 표를 되세울 수 있으면 그게 먼저다. AI 는 학년을 찍지만 이건 재서 안다.
+    const grid = gridMath(got.pages, from, to);
+    if (grid && grid.length) return { school, post: got.title, url: got.url, via: got.via, by: "표", rows: grid };
     const ai = await mathFromDoc(got.text, school, from, to, grades);
     if (ai.error) return { school, post: got.title, url: got.url, rows: [], note: ai.error };
-    return { school, post: got.title, url: got.url, via: got.via, rows: ai.rows };
+    return { school, post: got.title, url: got.url, via: got.via, by: "AI", rows: ai.rows };
   }
   return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };
 }

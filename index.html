@@ -3990,6 +3990,9 @@ function drawMathRes() {
       : p0.error ? '<div class="err" style="margin-top:8px">' + esc(p0.error) + '</div>'
       : '<div style="margin-top:8px;font-size:13px">' +
         (p0.post ? '<b>' + esc(p0.post) + '</b>' + (p0.via ? ' <span class="muted">· ' + esc(p0.via) + '</span>' : "") : "") +
+        // 표를 재서 읽었는지, AI 가 되읽었는지 밝힌다. AI 쪽은 학년을 찍을 수 있으니 눈으로 봐야 한다.
+        (p0.by === "표" ? ' <span class="muted">· 표를 재서 읽음</span>'
+         : p0.by === "AI" ? ' <span style="color:var(--orange)">· AI가 읽음 — 학년을 꼭 확인하세요</span>' : "") +
         (p0.url ? ' <a href="' + esc(p0.url) + '" target="_blank">게시판 열기 →</a>' : "") +
         (p0.note ? '<div class="muted">' + esc(p0.note) + ' — 글을 열어 시간표를 복사해 위에 붙여넣으면 읽어 준다.</div>' : "") +
         '</div>';
