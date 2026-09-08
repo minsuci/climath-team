@@ -237,6 +237,54 @@ const setup = (who) => {
   run(`S.sheetCols = parseRosterSheet(${JSON.stringify(GRID)}); S.config.rosterIgnore = {}; S.classes[0].roster.pop(); S.classes[1].roster.push({ id:"r8", pid:"p8", name:"최은우", grade:"중3" }); S.classes[2].roster.push({ id:"r9", pid:"p4", name:"이수민", grade:"중3" }); applyRosterDiff()`);
   ok("다 맞으면 지문이 빈다 — 종이 안 울린다", val("S.diffSig") === "" && val("S.diffN") === 0, JSON.stringify(val("S.diff.items")));
 
+  // ---- 고등부 반만 (2026-09-08) ----
+  // "명단 대조하는거는 다른반은 다 빼고 고등부 반만 가져오자" — 짚어 주신 열 열 개만.
+  // 실제 시트의 이웃들을 흉내: 고PL·2GS·중PL·FP·고3M 수1, 그리고 셋째 덩어리의 «예비고1S 월금».
+  const WIDE = [
+    ["", "", "", "월금", "월금", "토", "월금", "", "월금", "", "", "강좌명"],
+    ["", "", "반", "고1S\n(201호)", "고1T\n(402호)", "고1 자사\n토1부(201호)", "예비고1\nA(401호)", "고PL 월\n(204호)", "2GS미적2상\n미적1하(심)", "중PL 월A", "", "강좌명", "(수)개별진도"],
+    ["", "", "담임", "한민수", "이창혁A", "한민수", "박준성", "", "", "", "", "강사", "이창혁A"],
+    ["", "재원", "1", "김서진10", "임서윤10", "진유준10", "이수민9", "홍자습10", "박진도8", "김중등7", "", "1", "우서연8"],
+    ["", "신입예정", "1"],
+    ["", "퇴원"],
+    [],
+    ["", "", "", "토", "화목", "화목"],
+    ["", "", "반", "고3M 수1", "고1TOP\n(204호)", "예비고1\nS(402호)"],
+    ["", "", "담임", "고우빈", "원장", "정찬준"],
+    ["", "재원", "1", "고삼이12", "김태윤10", "오태윤9"],
+    ["", "퇴원"],
+    [],
+    ["", "", "", "월금", "수금"],
+    ["", "", "반", "예비고1S", "세화여1"],
+    ["", "", "담임", "다른관", "다른관"],
+    ["", "재원", "1", "이수민9", "세화생10"],
+    ["", "퇴원"],
+  ];
+  {
+    const all = val(`parseRosterSheet(${JSON.stringify(WIDE)})`);
+    const high = val(`highCols(parseRosterSheet(${JSON.stringify(WIDE)}))`);
+    const labels = high.map((c) => c.label.replace(/\s+/g, " ")).join(" | ");
+    ok("덩어리 번호가 열에 남는다", all.filter((c) => c.block === 2).length === 2 && all[0].block === 0, JSON.stringify(all.map((c) => c.block)));
+    ok("고1·예비고1 열만 남는다 (6개)", high.length === 6, labels);
+    ok("고1S·고1T·자사·예비고1A·고1TOP·예비고1S(화목)", labels === "고1S (201호) | 고1T (402호) | 고1 자사 토1부(201호) | 예비고1 A(401호) | 고1TOP (204호) | 예비고1 S(402호)", labels);
+    ok("고PL 은 «고» 뒤에 숫자가 없어 빠진다", !/고PL/.test(labels));
+    ok("GS·중PL·FP 는 빠진다", !/GS|중PL|개별진도/.test(labels));
+    ok("고3M 수1 은 고1 이 아니라 빠진다", !/고3M/.test(labels));
+    ok("셋째 덩어리의 예비고1S 는 이름은 걸려도 덩어리로 뺀다", high.filter((c) => c.key === "예비고1S").length === 1 && !high.some((c) => c.teacher === "다른관"));
+  }
+  // 읽을 때 거른다 — 상자에도 고PL 이 «어느 반인지 모른다» 로 안 뜬다
+  setup(); SHEET.values = WIDE;
+  await run("return checkRosterSheet()");
+  ok("읽은 열은 고등부만", val("S.sheetCols").length === 6, String(val("S.sheetCols").length));
+  ok("고PL·GS 는 «어느 반인지 모른다» 에도 안 선다", !/<b>(고PL|2GS|중PL|세화여)/.test(run("return rosterDiffBox()")), run("return rosterDiffBox()").slice(0, 200));
+  ok("상자 머리에 «고등부 6반»", run("return rosterDiffBox()").indexOf("고등부 6반") >= 0);
+  ok("다른 관 학생은 배정으로 안 잡힌다 (이수민은 예비고1A 한 곳)", !val("S.diff").items.some((it) => it.name === "이수민" && it.kind === "배정" && it.why), JSON.stringify(val("S.diff").items.filter((it) => it.name === "이수민")));
+  ok("고등부 반이 하나도 없으면 실패로 적힌다", await (async () => {
+    setup(); SHEET.values = [["", "", "", "월금"], ["", "", "반", "중PL 월A"], ["", "", "담임", "아무개"], ["", "재원", "1", "김중등7"]];
+    await run("return checkRosterSheet()");
+    return /고등부 반.*없다.*중PL/.test(val("S.diffErr")) && val("S.diffSig") === "";
+  })(), val("S.diffErr"));
+
   // ---- 읽어서 맞춰 보기 (checkRosterSheet) ----
   setup();
   await run("return checkRosterSheet()");
@@ -327,7 +375,8 @@ const setup = (who) => {
   ok("몇 건 다른지 보인다", html.indexOf("3건 다르다") >= 0);
   ok("줄마다 «반영»·«무시» 가 있다", (html.match(/data-diff-apply=/g) || []).length === 3 && (html.match(/data-diff-skip=/g) || []).length === 3);
   ok("예고(신입 예정·퇴원 예정)는 단추 없이 보인다", html.indexOf("신입 예정") >= 0 && html.indexOf("박준호") >= 0 && html.indexOf("퇴원 예정") >= 0);
-  ok("안 맞춘 시트 반은 고르는 칸이 있다", html.indexOf("data-diff-map=") >= 0 && html.indexOf("(수)개별진도") >= 0);
+  // 예전에는 FP 강좌 «(수)개별진도» 가 «어느 반인지 모른다» 로 섰다. 고등부만 보게 되면서(2026-09-08) 아예 안 선다
+  ok("FP 강좌는 고르는 칸에 안 선다 — 다 맞춰졌으니 칸 자체가 없다", html.indexOf("data-diff-map=") < 0 && html.indexOf("(수)개별진도") < 0);
   ok("div 를 다 닫는다", (html.match(/<div/g) || []).length === (html.match(/<\/div>/g) || []).length,
     (html.match(/<div/g) || []).length + " vs " + (html.match(/<\/div>/g) || []).length);
   run(`S.diffErr = "시트를 못 읽었다"; renderStudents()`);

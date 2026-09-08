@@ -3063,7 +3063,7 @@ function stripDays(k) {
   return k;
 }
 function parseRosterSheet(values) {
-  var rows = values || [], cols = [], i = 0;
+  var rows = values || [], cols = [], i = 0, blk = 0;
   var cell = function (r, c) { var row = rows[r] || []; return String(row[c] == null ? "" : row[c]).trim(); };
   var empty = function (r) { return !(rows[r] || []).some(function (x) { return String(x == null ? "" : x).trim(); }); };
   while (i < rows.length) {
@@ -3081,16 +3081,31 @@ function parseRosterSheet(values) {
     for (var c = 3; c < width; c++) {
       var label = cell(head, c);
       if (!label || SHEET_WORDS.test(label)) continue;
-      var col = { label: label, day: cell(head - 1, c), teacher: cell(head + 1, c), key: normClassKey(label), students: [], joining: [], leaving: [] };
+      var col = { label: label, day: cell(head - 1, c), teacher: cell(head + 1, c), key: normClassKey(label), block: blk, students: [], joining: [], leaving: [] };
       groups["재원"].forEach(function (rr) { var p = parseSheetName(cell(rr, c)); if (p) col.students.push(p); });
       groups["신입"].forEach(function (rr) { var p = parseSheetName(cell(rr, c)); if (p) col.joining.push(p); });
       groups["퇴원"].forEach(function (rr) { var p = parseSheetName(cell(rr, c)); if (p) col.leaving.push(p); });
       cols.push(col);
     }
-    i = r;
+    i = r; blk++;
   }
   return cols;
 }
+// ---------- 고등부 반만 (2026-09-08) ----------
+//
+// 마왕님 말씀 — "명단 대조하는거는 다른반은 다 빼고 고등부 반만 가져오자" 하시며 열 열 개를 짚어 주셨다:
+//   고1S · 고1T · 고1 자사 토1부 · 예비고1 S/T/A (월금 덩어리) · 고1TOP · 예비고1 S/T/A (화목 덩어리).
+// 시트에는 그 옆으로 고PL·중PL(자습), 1GS·2GS·UGS(중등관 진도반), FP 강좌, 고3M 수1 이 있고
+// 셋째 덩어리(다른 관)에 «예비고1S 월금» 이 또 있다 — 그것들은 우리 팀 명단이 아니다.
+//
+// 규칙 둘: **반 이름이 고1·예비고1 로 시작**하고, **앞 두 덩어리(월금·화목)** 안에 있는 열만.
+//   - 고PL 은 «고» 뒤에 숫자가 없어 안 걸린다. 고3M 수1 은 고1 이 아니라 안 걸린다.
+//   - 셋째 덩어리의 «예비고1S» 는 이름은 걸리지만 덩어리 번호로 뺀다. 이걸 안 빼면 월금 덩어리의 예비고1 S 와
+//     같은 열쇠가 둘이 되어 한 사람이 «반 둘에 있다» 로 보인다.
+// 고2·고3 반이 팀에 들어오면 HIGH_CLASS 를 넓힌다.
+var HIGH_CLASS = /^(예비)?고1/, HIGH_BLOCKS = 2;
+function isHighCol(col) { return HIGH_CLASS.test(col.key || "") && (col.block || 0) < HIGH_BLOCKS; }
+function highCols(cols) { return (cols || []).filter(isHighCol); }
 // 시트 열 ↔ 앱 반. 손으로 정한 것(config.rosterMap)이 먼저, 없으면 이름 열쇠로.
 // 요일까지 붙인 열쇠("예비고1S화목")가 맞으면 그것을, 안 맞으면 요일 뗀 열쇠("고1S")로 본다.
 // **둘 이상 맞으면 안 맞춘 것으로 둔다** — 팀장이 고른다.
@@ -3195,8 +3210,10 @@ async function checkRosterSheet(force) {
     var tab = tabs.filter(function (t) { return sh.gid && String(t.gid) === String(sh.gid); })[0] || tabs[0];
     if (!tab) throw new Error("시트에 탭이 없다");
     var r = await sheetsApi({ action: "values", spreadsheetId: sh.id, range: "'" + tab.title.replace(/'/g, "''") + "'!A1:BZ400" });
-    var cols = parseRosterSheet(r.values || []);
-    if (!cols.length) throw new Error("«반» 줄을 못 찾았다 — 탭이 인원 현황 모양이 아니다: " + tab.title);
+    var all = parseRosterSheet(r.values || []);
+    if (!all.length) throw new Error("«반» 줄을 못 찾았다 — 탭이 인원 현황 모양이 아니다: " + tab.title);
+    var cols = highCols(all);      // 고등부 반만. 나머지 열은 읽지도 맞추지도 않는다
+    if (!cols.length) throw new Error("고등부 반(고1·예비고1)이 앞 두 덩어리에 없다: " + all.slice(0, 6).map(function (c) { return c.label.replace(/\s+/g, " "); }).join(", "));
     S.sheetCols = cols; S.diffTab = tab.title; S.diffAt = Date.now();
     applyRosterDiff();
     await saveRosterDiff();
@@ -3250,6 +3267,7 @@ function rosterDiffBox() {
       : S.diffErr ? '<span class="pill red">못 읽었다</span>'
       : d ? (d.items.length ? '<span class="pill orange">' + d.items.length + '건 다르다</span>' : '<span class="pill green">같다</span>') : "") +
     (S.diffTab ? '<span class="muted">' + esc(S.diffTab) + '</span>' : "") +
+    (S.sheetCols && S.sheetCols.length ? '<span class="muted" title="고1·예비고1 반만 본다. 고PL·GS·중등·FP 는 안 본다">고등부 ' + S.sheetCols.length + '반</span>' : "") +
     (when ? '<span class="muted">' + esc(fmtMD(ymd(when))) + " " + ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2) + '</span>' : "") +
     '<span class="sp"></span>' +
     '<button class="mini" data-diff-run="1"' + (S.diffBusy ? " disabled" : "") + '>다시 대조</button>' +
