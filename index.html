@@ -1604,7 +1604,7 @@ function renderCal() {
     '<span class="mc g1">★개강</span> 개강·설명회·시험' +
     '<span class="mc g0">학년 색</span>' +
     '<span class="mc done">끝낸 것</span>' +
-    '<span>· 분홍 칸은 쉬는 날 · 파란 칸이 아래 주간 달력에 열린 주다</span></div>' +
+    '<span>· 그 밖의 색은 <b>일정에 고른 색</b> · 분홍 칸은 쉬는 날 · 파란 칸이 아래 주간 달력에 열린 주다</span></div>' +
     // ---- 월간 달력 — 시험은 이어진 막대로 눕는다 ----
     '<div class="calwrap"><div class="mon">' +
     '<div class="mhrow">' + DOW_KO.slice(1).concat([DOW_KO[0]]).map(function (w, i) {
@@ -1775,7 +1775,14 @@ async function toggleTask(id, date) {
 // 넣는 자리 하나에 갈래가 둘이다 — **일정**(모두가 봄·색·기간) 과 **할 일**(내 것·담당·체크).
 // 갈래를 안 나누고 하나로 두면 «내 것만 보이는 달력» 에 팀 일정을 넣었다가 남의 화면에서 사라진다.
 // S.calAdd = { d: 날짜, kind: "ev" | "task", id: 고칠 일정 id }
-function calAddOpen(d, kind, id) { S.calAdd = { d: d, kind: kind || "ev", id: id || "" }; drawCalAdd(); }
+function calAddOpen(d, kind, id) {
+  S.calAdd = { d: d, kind: kind || "ev", id: id || "" };
+  drawCalAdd();
+  // ⚠ 넣는 자리는 달력 **아래**에 있다. 머리의 «업무 추가» 를 눌렀는데 그것이 화면 밖이면
+  //    아무 일도 안 일어난 것처럼 보인다. 열 때만 끌어온다 (다시 그릴 때는 안 움직인다).
+  var box = $("#cal-add");
+  if (box && box.scrollIntoView) try { box.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { box.scrollIntoView(); }
+}
 function drawCalAdd() {
   var box = $("#cal-add"); if (!box) return;
   var a = S.calAdd;
