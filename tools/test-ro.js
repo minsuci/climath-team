@@ -149,6 +149,13 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   ok("쓰고 나면 문이 다시 닫힌다", (await tryW("return tdb.collection('dash').doc('x').set({a:1})")) === msg);
   run(`S.exams = {}; S.term = "";`);
 
+  // ---- 달력 일정은 팀장이 만든다 (2026-09-10) ----
+  // 선생님은 **보기만** 한다. 규칙(dash)이 이미 그렇게 되어 있고 화면도 같은 답을 내야 한다.
+  run("S.teamOk = true; S.events = [{ id:\"e1\", text:\"1부 시험\", from:\"2026-09-21\", to:\"\", color:\"red\" }];");
+  ok("선생님은 달력 일정을 못 쓴다", (await tryW("return saveEvents()")) === msg);
+  ok("보는 것은 된다 (담당과 상관없이 팀 전체가 본다)", run("return eventsOn(\"2026-09-21\",\"전체\").length") === 1);
+  run("S.events = [];");
+
   // ---- 단추·칸 감추기 ----
   const mk = (tag, text, cls, attrs) => { const e = el(tag, attrs); e.textContent = text; e.cls = cls || []; ELS.push(e); return e; };
   const save = mk("BUTTON", "저장", ["btn"]);

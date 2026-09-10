@@ -308,6 +308,69 @@ ctx.__t.then((r) => {
   run(`S.tasks = [{ id:"z1", text:"지난 일", due:"2026-09-01", status:"open" }];`);
   ok("오늘보다 앞선 것은 기한 지남", run(`return calMonthSum("2026-09","전체").late`) === 1);
 
+  // ---- 손으로 넣는 달력 일정 (2026-09-10) ----
+  // 할 일과 **다른 상자**다. 할 일은 담당인 사람에게만 보이고, 일정은 팀 전체가 같은 것을 본다.
+  run(`S.claims = null; S.ro = false; S.tasks = [];
+    S.events = [
+      { id:"e1", text:"1부 시험", from:"2026-09-21", to:"2026-09-23", color:"red", grade:"고1" },
+      { id:"e2", text:"통합 달력 배부", from:"2026-09-09", to:"", color:"black" },
+      { id:"e3", text:"본사 워크샵", from:"2026-09-17", to:"2026-09-18", color:"purple" },
+      { id:"e4", text:"중3 퍼펙트 마감", from:"2026-09-14", to:"", color:"green", grade:"중3" } ];`);
+
+  ok("하루짜리는 칸 안의 칩", run(`return eventsOn("2026-09-09","전체").map(function(e){return e.id;}).join(",")`) === "e2");
+  ok("이틀 이상은 칸에 안 뜬다 (막대로 간다)", run(`return eventsOn("2026-09-21","전체").length`) === 0);
+  ok("이틀 이상만 막대가 된다",
+    run(`return evRanges("전체").map(function(r){return r.id;}).sort().join(",")`) === "e1,e3");
+  ok("«까지» 가 비면 하루짜리", run(`return evSpan({from:"2026-09-09", to:""})`) === false);
+  ok("«까지» 가 시작과 같아도 하루짜리", run(`return evSpan({from:"2026-09-09", to:"2026-09-09"})`) === false);
+  ok("학년 탭을 탄다 (중3 일정은 고1 탭에 안 뜬다)", run(`return eventsOn("2026-09-14","고1").length`) === 0);
+  // 학년을 안 정한 일정은 «공통» 이다 — 할 일과 같은 규칙으로, 특정 학년 탭에서는 안 나온다.
+  ok("학년 없는 일정은 «공통» 탭 것", run(`return eventsOn("2026-09-09","공통").length`) === 1);
+  ok("학년 탭에는 그 학년 것만 (공통은 안 섞인다)", run(`return eventsOn("2026-09-09","고1").length`) === 0);
+  ok("«전체» 탭에는 다 나온다", run(`return eventsOn("2026-09-09","전체").length + eventsOn("2026-09-14","전체").length`) === 2);
+  ok("공통 탭에 학년 일정은 안 나온다", run(`return eventsOn("2026-09-14","공통").length`) === 0);
+
+  // ⚠ 여기가 할 일과 갈리는 곳이다. 일정을 할 일에 섞었으면 담당이 아닌 사람 화면에서 사라졌다.
+  run(`S.ro = true; S.claims = { role:"teacher", tid:"T2", name:"이현우" };`);
+  ok("선생님에게도 일정은 그대로 보인다 (담당으로 안 가른다)",
+    run(`return eventsOn("2026-09-09","전체").length`) === 1);
+  ok("선생님에게도 막대는 그대로", run(`return evRanges("전체").length`) === 2);
+  run(`S.ro = false; S.claims = null;`);
+
+  // 색 — 모르는 이름이 와도 일정이 사라지면 안 된다
+  ok("고른 색이 붙는다", run(`return evColor("red").fg`) === "#b42318");
+  ok("모르는 색은 기본으로 (일정이 안 사라진다)", run(`return evColor("무지개").k`) === "gray");
+  ok("색이 없어도 기본", run(`return evColor("").k`) === "gray");
+  ok("칩이 색을 물고 나온다",
+    run(`return evChipHtml({id:"e2",text:"통합 달력 배부",color:"black"})`).indexOf("background:#1f2937") >= 0);
+
+  // ⚠ 시험 막대는 겹치면 묶지만 **일정은 안 묶는다** — 색과 글자를 사람이 고른 것이다
+  run(`S.tests = []; S.classes = [];`);
+  const mg = JSON.parse(run(`var m = mergeRanges(calRanges("전체"));
+    return JSON.stringify(m.map(function(x){ return { t:x.text, c:x.color||"", n:x.n }; }));`));
+  ok("겹치는 일정도 따로 남는다", mg.length === 2, JSON.stringify(mg));
+  ok("«외 N» 으로 뭉치지 않는다", mg.every(function (x) { return x.n === 1 && x.t.indexOf("외 ") < 0; }), JSON.stringify(mg));
+  ok("막대가 색을 들고 간다", mg.map(function (x) { return x.c; }).sort().join(",") === "purple,red", JSON.stringify(mg));
+
+  const seg = JSON.parse(run(`var lay = weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-21"));
+    return JSON.stringify(lay.segs.map(function(g){ return { t:g.text, c:g.color, id:g.id }; }));`));
+  ok("주에 눕혀도 색과 id 가 남는다 (눌러 고쳐야 한다)",
+    seg.length === 1 && seg[0].c === "red" && seg[0].id === "e1", JSON.stringify(seg));
+  const bh = run(`var lay = weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-21"));
+    return barHtml(lay.segs[0], 1);`);
+  ok("막대에 색과 누를 표가 붙는다", bh.indexOf("data-cev=\"e1\"") >= 0 && bh.indexOf("#b42318") >= 0, bh);
+
+  // 칸은 좁다 — 일정이 자리를 먹으면 할 일이 그만큼 접힌다. 일정이 먼저다.
+  run(`S.tasks = [
+    { id:"t1", text:"오답 정리", due:"2026-09-09", status:"open" },
+    { id:"t2", text:"보충 과제", due:"2026-09-09", status:"open" },
+    { id:"t3", text:"학부모 통보", due:"2026-09-09", status:"open" } ];`);
+  const mt = JSON.parse(run(`var m = monthDayTasks("2026-09-09","전체", 3 - eventsOn("2026-09-09","전체").length);
+    return JSON.stringify({ show: m.show.length, more: m.more });`));
+  ok("일정 하나가 들어가면 할 일은 둘까지", mt.show === 2 && mt.more === 1, JSON.stringify(mt));
+  ok("일정이 없는 날은 셋까지 그대로", run(`return monthDayTasks("2026-09-09","전체").show.length`) === 3);
+  run(`S.tasks = []; S.events = [];`);
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

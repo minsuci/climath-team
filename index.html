@@ -245,6 +245,14 @@
   .mc.dl { background: #1f2937; color: #fff; font-weight: 700; }
   .mc.done { background: transparent; color: var(--muted); text-decoration: line-through; }
   .mt .more { font-size: 10px; color: var(--muted); padding-left: 4px; }
+  /* 손으로 넣은 일정 — 누르면 고친다 */
+  .mt .ec, .bar.ec { pointer-events: auto; cursor: pointer; }
+  .mt .ec:hover, .bar.ec:hover { outline: 1px solid var(--navy); }
+  .cday .ec { display: block; margin-bottom: 3px; }
+  /* 색 고르는 단추 */
+  .csw { border: 1px solid var(--line); border-radius: 6px; font-size: 11px; padding: 2px 8px;
+    cursor: pointer; font-weight: 600; }
+  .csw.on { outline: 2px solid var(--navy); outline-offset: 1px; }
   /* 쉬는 날 — 칸을 통째로 물들인다. 칩으로 달면 할 일에 섞여 안 보인다 */
   .mday.off { background: #fdecf1; border-color: #f3ccd8; }
   .mn .hol { font-size: 10px; font-weight: 600; color: #9b2246; }
@@ -584,6 +592,7 @@ var S = {
   sheetCols: null, diff: null, diffErr: "", diffAt: 0, diffBusy: false, diffSig: "", diffN: 0, diffTab: "", diffDoc: null, stDiffOpen: true,
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
+  events: [],     // 달력 일정 (dash/calEvents). 할 일과 달리 **팀 전체가 같은 것을 본다**
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
@@ -870,6 +879,8 @@ async function loadCore() {
     // 그러면 할 일·업무 달력·앞으로 2주가 **저절로** 공개분만 그린다. 화면마다 거를 필요가 없다.
     dashDoc("tasksLead").get().then(function (d) { S.tasksLead = d.exists ? (d.data().items || []) : []; })
       .catch(function () { S.tasksLead = []; }),
+    dashDoc("calEvents").get().then(function (d) { S.events = d.exists ? (d.data().items || []) : []; })
+      .catch(function () { S.events = []; }),
     dashDoc("students").get().then(function (d) { S.notes = (d.exists && d.data().notes) || {}; }).catch(function () {}),
     tdb.collection("marks").get().then(function (s2) { S.marks = {}; s2.forEach(function (d) { S.marks[d.id] = d.data() || {}; }); })
       .catch(function () { S.marks = {}; }),
@@ -1332,7 +1343,7 @@ function calMonthSum(ym, want) {
 // 한 날의 할 일을 달력 칸에 넣을 만큼만 추린다. 넘치면 «외 N» 으로 접는다 —
 // 다 보이려고 칸을 늘리면 한 달이 한 화면에 안 들어오고, 그러면 달력이 아니다.
 var MDAY_MAX = 3;
-function monthDayTasks(d, want) {
+function monthDayTasks(d, want, max) {
   var list = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
   // 안 끝난 것이 먼저, 그 안에서 마감이 먼저. 접히는 것은 늘 «덜 급한 쪽» 이라야 한다.
   list.sort(function (a, b) {
@@ -1341,7 +1352,8 @@ function monthDayTasks(d, want) {
     var am = taskMark(a).deadline ? 0 : 1, bm = taskMark(b).deadline ? 0 : 1;
     return am - bm;
   });
-  return { show: list.slice(0, MDAY_MAX), more: Math.max(0, list.length - MDAY_MAX), all: list };
+  var n = max === undefined ? MDAY_MAX : max;
+  return { show: list.slice(0, n), more: Math.max(0, list.length - n), all: list };
 }
 function mchipHtml(t, d) {
   var m = taskMark(t), done = taskDoneOn(t, d);
@@ -1371,6 +1383,9 @@ function calRanges(want) {
     add(t.date, t.date, "test", TEST_KINDS[t.kind].short + " " + t.name, t.grade);
   });
   activeClasses().forEach(function (c) { add(c.endDate, c.endDate, "class", c.name + " 종강", ""); });
+  // 손으로 넣은 이틀 이상짜리 일정. 이미 묶여 온 것이라 add() 를 안 거치고 그대로 얹는다 —
+  // ⚠ 다른 일정과 **안 묶인다.** 색을 고른 것이라 묶으면 무슨 색이었는지가 사라진다.
+  evRanges(want).forEach(function (r) { out.push(r); });
   // 긴 것부터 위층에 놓아야 짧은 것이 사이를 메운다
   out.sort(function (a, b) {
     return a.s < b.s ? -1 : a.s > b.s ? 1 : (b.e < a.e ? -1 : b.e > a.e ? 1 : 0);
@@ -1385,8 +1400,14 @@ function calRanges(want) {
 var KIND_WORD = { exam: "내신", math: "수학시험", back: "복귀", test: "시험", class: "종강" };
 function mergeRanges(ranges) {
   var byKind = {};
-  ranges.forEach(function (r) { (byKind[r.kind] = byKind[r.kind] || []).push(r); });
-  var out = [];
+  // ⚠ 손으로 넣은 일정은 **안 묶는다.** 색과 글자를 사람이 고른 것이라
+  //    «워크샵 외 2» 로 뭉치면 무엇을 골랐는지가 통째로 사라진다. 시험 막대와 다른 점이다.
+  var solo = [];
+  ranges.forEach(function (r) {
+    if (r.kind === "ev") { solo.push(Object.assign({ items: [r], full: r.text, n: 1 }, r)); return; }
+    (byKind[r.kind] = byKind[r.kind] || []).push(r);
+  });
+  var out = solo.slice();
   Object.keys(byKind).forEach(function (k) {
     var list = byKind[k].slice().sort(function (a, b) { return a.s < b.s ? -1 : a.s > b.s ? 1 : 0; });
     var cur = null;
@@ -1401,6 +1422,7 @@ function mergeRanges(ranges) {
     });
   });
   out.forEach(function (m) {
+    if (m.kind === "ev") return;                 // 손으로 넣은 것은 글자를 안 건드린다
     var names = m.items.map(function (x) { return x.text; });
     m.full = names.join(" · ");
     m.n = m.items.length;
@@ -1421,7 +1443,7 @@ function weekSegments(ranges, days) {
     var b = days.indexOf(r.e > to ? to : r.e);
     if (a < 0 || b < 0) return;
     var seg = { a: a, b: b, kind: r.kind, text: r.text, full: r.full || r.text, n: r.n || 1,
-                head: r.s >= from, tail: r.e <= to };
+                color: r.color || "", id: r.id || "", head: r.s >= from, tail: r.e <= to };
     var i = 0;
     while (lanes[i] && lanes[i].some(function (x) { return !(seg.b < x.a || seg.a > x.b); })) i++;
     lanes[i] = lanes[i] || [];
@@ -1432,11 +1454,70 @@ function weekSegments(ranges, days) {
   return { segs: segs, lanes: lanes.length };
 }
 function barHtml(g, rowBase) {
-  return '<div class="bar ' + g.kind + (g.head ? " s" : "") + (g.tail ? " e" : "") + '"' +
-    ' style="grid-column:' + (g.a + 1) + '/span ' + (g.b - g.a + 1) + ';grid-row:' + (rowBase + g.lane) + '"' +
+  return '<div class="bar ' + g.kind + (g.head ? " s" : "") + (g.tail ? " e" : "") + (g.id ? " ec" : "") + '"' +
+    (g.id ? ' data-cev="' + esc(g.id) + '"' : "") +
+    ' style="grid-column:' + (g.a + 1) + '/span ' + (g.b - g.a + 1) + ';grid-row:' + (rowBase + g.lane) + ';' +
+    (g.color ? evStyle(g.color) : "") + '"' +
     ' title="' + esc(g.full) + '">' +
     (g.n > 1 ? '<b class="n">' + g.n + '</b> ' : "") +
     (g.head ? esc(g.text) : '<span class="cont">◂ ' + esc(g.text) + '</span>') + '</div>';
+}
+
+// ---- 달력 일정 — 손으로 넣어 운영 달력을 만든다 (2026-09-10) ----
+//
+// 마왕님 말씀 — «달력에 일정을 추가해서 업무달력을 만드는 거야. 업무 추가 버튼 누르면
+// 글씨 색깔 지정하고 업무 추가할 수 있도록». 부원장님 「중등관 9월 운영 달력」이 그것이다.
+//
+// ⚠ **할 일과 다른 것이다.** 할 일은 «내가 해야 할 것»이라 담당이 붙고 체크가 붙고
+//    업무 달력에는 **자기 것만** 나온다(2026-09-07 결정). 운영 달력은 그 반대다 —
+//    «1부 시험» · «추석 연휴» · «본사 워크샵» 은 누구의 것도 아니고 **팀 전체가 같은 것을 봐야 한다.**
+//    그래서 할 일에 색 칸을 더하지 않고 상자를 따로 뒀다. 섞었으면 내가 담당이 아닌 일정이
+//    남의 화면에서 사라졌을 것이다.
+//
+//   dash/calEvents { items: [{ id, text, from, to, color, grade, created }] }
+//
+// 규칙은 이미 있는 것을 그대로 탄다 — `dash` 는 팀 전체가 읽고 **팀장만 쓴다.**
+// 운영 달력을 만드는 사람이 팀장이라 새 규칙이 필요 없다.
+var EV_COLORS = [
+  { k: "gray",   n: "기본", fg: "#374151", bg: "#eef1f6" },
+  { k: "black",  n: "검정", fg: "#ffffff", bg: "#1f2937" },   // 마감 — 부원장님 달력의 검정 칩
+  { k: "red",    n: "빨강", fg: "#b42318", bg: "#fde8e8" },
+  { k: "orange", n: "주황", fg: "#8a5a00", bg: "#ffe7a8" },
+  { k: "green",  n: "초록", fg: "#1f6b3a", bg: "#cdeed7" },
+  { k: "blue",   n: "파랑", fg: "#1d4f9c", bg: "#cfe2ff" },
+  { k: "purple", n: "보라", fg: "#6b21a8", bg: "#ece2fb" },
+  { k: "pink",   n: "분홍", fg: "#9b2246", bg: "#f9cfdb" },
+];
+// 모르는 색 이름이 와도 «기본» 으로 그린다. 색을 못 알아봐서 일정이 통째로 안 보이면 안 된다.
+function evColor(k) {
+  var c = EV_COLORS.filter(function (x) { return x.k === k; })[0];
+  return c || EV_COLORS[0];
+}
+function evStyle(k) { var c = evColor(k); return "color:" + c.fg + ";background:" + c.bg; }
+function evEnd(e) { return e.to && e.to > e.from ? e.to : e.from; }
+function evSpan(e) { return evEnd(e) > e.from; }        // 이틀 이상이면 막대로 눕는다
+// 일정은 **모두의 것**이라 담당으로 안 가른다. 학년 탭만 탄다.
+function evHit(e, want) { return gradeHit(e.grade || "공통", want); }
+function eventsOn(d, want) {
+  return (S.events || []).filter(function (e) {
+    return evHit(e, want) && !evSpan(e) && e.from === d;
+  });
+}
+// 이틀 이상짜리는 시험 막대와 같은 길로 보낸다 — 주 경계에서 잘리고 겹치면 층이 갈린다.
+function evRanges(want) {
+  return (S.events || []).filter(function (e) { return evHit(e, want) && evSpan(e); })
+    .map(function (e) {
+      return { s: e.from, e: evEnd(e), kind: "ev", text: e.text, full: e.text, n: 1,
+               color: e.color || "gray", id: e.id };
+    });
+}
+function evChipHtml(e) {
+  return '<span class="mc ec" style="' + evStyle(e.color) + '" data-cev="' + esc(e.id) + '"' +
+    ' title="' + esc(e.text) + (S.ro ? "" : " (눌러서 고치기)") + '">' + esc(e.text) + '</span>';
+}
+async function saveEvents() {
+  if (!S.teamOk) return;
+  await dashDoc("calEvents").set({ items: S.events || [], updated: Date.now() });
 }
 
 // 업무 달력은 **자기 할 일만** 보여준다 (2026-09-07 결정).
@@ -1494,7 +1575,8 @@ function renderCal() {
     '<b style="font-size:14px">' + Number(ym.slice(0, 4)) + '. ' + Number(ym.slice(5)) + '월</b>' +
     '<button class="mini" data-cm="1">›</button>' +
     (thisMonth && thisWeek ? "" : '<button class="mini" data-cw="0">오늘로</button>') +
-    '<button class="mini" data-cprint title="이 달을 A4 가로 한 장으로">인쇄</button></h2>' +
+    '<button class="mini" data-cprint title="이 달을 A4 가로 한 장으로">인쇄</button>' +
+    (S.ro ? "" : '<button class="btn" data-cnew title="달력에 일정을 넣는다">＋ 업무 추가</button>') + '</h2>' +
     '<div class="chips">' + GRADE_TABS.map(function (g) {
       var n = g === "전체" ? todo.length : dueThrough(g, days).length;
       return '<button class="mini ' + (g === want ? "on" : "") + '" data-cg="' + esc(g) + '">' +
@@ -1510,6 +1592,11 @@ function renderCal() {
         (sm.dl ? '<span class="s">마감 <b>' + sm.dl + '</b></span>' : "") +
         (sm.done ? '<span class="s">끝냄 <b>' + sm.done + '</b></span>' : "") +
         (sm.off ? '<span class="s">쉬는 날 <b>' + sm.off + '</b></span>' : "") +
+        (function () {
+          var n = (S.events || []).filter(function (e) {
+            return evHit(e, want) && e.from <= (ym + "-31") && evEnd(e) >= (ym + "-01"); }).length;
+          return n ? '<span class="s">일정 <b>' + n + '</b></span>' : "";
+        })() +
         (holidayKnown(ym) ? "" : '<span class="s bad">쉬는 날을 아직 안 적은 해다</span>') +
         '</div>';
     })() +
@@ -1548,9 +1635,11 @@ function renderCal() {
           // 숫자만으로는 «무슨 일인지» 를 못 본다. 막대 아래 줄에 글자로 깐다 —
           // 한 주의 칸들이 같은 격자 줄을 쓰므로 제일 바쁜 날에 맞춰 줄 높이가 함께 는다.
           wd.map(function (d, i) {
-            var mt = monthDayTasks(d, want);
-            if (!mt.all.length) return "";
+            // 손으로 넣은 일정이 먼저다 — 그것이 이 달력의 본문이고, 할 일은 그 위에 얹힌 내 몫이다.
+            var ev = eventsOn(d, want), mt = monthDayTasks(d, want, Math.max(0, MDAY_MAX - ev.length));
+            if (!ev.length && !mt.all.length) return "";
             return '<div class="mt" style="grid-column:' + (i + 1) + ';grid-row:' + (lay.lanes + 2) + '">' +
+              ev.map(evChipHtml).join("") +
               mt.show.map(function (t) { return mchipHtml(t, d); }).join("") +
               (mt.more ? '<span class="more">외 ' + mt.more + '</span>' : "") + '</div>';
           }).join("") +
@@ -1580,7 +1669,8 @@ function renderCal() {
         (hol ? " off" : "") + '">' +
         '<div class="ch"><b>' + Number(d.slice(8)) + '</b> <span>' + DOW_KO[dow] + '</span>' +
         (hol ? '<span class="hol">' + esc(hol) + '</span>' : "") +
-        '<button class="add" data-cadd="' + d + '" title="여기에 할 일 넣기">＋</button></div>' +
+        '<button class="add" data-cadd="' + d + '" title="이 날에 일정·할 일 넣기">＋</button></div>' +
+        eventsOn(d, want).map(evChipHtml).join("") +
         mine.map(function (t) {
           var done = taskDoneOn(t, d);
           var mk = taskMark(t);
@@ -1601,6 +1691,9 @@ function renderCal() {
     '<b>할 일 제목의 글자로 어림잡는다.</b> 틀려도 할 일이 사라지지는 않고 강조만 안 된다. ' +
     '<b>분홍 칸은 쉬는 날</b>이고 손으로 적어 둔다 — 안 적은 해는 머리에 그렇게 뜬다. ' +
     '<b>인쇄</b>를 누르면 이 달만 A4 가로 한 장으로 나간다. ' +
+    '<b>＋ 업무 추가</b>(또는 날짜 칸의 ＋)로 달력에 <b>일정</b>을 넣는다 — 글씨 색을 고르고, ' +
+    '«까지»를 채우면 여러 날에 걸친 막대가 된다. <b>일정은 담당과 상관없이 팀 전체가 같은 것을 본다</b> ' +
+    '(할 일은 담당인 사람에게만 보인다). 넣은 일정을 누르면 고치거나 지운다. 넣고 고치는 것은 팀장뿐이다. ' +
     '막대는 <b>시험 성적에 만든 시험</b>과 <b>반 종강</b>이고, ' +
     '겹치면 한 막대로 묶여 앞에 개수가 붙는다(손을 올리면 전부 보인다). ' +
     '<b>학교 내신 일정은 여기 안 나온다</b> — 달력이 시험 막대로 뒤덮이므로 <b>내신 참여표</b>의 날짜 띠에서 본다. ' +
@@ -1628,7 +1721,18 @@ function renderCal() {
     b.onclick = function () { S.calGrade = b.getAttribute("data-cg"); keepScrollIn("#sec-cal", renderCal); };
   });
   $$("[data-cadd]", el).forEach(function (b) {
-    b.onclick = function () { S.calAdd = b.getAttribute("data-cadd"); drawCalAdd(); };
+    b.onclick = function () { calAddOpen(b.getAttribute("data-cadd"), "ev"); };
+  });
+  $$("[data-cnew]", el).forEach(function (b) {
+    b.onclick = function () { calAddOpen(S.calAnchor || TODAY, "ev"); };
+  });
+  // 넣은 일정을 눌러 고친다. 달력에서 바로 고칠 데가 없으면 지우고 다시 넣게 된다.
+  $$("[data-cev]", el).forEach(function (b) {
+    b.onclick = function () {
+      if (S.ro) return;
+      var e0 = (S.events || []).filter(function (x) { return x.id === b.getAttribute("data-cev"); })[0];
+      if (e0) calAddOpen(e0.from, "ev", e0.id);
+    };
   });
   $$(".ctask", el).forEach(function (row) {
     $("input", row).onchange = async function () {
@@ -1668,11 +1772,86 @@ async function toggleTask(id, date) {
   }
   await saveTasks();
 }
+// 넣는 자리 하나에 갈래가 둘이다 — **일정**(모두가 봄·색·기간) 과 **할 일**(내 것·담당·체크).
+// 갈래를 안 나누고 하나로 두면 «내 것만 보이는 달력» 에 팀 일정을 넣었다가 남의 화면에서 사라진다.
+// S.calAdd = { d: 날짜, kind: "ev" | "task", id: 고칠 일정 id }
+function calAddOpen(d, kind, id) { S.calAdd = { d: d, kind: kind || "ev", id: id || "" }; drawCalAdd(); }
 function drawCalAdd() {
   var box = $("#cal-add"); if (!box) return;
-  if (!S.calAdd) { box.innerHTML = ""; return; }
-  var d = S.calAdd;
-  box.innerHTML = '<div class="entry"><div class="row">' +
+  var a = S.calAdd;
+  if (!a || !a.d) { box.innerHTML = ""; return; }
+  if (S.ro) { box.innerHTML = ""; return; }        // 운영 달력을 만드는 사람은 팀장이다
+  var d = a.d, kind = a.kind === "task" ? "task" : "ev";
+  var cur = a.id ? (S.events || []).filter(function (x) { return x.id === a.id; })[0] : null;
+  var tab = function (k, t) {
+    return '<button class="mini ' + (k === kind ? "on" : "") + '" data-catab="' + k + '">' + t + '</button>';
+  };
+  var head = '<div class="row" style="margin-bottom:6px">' +
+    (cur ? '<b>일정 고치기</b>' : tab("ev", "일정") + tab("task", "할 일")) +
+    '<span class="muted" style="font-size:12px">' +
+    (kind === "ev" ? "모두가 보는 달력 일정이다 — 색을 고를 수 있다" : "내 할 일이다 — 담당·체크가 붙고 업무 달력에는 담당인 사람에게만 보인다") +
+    '</span></div>';
+
+  if (kind === "ev") {
+    box.innerHTML = '<div class="entry">' + head + '<div class="row">' +
+      '<label style="font-size:13px">부터 <input type="date" id="ce-from" value="' + esc((cur && cur.from) || d) + '"></label>' +
+      '<label style="font-size:13px">까지 <input type="date" id="ce-to" value="' + esc((cur && cur.to) || "") + '"></label>' +
+      '<input type="text" id="ce-text" placeholder="업무 · 일정" value="' + esc((cur && cur.text) || "") + '" style="flex:1;min-width:180px">' +
+      '<select id="ce-grade">' + ["공통"].concat(GRADES).map(function (g) {
+        var sel = cur ? (cur.grade || "공통") === g : (S.calGrade === g);
+        return '<option' + (sel ? " selected" : "") + '>' + g + '</option>'; }).join("") + '</select>' +
+      '</div><div class="row" style="margin-top:6px">' +
+      '<span class="muted" style="font-size:12px">글씨 색</span>' +
+      EV_COLORS.map(function (c) {
+        var on = ((cur && cur.color) || "gray") === c.k;
+        return '<button class="csw' + (on ? " on" : "") + '" data-ccol="' + c.k + '" title="' + c.n + '"' +
+          ' style="' + evStyle(c.k) + '">' + c.n + '</button>';
+      }).join("") +
+      '<span class="sp" style="flex:1"></span>' +
+      (cur ? '<button class="btn" id="ce-go">고치기</button><button class="mini" id="ce-del">지우기</button>'
+           : '<button class="btn" id="ce-go">넣기</button>') +
+      '<button class="mini" id="ce-x">닫기</button></div></div>';
+    var pick = (cur && cur.color) || "gray";
+    $$("[data-ccol]", box).forEach(function (b) {
+      b.onclick = function () {
+        pick = b.getAttribute("data-ccol");
+        $$("[data-ccol]", box).forEach(function (o) { o.classList.toggle("on", o === b); });
+      };
+    });
+    var go = async function () {
+      var text = $("#ce-text").value.trim(); if (!text) return;
+      var from = $("#ce-from").value || d, to = $("#ce-to").value || "";
+      if (to && to < from) { var t0 = from; from = to; to = t0; }     // 거꾸로 넣어도 받아 준다
+      var keep = (S.events || []).slice();
+      if (cur) {
+        Object.assign(cur, { text: text, from: from, to: to, color: pick,
+          grade: $("#ce-grade").value === "공통" ? "" : $("#ce-grade").value });
+      } else {
+        S.events = (S.events || []).concat([{ id: newId(), text: text, from: from, to: to, color: pick,
+          grade: $("#ce-grade").value === "공통" ? "" : $("#ce-grade").value, created: TODAY }]);
+      }
+      try { await saveEvents(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); }
+      catch (e) { S.events = keep; alert("넣지 못했다: " + e.message); keepScrollIn("#sec-cal", renderCal); }
+    };
+    $("#ce-go").onclick = go;
+    $("#ce-text").addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+    if ($("#ce-del")) $("#ce-del").onclick = async function () {
+      if (!confirm("이 일정을 지운다: " + cur.text)) return;
+      var keep = (S.events || []).slice();
+      S.events = keep.filter(function (x) { return x.id !== cur.id; });
+      try { await saveEvents(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); }
+      catch (e) { S.events = keep; alert("지우지 못했다: " + e.message); }
+    };
+    $("#ce-x").onclick = function () { S.calAdd = null; drawCalAdd(); };
+    $$("[data-catab]", box).forEach(function (b) {
+      b.onclick = function () { calAddOpen(d, b.getAttribute("data-catab")); };
+    });
+    $("#ce-text").focus();
+    return;
+  }
+
+  // ---- 할 일 (지금까지와 같다) ----
+  box.innerHTML = '<div class="entry">' + head + '<div class="row">' +
     '<b>' + esc(fmtMD(d)) + '</b>' +
     '<input type="text" id="ca-text" placeholder="할 일" style="flex:1;min-width:160px">' +
     '<select id="ca-grade">' + ["공통"].concat(GRADES).map(function (g) {
@@ -1681,8 +1860,11 @@ function drawCalAdd() {
     '<label style="font-size:13px"><input type="checkbox" id="ca-rep"> 매주 ' + DOW_KO[parseYmd(d).getDay()] + '요일</label>' +
     '<button class="btn" id="ca-go">넣기</button><button class="mini" id="ca-x">닫기</button></div>' +
     '<datalist id="who-list">' + whoOptions().map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist></div>';
-  $("#ca-x").onclick = function () { S.calAdd = ""; drawCalAdd(); };
-  var go = async function () {
+  $("#ca-x").onclick = function () { S.calAdd = null; drawCalAdd(); };
+  $$("[data-catab]", box).forEach(function (b) {
+    b.onclick = function () { calAddOpen(d, b.getAttribute("data-catab")); };
+  });
+  var go2 = async function () {
     var text = $("#ca-text").value.trim(); if (!text) return;
     var rep = $("#ca-rep").checked;
     var one = { id: newTaskId(), text: text, who: $("#ca-who").value.trim(),
@@ -1691,11 +1873,11 @@ function drawCalAdd() {
     if (rep) { one.repeat = { dow: [parseYmd(d).getDay()] }; one.doneOn = {}; }
     else one.due = d;
     S.tasks.push(one);
-    try { await saveTasks(); S.calAdd = ""; keepScrollIn("#sec-cal", renderCal); }
+    try { await saveTasks(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); }
     catch (e) { S.tasks.pop(); alert("넣지 못했다: " + e.message); }
   };
-  $("#ca-go").onclick = go;
-  $("#ca-text").addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+  $("#ca-go").onclick = go2;
+  $("#ca-text").addEventListener("keydown", function (e) { if (e.key === "Enter") go2(); });
   $("#ca-text").focus();
 }
 
@@ -1932,6 +2114,10 @@ function watchTasks() {
   // 팀장 전용 문서는 선생님이 못 읽는다. 붙이면 규칙 오류만 난다.
   if (!S.ro) on(tdb.collection("dash").doc("tasksLead"), function (d) {
     rebuildTasks("lead", d.exists ? (d.data().items || []) : []);
+  });
+  on(tdb.collection("dash").doc("calEvents"), function (d) {
+    S.events = d.exists ? (d.data().items || []) : [];
+    if ($("#sec-cal")) renderCal();
   });
   on(tdb.collection("myTasks"), function (s2) {
     var m = {}; s2.forEach(function (d) { m[d.id] = d.data() || {}; });
