@@ -731,7 +731,7 @@ function renderShell() {
 // ⚠ 메뉴를 감추는 것은 **화면 정리지 자물쇠가 아니다.** 팀장만 볼 자료라면 규칙으로도 막아야 한다.
 //   완료 현황이 쓰는 marks·myTasks 는 원래 팀 전체가 읽는 것이라(누가 끝냈나를 서로 본다)
 //   여기서 새로 여는 것이 없다. **모아 보는 화면만** 팀장 것이다.
-var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["done", "완료 현황", "owner"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["done", "완료 현황", "owner"], ["exec", "간부회의", "owner"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
@@ -749,9 +749,10 @@ function showPage(id) {
   if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
   // 회의록 본문은 길다. 그 메뉴를 처음 열 때만 받아온다.
   // 할 일 화면도 회의록이 있어야 «아직 안 들어온 할 일»을 찾는다 — 팀장일 때만.
-  if ((id === "minutes" || (id === "tasks" && !S.ro)) && S.minutes === null && !S.minutesLoading) {
+  // 간부회의 준비도 회의록이 있어야 «정해야 할 것»·«다음 회의로» 를 보여준다 — 팀장만 여는 메뉴라 S.ro 는 볼 것 없다.
+  if ((id === "minutes" || id === "exec" || (id === "tasks" && !S.ro)) && S.minutes === null && !S.minutesLoading) {
     S.minutesLoading = true;
-    var done = function () { S.minutesLoading = false; renderMinutes(); renderTasks(); };
+    var done = function () { S.minutesLoading = false; renderMinutes(); renderTasks(); renderExec(); };
     loadMinutes().then(done).catch(function (e) { S.minutesErr = e.message; done(); });
   }
   // 개발 현황은 깃허브를 부른다. 이것도 그 메뉴를 열 때만.
@@ -768,7 +769,7 @@ function navBadge(id, n, red) {
   var el = $("#nb-" + id); if (!el) return;
   el.hidden = !n; el.textContent = n; el.className = "b" + (red ? " red" : "");
 }
-function renderAll() { renderBanner(); renderCal(); renderTasks(); renderDone(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
+function renderAll() { renderBanner(); renderCal(); renderTasks(); renderDone(); renderExec(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
 // ---------- 불러오기 ----------
 // ---- 선생님 명단은 계정에 따라 오는 길이 다르다 ----
@@ -1762,6 +1763,7 @@ function rebuildTasks(part, items) {
   renderBell();
   renderTasksSafe();
   renderDone();
+  renderExec();
   renderCal();
   renderWeek();
 }
@@ -1789,7 +1791,7 @@ function watchTasks() {
     var m = {}; s2.forEach(function (d) { m[d.id] = d.data() || {}; });
     S.marks = m;
     if (!$("#sec-tasks")) return;      // 로그아웃 중 스냅샷 방어
-    renderTasksSafe(); renderDone();
+    renderTasksSafe(); renderDone(); renderExec();
   });
 }
 
@@ -2523,6 +2525,152 @@ function renderDone() {
   $$("[data-dnw]", el).forEach(function (b) {
     b.onclick = function () { S.doneWho = b.getAttribute("data-dnw"); renderDone(); };
   });
+}
+
+// ---------- 간부회의 준비 (팀장만, 2026-09-10) ----------
+//
+// "간부회의까지 준비해야 할 것들을 모아서 보고 싶다. 회의록에서 업무를 정리해서 할 일에 들어가는데,
+//  간부회의에 관련된 것만 따로 모아보고 싶다. 관리자인 나한테만 들어오는 메뉴여야 한다."
+//
+// 할 일은 이미 **어디서 왔는지**를 들고 있다 — 회의록에서 끌어온 것은 `from`(회의록 id), 볼트에서 붙여넣은 것은
+// `src`(«간부 · 9/7»), 담당 칸에 «간부 (한민수)» 로 적힌 것도 있다. 새 표시를 달지 않고 그 셋으로 가른다.
+// 표시를 새로 만들면 안 단 것이 빠지고, 빠진 것은 화면이 말해 주지 않는다.
+//
+// 회의록 쪽은 **가장 최근 간부 회의록**의 «정해야 할 것» 과 «다음 회의로» 를 그대로 보여준다 —
+// 다음 회의 머리에 올릴 것이 바로 그것이다 (회의록 템플릿의 «지난 회의에서 넘어온 것»).
+//
+// ⚠ 메뉴를 감추는 것은 화면 정리지 자물쇠가 아니다. 여기가 읽는 `tasksLead`·간부 회의록은 규칙이 이미 팀장에게만 연다.
+//   여기서 새로 여는 자료는 없다. **모아 보는 화면만** 팀장 것이다.
+
+// 간부회의 시각 — 9/7 간부회의 결정 · 원장님 9~12월 운영 캘린더 (매주 월 14:00 · 금 15:00).
+// 워크샵 주·추석 주는 조정된다고 했다. 여기는 «다음이 언제인가» 를 셈하는 데만 쓴다 — 회의 자체를 기록하지 않는다.
+var EXEC_MEETINGS = [[1, "14:00"], [5, "15:00"]];
+// 오늘이 회의 요일이면 오늘이다 — 아직 그 회의까지 준비할 시간이 남아 있다.
+function nextExecMeeting(from) {
+  var start = from || TODAY;
+  if (!parseYmd(start)) return null;
+  for (var i = 0; i < 8; i++) {
+    var d = addDays(start, i), w = parseYmd(d).getDay();
+    for (var k = 0; k < EXEC_MEETINGS.length; k++) {
+      if (EXEC_MEETINGS[k][0] === w) return { date: d, time: EXEC_MEETINGS[k][1], dow: DOW[w], days: i };
+    }
+  }
+  return null;
+}
+// 간부 회의록인가 — 종류(«간부회의», «간부 전체회의»)로 본다. 데스크 회의는 공개가 «간부» 여도 간부회의가 아니다.
+function isExecMinute(m) { return !!m && /간부/.test(String(m.kind || "") + " " + String(m.title || "")); }
+function execMinutes() { return (S.minutes || []).filter(isExecMinute); }
+// 이 할 일이 왜 간부회의 것인가. 아니면 "".
+//   from → 그 회의록이 간부 회의록  (회의록을 아직 안 읽었으면 id 글자로 본다 — id 가 곧 제목이다)
+//   src  → «간부» 가 들어 있다 (볼트 「할 일 추적」의 출처 약칭)
+//   who  → «간부 (한민수)» 처럼 담당이 간부 몫
+function execWhy(t) {
+  if (!t || t.own) return "";
+  if (t.from) {
+    var m = (S.minutes || []).filter(function (x) { return x.id === t.from; })[0];
+    if (m ? isExecMinute(m) : /간부/.test(t.from)) return "간부 회의록";
+  }
+  if (/간부/.test(String(t.src || ""))) return "출처가 간부";
+  if (/간부/.test(String(t.who || ""))) return "담당이 간부";
+  return "";
+}
+function execTasks() { return S.tasks.filter(function (t) { return !!execWhy(t); }); }
+function execKey(t) { return t.from || t.src || execWhy(t); }
+// 다음 회의를 기준으로 가른다. 기한이 글자(«9월»)면 날짜가 아니라 «기한 없음» 쪽에 두되 글자는 보인다.
+function execSplit(list, meet) {
+  var out = { late: [], now: [], later: [], nodue: [], done: [] };
+  var limit = meet ? meet.date : TODAY;
+  list.forEach(function (t) {
+    if (t.status === "done") { out.done.push(t); return; }
+    var n = daysFromToday(t.due);
+    if (n === null) out.nodue.push(t);
+    else if (n < 0) out.late.push(t);
+    else if (t.due <= limit) out.now.push(t);
+    else out.later.push(t);
+  });
+  var byDue = function (a, b) { var x = a.due || "9999", y = b.due || "9999"; return x < y ? -1 : x > y ? 1 : 0; };
+  out.late.sort(byDue); out.now.sort(byDue); out.later.sort(byDue);
+  out.done.sort(function (a, b) { return (b.done || "") < (a.done || "") ? -1 : (b.done || "") > (a.done || "") ? 1 : 0; });
+  return out;
+}
+// 가장 최근 간부 회의록에서 넘어오는 것. 회의록은 날짜 내림차순으로 들어 있다.
+function execCarry() {
+  var m = execMinutes()[0];
+  if (!m) return null;
+  var decide = mdSection(m.md || "", "정해야 할 것").trim(), next = mdSection(m.md || "", "다음 회의로").trim();
+  var count = function (md) { return md.split(/\r?\n/).filter(function (l) { return /^\s*([-*]|\d+\.)\s+\S/.test(l); }).length; };
+  return { minute: m, decide: decide, next: next, decideN: count(decide), nextN: count(next) };
+}
+function execRowHtml(t) {
+  var n = daysFromToday(t.due);
+  var due = t.due ? (n === null ? esc(t.dueText || t.due)
+    : '<span class="' + (n < 0 ? "over" : n <= 3 ? "soon" : "") + '">' + esc(fmtMD(t.due)) + " " + dday(t.due) + '</span>') : "기한 없음";
+  var stCls = { open: "", doing: "blue", hold: "yellow", done: "green" }[t.status || "open"];
+  return '<div class="dnrow" data-exgo="' + esc(t.id) + '" title="누르면 할 일 목록에서 그 줄로 간다" style="cursor:pointer">' +
+    '<span class="d">' + due + '</span>' +
+    '<span class="t">' + esc(t.text) +
+    (t.who ? ' <span class="pill">' + esc(t.who) + '</span>' : ' <span class="pill red">담당 없음</span>') +
+    (t.status && t.status !== "open" ? ' <span class="pill ' + stCls + '">' + STATUS[t.status] + '</span>' : "") +
+    (t.done && t.status === "done" ? ' <span class="muted">· ' + esc(fmtMD(t.done)) + '</span>' : "") +
+    ' <span class="muted">· ' + esc(t.src || execWhy(t)) + '</span></span></div>';
+}
+function execGroupHtml(title, list, empty, cls) {
+  return '<div class="dnp"><h3>' + esc(title) + '<span class="pill' + (list.length ? (cls || "") : "") + '">' + list.length + '건</span></h3>' +
+    (list.length ? list.map(execRowHtml).join("") : '<div class="none">' + esc(empty) + '</div>') + '</div>';
+}
+// 할 일 목록의 그 줄로. 목록이 «완료 숨김» 이면 끝난 줄은 못 찾는다 — 그때는 목록만 연다.
+function gotoTask(id) {
+  showPage("tasks");
+  var row = $('.task[data-id="' + id + '"]');
+  if (row && row.scrollIntoView) {
+    row.scrollIntoView({ block: "center" });
+    row.style.outline = "2px solid var(--navy)";
+    setTimeout(function () { row.style.outline = ""; }, 1800);
+  }
+}
+function renderExec() {
+  var el = $("#sec-exec"); if (!el || S.ro) return;      // 선생님 화면에는 이 칸이 아예 없다
+  var meet = nextExecMeeting(TODAY);
+  var all = execTasks();
+  var from = S.execFrom || "";
+  var list = from ? all.filter(function (t) { return execKey(t) === from; }) : all;
+  var g = execSplit(list, meet);
+  var carry = execCarry();
+  var srcs = [];
+  all.forEach(function (t) { var k = execKey(t); if (srcs.indexOf(k) < 0) srcs.push(k); });
+  navBadge("exec", g.late.length + g.now.length, g.late.length > 0);
+  el.innerHTML =
+    '<h2>간부회의 준비' +
+    (meet ? ' <span class="n">다음 회의 ' + esc(fmtMD(meet.date)) + ' ' + esc(meet.time) + ' · ' +
+      (meet.days === 0 ? "오늘" : "D-" + meet.days) + '</span>' : "") + '</h2>' +
+    '<div class="stat">' +
+    '<div class="' + (g.late.length ? "bad" : "") + '"><b>' + g.late.length + '</b><span>기한 지남</span></div>' +
+    '<div><b>' + g.now.length + '</b><span>이번 회의까지</span></div>' +
+    '<div><b>' + g.later.length + '</b><span>그 뒤</span></div>' +
+    '<div class="' + (carry && carry.decideN ? "bad" : "") + '"><b>' + (carry ? carry.decideN : 0) + '</b><span>정해야 할 것</span></div>' +
+    '<div><b>' + (carry ? carry.nextN : 0) + '</b><span>넘어오는 안건</span></div></div>' +
+    (S.minutes === null && S.minutesLoading ? '<div class="muted" style="margin:0 0 8px">회의록을 읽는 중… 정해야 할 것과 넘어오는 안건은 곧 뜬다.</div>' : "") +
+    (srcs.length > 1 ? '<div class="chips"><button class="mini ' + (!from ? "on" : "") + '" data-exfrom="">전부 ' + all.length + '</button>' +
+      srcs.map(function (s) {
+        var n = all.filter(function (t) { return execKey(t) === s; }).length;
+        return '<button class="mini ' + (from === s ? "on" : "") + '" data-exfrom="' + esc(s) + '">' + esc(s) + ' ' + n + '</button>';
+      }).join("") + '</div>' : "") +
+    execGroupHtml("기한 지난 것", g.late, "지난 것이 없다.", " red") +
+    execGroupHtml("이번 회의까지" + (meet ? " (~" + fmtMD(meet.date) + ")" : ""), g.now, "이번 회의까지 걸린 것이 없다.", " yellow") +
+    execGroupHtml("그 뒤", g.later, "다음 회의 뒤로 잡힌 것이 없다.", "") +
+    (g.nodue.length ? execGroupHtml("기한 없는 것", g.nodue, "", "") : "") +
+    (carry ? '<div class="dnp"><h3>지난 간부회의에서 넘어오는 것 <span class="muted" style="font-weight:400">' +
+        esc(fmtMD(carry.minute.date)) + ' ' + esc(carry.minute.title) + '</span></h3>' +
+        (carry.decide ? '<h4 style="margin:6px 0 2px;font-size:13px">정해야 할 것 <span class="pill red">' + carry.decideN + '</span></h4>' + mdToHtml(carry.decide) : "") +
+        (carry.next ? '<h4 style="margin:10px 0 2px;font-size:13px">다음 회의로 <span class="pill">' + carry.nextN + '</span></h4>' + mdToHtml(carry.next) : "") +
+        (!carry.decide && !carry.next ? '<div class="none">이 회의록에는 «정해야 할 것»·«다음 회의로» 가 비어 있다.</div>' : "") + '</div>'
+      : (S.minutes ? '<div class="dnp"><div class="none">간부 회의록이 아직 없다. 볼트에 쓰면 push-minutes 로 올라온다.</div></div>' : "")) +
+    (g.done.length ? '<details style="margin-top:10px"><summary>끝낸 것 ' + g.done.length + '건</summary><div class="dnp">' +
+        g.done.map(execRowHtml).join("") + '</div></details>' : "") +
+    '<p class="muted" style="font-size:12px;margin:8px 0 0">간부 회의록에서 끌어온 할 일, 출처나 담당에 «간부» 가 적힌 할 일이 모인다. ' +
+    '줄을 누르면 할 일 목록의 그 줄로 간다. 회의 시각(월 14:00 · 금 15:00)은 9/7 간부회의 결정이다 — 바뀌면 <code>EXEC_MEETINGS</code>.</p>';
+  $$("[data-exfrom]", el).forEach(function (b) { b.onclick = function () { S.execFrom = b.getAttribute("data-exfrom"); renderExec(); }; });
+  $$("[data-exgo]", el).forEach(function (r) { r.onclick = function () { gotoTask(r.getAttribute("data-exgo")); }; });
 }
 
 // ---------- 학생 명단 ----------
