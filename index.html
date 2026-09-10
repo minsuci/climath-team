@@ -2606,8 +2606,9 @@ function execRowHtml(t) {
   var due = t.due ? (n === null ? esc(t.dueText || t.due)
     : '<span class="' + (n < 0 ? "over" : n <= 3 ? "soon" : "") + '">' + esc(fmtMD(t.due)) + " " + dday(t.due) + '</span>') : "기한 없음";
   var stCls = { open: "", doing: "blue", hold: "yellow", done: "green" }[t.status || "open"];
+  // 기한 칸은 완료 현황(날짜만)보다 넓어야 한다 — «9/11(금) D-1» 이 62px 에서는 «D-» 와 «1» 로 갈라진다
   return '<div class="dnrow" data-exgo="' + esc(t.id) + '" title="누르면 할 일 목록에서 그 줄로 간다" style="cursor:pointer">' +
-    '<span class="d">' + due + '</span>' +
+    '<span class="d" style="flex:0 0 96px">' + due + '</span>' +
     '<span class="t">' + esc(t.text) +
     (t.who ? ' <span class="pill">' + esc(t.who) + '</span>' : ' <span class="pill red">담당 없음</span>') +
     (t.status && t.status !== "open" ? ' <span class="pill ' + stCls + '">' + STATUS[t.status] + '</span>' : "") +
