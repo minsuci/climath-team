@@ -1527,12 +1527,14 @@ function eventsOn(d, want) {
   return (S.events || []).filter(function (e) {
     // ⚠ 쉬는 날은 칩으로 안 뜬다. 칸을 통째로 물들이고 날짜 옆에 이름이 붙는 쪽이라,
     //    칩으로도 뜨면 같은 말이 한 칸에 두 번 적힌다.
-    return evHit(e, want) && !e.off && !e.over && !evSpan(e) && e.from === d;
+    // ⚠ 다만 «안 쉼» 으로 고친 것(over && !off)은 **보통 일정으로 뜬다.** 연휴에 특강을 연다고
+    //    적어 놓고 그 글자가 어디에도 안 보이면, 고친 사람이 자기가 무엇을 적었는지 못 본다.
+    return evHit(e, want) && !e.off && !evSpan(e) && e.from === d;
   });
 }
 // 이틀 이상짜리는 시험 막대와 같은 길로 보낸다 — 주 경계에서 잘리고 겹치면 층이 갈린다.
 function evRanges(want) {
-  return (S.events || []).filter(function (e) { return evHit(e, want) && !e.off && !e.over && evSpan(e); })
+  return (S.events || []).filter(function (e) { return evHit(e, want) && !e.off && evSpan(e); })
     .map(function (e) {
       return { s: e.from, e: evEnd(e), kind: "ev", text: e.text, full: e.text, n: 1,
                color: e.color || "gray", id: e.id };

@@ -382,14 +382,17 @@ ctx.__t.then((r) => {
   ok("내가 정한 것이 나라 달력을 이긴다 (안 쉬는 날이 된다)", run(`return holidayOf("2026-09-25")`) === "");
   ok("칸도 안 물든다", run(`return calMonthSum("2026-09","전체").off`) === 2, run(`return calMonthSum("2026-09","전체").off`));
   ok("더는 붙박이가 아니다", run(`return holIsBuiltin("2026-09-25")`) === false);
-  // ⚠ over 는 «이 날을 내가 정한다» 는 표일 뿐이다. 칩으로도 막대로도 뜨면 같은 말이 두 번 적힌다.
-  ok("칩으로 또 뜨지 않는다", run(`return eventsOn("2026-09-25","전체").length`) === 0);
-  ok("막대로도 안 뜬다", run(`return evRanges("전체").length`) === 0);
+  // ⚠ «안 쉼» 으로 고친 것은 **보통 일정으로 보여야 한다.** 특강을 연다고 적어 놓고
+  //    그 글자가 어디에도 안 보이면 고친 사람이 자기가 무엇을 적었는지 못 본다.
+  ok("«안 쉼» 으로 고친 것은 보통 일정으로 뜬다",
+    run(`return eventsOn("2026-09-25","전체").map(function(e){return e.text;}).join()`) === "추석 — 고1 특강 연다");
 
   // 2) 이름만 바꾼다
   run(`S.events = [{ id:"h1", text:"추석 (본원 휴관)", from:"2026-09-25", to:"", color:"pink", over:true, off:true }];`);
   ok("고친 이름이 뜬다", run(`return holidayOf("2026-09-25")`) === "추석 (본원 휴관)");
   ok("여전히 쉬는 날", run(`return calMonthSum("2026-09","전체").off`) === 3);
+  // ⚠ 쉬는 날일 때는 이름이 날짜 옆에 붙으므로 칩으로 또 뜨면 안 된다.
+  ok("쉬는 날일 때는 칩으로 안 뜬다", run(`return eventsOn("2026-09-25","전체").length`) === 0);
 
   // 3) 나라 달력에 없는 날을 쉬는 날로 — 여러 날짜리도 그 사이를 전부 물들인다
   run(`S.events = [{ id:"h2", text:"본사 워크샵 휴관", from:"2026-09-17", to:"2026-09-18", color:"pink", off:true }];`);
