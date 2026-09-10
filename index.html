@@ -256,6 +256,8 @@
   /* 쉬는 날 — 칸을 통째로 물들인다. 칩으로 달면 할 일에 섞여 안 보인다 */
   .mday.off { background: #fdecf1; border-color: #f3ccd8; }
   .mn .hol { font-size: 10px; font-weight: 600; color: #9b2246; }
+  .mn .hol.pick, .cday .ch .hol.pick { pointer-events: auto; cursor: pointer; border-bottom: 1px dotted currentColor; }
+  .mn .hol.pick:hover, .cday .ch .hol.pick:hover { color: var(--navy); }
   .cday.off { background: #fdecf1; }
   .cday .ch .hol { font-size: 11px; color: #9b2246; font-weight: 600; }
   /* 이어지는 막대 */
@@ -1302,7 +1304,29 @@ var HOLIDAYS = {
   "2026-10-03": "개천절", "2026-10-05": "개천절 대체", "2026-10-09": "한글날",
   "2026-12-25": "성탄절",
 };
-function holidayOf(d) { return HOLIDAYS[d] || ""; }
+// 붙박이 쉬는 날(HOLIDAYS)을 **손으로 고칠 수 있어야 한다** (2026-09-10).
+// 마왕님 말씀 — «추석연휴도 고치고 싶어». 학원 사정은 나라 달력과 다르다 —
+// 연휴에 특강을 열면 쉬는 날이 아니고, 워크샵으로 하루 더 쉬면 나라 달력에 없는 날이 쉬는 날이다.
+//
+// 붙박이 목록은 **기본값**으로 남기고, 그 날에 «내가 정한 것»이 있으면 그것이 이긴다.
+//   over: true  — 이 날의 붙박이 쉬는 날을 내가 대신 정한다 (off 를 꺼서 «안 쉼» 으로도 만든다)
+//   off:  true  — 쉬는 날이다. 칸을 물들이고 이름을 띄운다 (기간짜리면 그 사이 전부)
+// ⚠ 지우면 **붙박이가 다시 나온다.** 고친 것을 되돌리는 길이 그것뿐이라 폼에도 그렇게 적어 둔다.
+function holEvent(d) {
+  return (S.events || []).filter(function (e) { return e.over && e.from === d; })[0] || null;
+}
+function holidayOf(d) {
+  var o = holEvent(d);
+  if (o) return o.off ? (o.text || "쉬는 날") : "";        // 내가 정한 것이 붙박이를 이긴다
+  // 손으로 넣은 쉬는 날. 추석 연휴처럼 **여러 날짜리**도 그 사이를 전부 물들인다.
+  var mine = (S.events || []).filter(function (e) {
+    return e.off && !e.over && e.from <= d && d <= evEnd(e); })[0];
+  if (mine) return mine.text || "쉬는 날";
+  return HOLIDAYS[d] || "";
+}
+// 이 날의 쉬는 날이 붙박이인가 (=아직 아무도 안 고쳤나). 폼과 안내 글이 이걸로 갈린다.
+function holIsBuiltin(d) { return !holEvent(d) && !!HOLIDAYS[d] &&
+  !(S.events || []).some(function (e) { return e.off && !e.over && e.from <= d && d <= evEnd(e); }); }
 // 적어 둔 해. 안 적힌 달을 보고 있으면 «없는 것»이 아니라 «안 적은 것»이라고 화면이 말해야 한다.
 function holidayYears() {
   var y = {};
@@ -1458,7 +1482,8 @@ function barHtml(g, rowBase) {
     (g.id ? ' data-cev="' + esc(g.id) + '"' : "") +
     ' style="grid-column:' + (g.a + 1) + '/span ' + (g.b - g.a + 1) + ';grid-row:' + (rowBase + g.lane) + ';' +
     (g.color ? evStyle(g.color) : "") + '"' +
-    ' title="' + esc(g.full) + '">' +
+    ' title="' + esc(g.full) + (g.kind === "test" ? " — 시험 성적 메뉴에서 고친다" :
+      g.kind === "class" ? " — 반 종강일이다. 수업관리 앱에서 고친다" : "") + '">' +
     (g.n > 1 ? '<b class="n">' + g.n + '</b> ' : "") +
     (g.head ? esc(g.text) : '<span class="cont">◂ ' + esc(g.text) + '</span>') + '</div>';
 }
@@ -1500,12 +1525,14 @@ function evSpan(e) { return evEnd(e) > e.from; }        // 이틀 이상이면 �
 function evHit(e, want) { return gradeHit(e.grade || "공통", want); }
 function eventsOn(d, want) {
   return (S.events || []).filter(function (e) {
-    return evHit(e, want) && !evSpan(e) && e.from === d;
+    // ⚠ 쉬는 날은 칩으로 안 뜬다. 칸을 통째로 물들이고 날짜 옆에 이름이 붙는 쪽이라,
+    //    칩으로도 뜨면 같은 말이 한 칸에 두 번 적힌다.
+    return evHit(e, want) && !e.off && !e.over && !evSpan(e) && e.from === d;
   });
 }
 // 이틀 이상짜리는 시험 막대와 같은 길로 보낸다 — 주 경계에서 잘리고 겹치면 층이 갈린다.
 function evRanges(want) {
-  return (S.events || []).filter(function (e) { return evHit(e, want) && evSpan(e); })
+  return (S.events || []).filter(function (e) { return evHit(e, want) && !e.off && !e.over && evSpan(e); })
     .map(function (e) {
       return { s: e.from, e: evEnd(e), kind: "ev", text: e.text, full: e.text, n: 1,
                color: e.color || "gray", id: e.id };
@@ -1628,7 +1655,8 @@ function renderCal() {
             var hol = holidayOf(d);
             return '<div class="mn' + (monthOf(d) !== ym ? " out" : "") + (d === TODAY ? " today" : "") +
               '" style="grid-column:' + (i + 1) + ';grid-row:1">' + Number(d.slice(8)) +
-              (hol ? '<span class="hol">' + esc(hol) + '</span>' : "") +
+              (hol ? '<span class="hol' + (S.ro ? "" : " pick") + '"' +
+                (S.ro ? "" : ' data-chol="' + d + '" title="눌러서 고친다"') + '>' + esc(hol) + '</span>' : "") +
               (tn ? '<span class="tn">' + tn + '</span>' : "") + '</div>';
           }).join("") +
           lay.segs.map(function (g) { return barHtml(g, 2); }).join("") +
@@ -1668,7 +1696,8 @@ function renderCal() {
       return '<div class="cday' + (d === TODAY ? " today" : "") + (dow === 0 || dow === 6 ? " wend" : "") +
         (hol ? " off" : "") + '">' +
         '<div class="ch"><b>' + Number(d.slice(8)) + '</b> <span>' + DOW_KO[dow] + '</span>' +
-        (hol ? '<span class="hol">' + esc(hol) + '</span>' : "") +
+        (hol ? '<span class="hol' + (S.ro ? "" : " pick") + '"' +
+          (S.ro ? "" : ' data-chol="' + d + '" title="눌러서 고친다"') + '>' + esc(hol) + '</span>' : "") +
         '<button class="add" data-cadd="' + d + '" title="이 날에 일정·할 일 넣기">＋</button></div>' +
         eventsOn(d, want).map(evChipHtml).join("") +
         mine.map(function (t) {
@@ -1694,6 +1723,8 @@ function renderCal() {
     '<b>＋ 업무 추가</b>(또는 날짜 칸의 ＋)로 달력에 <b>일정</b>을 넣는다 — 글씨 색을 고르고, ' +
     '«까지»를 채우면 여러 날에 걸친 막대가 된다. <b>일정은 담당과 상관없이 팀 전체가 같은 것을 본다</b> ' +
     '(할 일은 담당인 사람에게만 보인다). 넣은 일정을 누르면 고치거나 지운다. 넣고 고치는 것은 팀장뿐이다. ' +
+    '<b>쉬는 날 이름을 누르면 그것도 고친다</b> — 나라 달력이 기본값이고, 고쳐 두면 이 학원 것이 된다 ' +
+    '(연휴에 특강을 열면 «쉬는 날» 을 끄면 되고, 지우면 나라 달력대로 돌아간다). ' +
     '막대는 <b>시험 성적에 만든 시험</b>과 <b>반 종강</b>이고, ' +
     '겹치면 한 막대로 묶여 앞에 개수가 붙는다(손을 올리면 전부 보인다). ' +
     '<b>학교 내신 일정은 여기 안 나온다</b> — 달력이 시험 막대로 뒤덮이므로 <b>내신 참여표</b>의 날짜 띠에서 본다. ' +
@@ -1727,6 +1758,19 @@ function renderCal() {
     b.onclick = function () { calAddOpen(S.calAnchor || TODAY, "ev"); };
   });
   // 넣은 일정을 눌러 고친다. 달력에서 바로 고칠 데가 없으면 지우고 다시 넣게 된다.
+  // 쉬는 날 이름을 누르면 고친다. 붙박이면 그 값으로 폼을 채워 «내 것» 으로 만들 수 있게 한다.
+  $$("[data-chol]", el).forEach(function (b) {
+    b.onclick = function (ev) {
+      ev.stopPropagation();                       // 날 칸의 «그 주로 가기» 가 같이 돌면 안 된다
+      if (S.ro) return;
+      var d0 = b.getAttribute("data-chol"), o = holEvent(d0);
+      if (o) return calAddOpen(o.from, "ev", o.id);
+      var mine = (S.events || []).filter(function (e) {
+        return e.off && !e.over && e.from <= d0 && d0 <= evEnd(e); })[0];
+      if (mine) return calAddOpen(mine.from, "ev", mine.id);
+      calAddOpen(d0, "ev", "", { from: d0, to: "", text: HOLIDAYS[d0] || "", color: "pink", off: true, over: true });
+    };
+  });
   $$("[data-cev]", el).forEach(function (b) {
     b.onclick = function () {
       if (S.ro) return;
@@ -1775,8 +1819,8 @@ async function toggleTask(id, date) {
 // 넣는 자리 하나에 갈래가 둘이다 — **일정**(모두가 봄·색·기간) 과 **할 일**(내 것·담당·체크).
 // 갈래를 안 나누고 하나로 두면 «내 것만 보이는 달력» 에 팀 일정을 넣었다가 남의 화면에서 사라진다.
 // S.calAdd = { d: 날짜, kind: "ev" | "task", id: 고칠 일정 id }
-function calAddOpen(d, kind, id) {
-  S.calAdd = { d: d, kind: kind || "ev", id: id || "" };
+function calAddOpen(d, kind, id, seed) {
+  S.calAdd = { d: d, kind: kind || "ev", id: id || "", seed: seed || null };
   drawCalAdd();
   // ⚠ 넣는 자리는 달력 **아래**에 있다. 머리의 «업무 추가» 를 눌렀는데 그것이 화면 밖이면
   //    아무 일도 안 일어난 것처럼 보인다. 열 때만 끌어온다 (다시 그릴 때는 안 움직인다).
@@ -1790,27 +1834,36 @@ function drawCalAdd() {
   if (S.ro) { box.innerHTML = ""; return; }        // 운영 달력을 만드는 사람은 팀장이다
   var d = a.d, kind = a.kind === "task" ? "task" : "ev";
   var cur = a.id ? (S.events || []).filter(function (x) { return x.id === a.id; })[0] : null;
+  // 붙박이 쉬는 날을 처음 누른 때 — 아직 저장된 것이 없으니 그 값으로 폼을 채워 준다.
+  var seed = cur || a.seed || null;
+  var isHol = !!(seed && (seed.off || seed.over));
   var tab = function (k, t) {
     return '<button class="mini ' + (k === kind ? "on" : "") + '" data-catab="' + k + '">' + t + '</button>';
   };
   var head = '<div class="row" style="margin-bottom:6px">' +
-    (cur ? '<b>일정 고치기</b>' : tab("ev", "일정") + tab("task", "할 일")) +
+    (cur ? '<b>' + (cur.over || cur.off ? "쉬는 날 고치기" : "일정 고치기") + '</b>'
+         : (a.seed ? '<b>쉬는 날 고치기</b>' : tab("ev", "일정") + tab("task", "할 일"))) +
     '<span class="muted" style="font-size:12px">' +
-    (kind === "ev" ? "모두가 보는 달력 일정이다 — 색을 고를 수 있다" : "내 할 일이다 — 담당·체크가 붙고 업무 달력에는 담당인 사람에게만 보인다") +
+    (kind !== "ev" ? "내 할 일이다 — 담당·체크가 붙고 업무 달력에는 담당인 사람에게만 보인다"
+       : (cur && cur.over) ? "나라 달력을 학원 사정에 맞춰 고친 것이다. 지우면 원래 날로 돌아간다"
+       : a.seed ? "나라 달력의 쉬는 날이다. 고쳐 두면 이 학원 것이 되고, 나중에 지우면 원래대로 돌아간다"
+       : "모두가 보는 달력 일정이다 — 색을 고를 수 있고 «쉬는 날» 로 만들면 칸이 물든다") +
     '</span></div>';
 
   if (kind === "ev") {
     box.innerHTML = '<div class="entry">' + head + '<div class="row">' +
-      '<label style="font-size:13px">부터 <input type="date" id="ce-from" value="' + esc((cur && cur.from) || d) + '"></label>' +
-      '<label style="font-size:13px">까지 <input type="date" id="ce-to" value="' + esc((cur && cur.to) || "") + '"></label>' +
-      '<input type="text" id="ce-text" placeholder="업무 · 일정" value="' + esc((cur && cur.text) || "") + '" style="flex:1;min-width:180px">' +
+      '<label style="font-size:13px">부터 <input type="date" id="ce-from" value="' + esc((seed && seed.from) || d) + '"></label>' +
+      '<label style="font-size:13px">까지 <input type="date" id="ce-to" value="' + esc((seed && seed.to) || "") + '"></label>' +
+      '<input type="text" id="ce-text" placeholder="업무 · 일정" value="' + esc((seed && seed.text) || "") + '" style="flex:1;min-width:180px">' +
       '<select id="ce-grade">' + ["공통"].concat(GRADES).map(function (g) {
-        var sel = cur ? (cur.grade || "공통") === g : (S.calGrade === g);
+        var sel = seed ? ((seed.grade || "공통") === g) : (S.calGrade === g);
         return '<option' + (sel ? " selected" : "") + '>' + g + '</option>'; }).join("") + '</select>' +
+      '<label style="font-size:13px" title="칸을 물들이고 날짜 옆에 이름이 붙는다">' +
+      '<input type="checkbox" id="ce-off"' + (seed && seed.off ? " checked" : "") + '> 쉬는 날</label>' +
       '</div><div class="row" style="margin-top:6px">' +
       '<span class="muted" style="font-size:12px">글씨 색</span>' +
       EV_COLORS.map(function (c) {
-        var on = ((cur && cur.color) || "gray") === c.k;
+        var on = ((seed && seed.color) || (isHol ? "pink" : "gray")) === c.k;
         return '<button class="csw' + (on ? " on" : "") + '" data-ccol="' + c.k + '" title="' + c.n + '"' +
           ' style="' + evStyle(c.k) + '">' + c.n + '</button>';
       }).join("") +
@@ -1818,7 +1871,7 @@ function drawCalAdd() {
       (cur ? '<button class="btn" id="ce-go">고치기</button><button class="mini" id="ce-del">지우기</button>'
            : '<button class="btn" id="ce-go">넣기</button>') +
       '<button class="mini" id="ce-x">닫기</button></div></div>';
-    var pick = (cur && cur.color) || "gray";
+    var pick = (seed && seed.color) || (isHol ? "pink" : "gray");
     $$("[data-ccol]", box).forEach(function (b) {
       b.onclick = function () {
         pick = b.getAttribute("data-ccol");
@@ -1830,20 +1883,21 @@ function drawCalAdd() {
       var from = $("#ce-from").value || d, to = $("#ce-to").value || "";
       if (to && to < from) { var t0 = from; from = to; to = t0; }     // 거꾸로 넣어도 받아 준다
       var keep = (S.events || []).slice();
-      if (cur) {
-        Object.assign(cur, { text: text, from: from, to: to, color: pick,
-          grade: $("#ce-grade").value === "공통" ? "" : $("#ce-grade").value });
-      } else {
-        S.events = (S.events || []).concat([{ id: newId(), text: text, from: from, to: to, color: pick,
-          grade: $("#ce-grade").value === "공통" ? "" : $("#ce-grade").value, created: TODAY }]);
-      }
+      var one = { text: text, from: from, to: to, color: pick,
+        grade: $("#ce-grade").value === "공통" ? "" : $("#ce-grade").value,
+        off: !!$("#ce-off").checked };
+      // 붙박이 쉬는 날에서 온 것은 «내가 정한 날» 이라는 표를 달고 다닌다 — 안 그러면 둘 다 뜬다.
+      if ((a.seed && a.seed.over) || (cur && cur.over)) one.over = true;
+      if (cur) Object.assign(cur, one);
+      else S.events = (S.events || []).concat([Object.assign({ id: newId(), created: TODAY }, one)]);
       try { await saveEvents(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); }
       catch (e) { S.events = keep; alert("넣지 못했다: " + e.message); keepScrollIn("#sec-cal", renderCal); }
     };
     $("#ce-go").onclick = go;
     $("#ce-text").addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
     if ($("#ce-del")) $("#ce-del").onclick = async function () {
-      if (!confirm("이 일정을 지운다: " + cur.text)) return;
+      if (!confirm(cur.over ? "고친 것을 지우고 나라 달력대로 되돌린다: " + cur.text
+                             : "이 일정을 지운다: " + cur.text)) return;
       var keep = (S.events || []).slice();
       S.events = keep.filter(function (x) { return x.id !== cur.id; });
       try { await saveEvents(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); }

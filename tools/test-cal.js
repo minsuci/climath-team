@@ -371,6 +371,46 @@ ctx.__t.then((r) => {
   ok("일정이 없는 날은 셋까지 그대로", run(`return monthDayTasks("2026-09-09","전체").show.length`) === 3);
   run(`S.tasks = []; S.events = [];`);
 
+  // ---- 붙박이 쉬는 날을 손으로 고친다 (2026-09-10) ----
+  // 마왕님 말씀 — «추석연휴도 고치고 싶어». 학원 사정은 나라 달력과 다르다.
+  run(`S.ro = false; S.claims = null; S.tasks = []; S.events = [];`);
+  ok("아무것도 안 고쳤으면 나라 달력 그대로", run(`return holidayOf("2026-09-25")`) === "추석");
+  ok("그때는 «붙박이» 라고 말한다", run(`return holIsBuiltin("2026-09-25")`) === true);
+
+  // 1) 연휴에 특강을 연다 — «쉬는 날» 을 끈다
+  run(`S.events = [{ id:"h1", text:"추석 — 고1 특강 연다", from:"2026-09-25", to:"", color:"pink", over:true, off:false }];`);
+  ok("내가 정한 것이 나라 달력을 이긴다 (안 쉬는 날이 된다)", run(`return holidayOf("2026-09-25")`) === "");
+  ok("칸도 안 물든다", run(`return calMonthSum("2026-09","전체").off`) === 2, run(`return calMonthSum("2026-09","전체").off`));
+  ok("더는 붙박이가 아니다", run(`return holIsBuiltin("2026-09-25")`) === false);
+  // ⚠ over 는 «이 날을 내가 정한다» 는 표일 뿐이다. 칩으로도 막대로도 뜨면 같은 말이 두 번 적힌다.
+  ok("칩으로 또 뜨지 않는다", run(`return eventsOn("2026-09-25","전체").length`) === 0);
+  ok("막대로도 안 뜬다", run(`return evRanges("전체").length`) === 0);
+
+  // 2) 이름만 바꾼다
+  run(`S.events = [{ id:"h1", text:"추석 (본원 휴관)", from:"2026-09-25", to:"", color:"pink", over:true, off:true }];`);
+  ok("고친 이름이 뜬다", run(`return holidayOf("2026-09-25")`) === "추석 (본원 휴관)");
+  ok("여전히 쉬는 날", run(`return calMonthSum("2026-09","전체").off`) === 3);
+
+  // 3) 나라 달력에 없는 날을 쉬는 날로 — 여러 날짜리도 그 사이를 전부 물들인다
+  run(`S.events = [{ id:"h2", text:"본사 워크샵 휴관", from:"2026-09-17", to:"2026-09-18", color:"pink", off:true }];`);
+  ok("없던 날이 쉬는 날이 된다", run(`return holidayOf("2026-09-17")`) === "본사 워크샵 휴관");
+  ok("사이 날도 물든다", run(`return holidayOf("2026-09-18")`) === "본사 워크샵 휴관");
+  ok("바깥 날은 그대로", run(`return holidayOf("2026-09-19")`) === "");
+  ok("나라 달력 것도 그대로 남는다", run(`return holidayOf("2026-09-25")`) === "추석");
+  ok("쉬는 날은 막대로 안 눕는다 (칸을 물들이는 것이다)", run(`return evRanges("전체").length`) === 0);
+  ok("쉬는 날은 칩으로도 안 뜬다", run(`return eventsOn("2026-09-17","전체").length`) === 0);
+  ok("추석 셋 + 워크샵 둘", run(`return calMonthSum("2026-09","전체").off`) === 5,
+    run(`return String(calMonthSum("2026-09","전체").off)`));
+
+  // 4) 지우면 나라 달력대로 돌아간다 — 되돌리는 길이 이것뿐이라 폼에도 그렇게 적었다
+  run(`S.events = [];`);
+  ok("지우면 원래대로", run(`return holidayOf("2026-09-25")`) === "추석" && run(`return holidayOf("2026-09-17")`) === "");
+
+  // 5) 보통 일정에도 «쉬는 날» 을 켤 수 있다 — over 가 아니어도 된다
+  run(`S.events = [{ id:"h3", text:"개원기념일", from:"2026-09-10", to:"", color:"pink", off:true }];`);
+  ok("over 없이도 쉬는 날이 된다", run(`return holidayOf("2026-09-10")`) === "개원기념일");
+  run(`S.events = []; S.tasks = [];`);
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
