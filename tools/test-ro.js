@@ -16,6 +16,7 @@ function DocumentReference(path) { this.path = path || "?"; }
 DocumentReference.prototype.set = function (d) { CALLS.push("set"); SETS.push({ path: this.path, data: d }); DOCS[this.path] = d; return Promise.resolve("set-ok"); };
 DocumentReference.prototype.update = function () { CALLS.push("update"); return Promise.resolve("update-ok"); };
 DocumentReference.prototype.delete = function () { CALLS.push("delete"); return Promise.resolve("delete-ok"); };
+DocumentReference.prototype.collection = function (n) { return new CollectionReference(this.path + "/" + n); };
 DocumentReference.prototype.get = function () {
   const d = DOCS[this.path];
   return Promise.resolve({ exists: d !== undefined, data: () => d });
@@ -120,6 +121,33 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   // 실제 쓰기 함수 하나를 통째로 — 저장소 목록 저장
   ok("saveRepos 가 거절된다", (await tryW("return saveRepos([{key:'a',app:'x',who:'y',owner:'a',repo:'b'}])")) === msg);
   ok("읽기는 된다", (await tryW("return tdb.collection('minutes').get().then(function(){ return 'ok' })")) === "ok");
+
+  // ---- 참여표에 낸 두 번째 문 — 복귀 · 수학시험 (2026-09-10) ----
+  // 읽기 계정에 문을 내면 **문이 얼마나 좁은가**가 전부다.
+  // 담당 반인가(앱 규칙 teaches 와 같은 자료) · 두 칸뿐인가 · 쓰고 나서 닫히는가.
+  run(`S.teachers = [{ tid:"T1", name:"한민수", role:"owner", classIds:["c1"] },
+                     { tid:"T2", name:"이현우", role:"teacher", classIds:["c2"] }];
+       S.term = "2026 2학기 중간";
+       S.exams = { c1: { s1: { sid:"s1", math:"2026-09-22", prep:"2026-09-21", back:"" } },
+                   c2: { s2: { sid:"s2", math:"2026-09-22", prep:"2026-09-21", back:"" } } };`);
+  ok("참여표를 그냥 저장하면 여전히 거절된다",
+    (await tryW(`return saveExam("c2","s2",{ back:"2026-09-29" })`)) === msg);
+  ok("담당 반의 복귀는 지나간다", (await tryW(`return saveExamRo("c2","s2",{ back:"2026-09-29" })`)) === "ok");
+  ok("남의 반은 지나가지 않는다",
+    /담당 반이 아니다/.test(await tryW(`return saveExamRo("c1","s1",{ back:"2026-09-29" })`)));
+  // 복귀만 있는 반쪽 문서가 생기면 띠도 등원 회차도 엉킨다 — 만드는 것은 팀장 몫이다
+  ok("아직 안 낸 학생은 여기서 못 만든다",
+    /학교 일정으로 채운/.test(await tryW(`return saveExamRo("c2","s9",{ back:"2026-09-29" })`)));
+  // 문이 열린 김에 다른 칸이 묻어 들어가면 안 된다
+  await run(`return saveExamRo("c2","s2",{ note:"내 마음대로", school:"딴학교", start:"2026-01-01", math:"2026-10-15" })`);
+  const ex = SETS[SETS.length - 1];
+  ok("묻어 들어간 칸이 없다 — 수학과 직보뿐",
+    Object.keys(ex.data).filter((k) => ["term", "sid", "updated"].indexOf(k) < 0).sort().join(",") === "math,prep",
+    JSON.stringify(ex.data));
+  ok("직보가 수학시험을 따라간다", ex.data.prep === "2026-10-14", ex.data.prep);
+  ok("참여표 문서에 쓴다", /classes\/c2\/exams/.test(ex.path), ex.path);
+  ok("쓰고 나면 문이 다시 닫힌다", (await tryW("return tdb.collection('dash').doc('x').set({a:1})")) === msg);
+  run(`S.exams = {}; S.term = "";`);
 
   // ---- 단추·칸 감추기 ----
   const mk = (tag, text, cls, attrs) => { const e = el(tag, attrs); e.textContent = text; e.cls = cls || []; ELS.push(e); return e; };

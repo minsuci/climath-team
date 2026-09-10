@@ -221,6 +221,57 @@ ok("안 낸 사람이 아무도 없으면 상자도 없다", box(mkRow("이미�
   run(`S.examsDenied = {};`);
 }
 
+// 11. 선생님이 표에서 바로 넣는 두 칸 — 복귀 · 수학시험 (2026-09-10)
+// 화면이 여는 반과 앱 규칙 teaches(cid) 가 여는 반이 **같아야** 한다.
+// 화면만 열면 «저장했는데 안 들어간다», 규칙만 열면 아무도 못 쓴다.
+{
+  run(`S.teachers = [{ tid:"T1", name:"한민수", role:"owner", classIds:["c1"] },
+                     { tid:"T2", name:"이현우", role:"teacher", classIds:["c2"] }];
+       S.ro = false; S.claims = { role:"owner", tid:"T1", name:"한민수" };`);
+  ok("팀장은 모든 반을 고친다", run(`return canEditExam("c1") && canEditExam("c9")`) === true);
+  run(`S.ro = true; S.claims = { role:"teacher", tid:"T2", name:"이현우" };`);
+  ok("선생님은 담당 반을 고친다", run(`return canEditExam("c2")`) === true);
+  ok("선생님은 남의 반은 못 고친다", run(`return canEditExam("c1")`) === false);
+  ok("반 목록이 안 실린 사람은 아무 반도 못 고친다",
+    run(`S.claims = { role:"teacher", tid:"T9", name:"없는사람" }; return canEditExam("c2")`) === false);
+
+  // 수학시험을 바꾸면 직보가 전날로 따라간다 — 대신 입력(schedFields)과 **같은** 규칙이라야 한다
+  ok("직보는 새 수학시험의 전날로",
+    run(`return prepFollow({ math:"2026-09-22", prep:"2026-09-21" }, "2026-10-15")`) === "2026-10-14");
+  ok("손으로 고쳐둔 직보(전날이 아닌 것)는 그대로",
+    run(`return prepFollow({ math:"2026-09-22", prep:"2026-09-18" }, "2026-10-15")`) === "2026-09-18");
+  ok("직보가 비어 있으면 새로 채운다",
+    run(`return prepFollow({ math:"2026-09-22" }, "2026-10-15")`) === "2026-10-14");
+  ok("수학시험을 지우면 직보는 놔둔다",
+    run(`return prepFollow({ math:"2026-09-22", prep:"2026-09-21" }, "")`) === "2026-09-21");
+
+  // 표 — 담당 반은 칸, 남의 반은 글자
+  run(`S.claims = { role:"teacher", tid:"T2", name:"이현우" }; S.byPid = {};`);
+  ctx.ROWS = [
+    { cls: { id: "c2", name: "고1T", classDays: [2, 4] }, st: { id: "s2", name: "내반학생" },
+      v: { sid: "s2", school: "중대부고", start: "2026-09-14", end: "2026-09-23", math: "2026-09-22", prep: "2026-09-21", back: "2026-09-29" } },
+    { cls: { id: "c1", name: "고1S", classDays: [2, 4] }, st: { id: "s1", name: "남의반학생" },
+      v: { sid: "s1", school: "휘문고", start: "2026-09-14", end: "2026-09-23", math: "2026-09-22", prep: "2026-09-21", back: "" } },
+    { cls: { id: "c2", name: "고1T", classDays: [2, 4] }, st: { id: "s3", name: "안낸학생" }, v: null, school: "경기고" },
+  ];
+  const tb = run(`return tableHtml(ROWS, daysOfMonth("2026-09"), "2026-09")`);
+  ok("담당 반은 복귀·수학이 칸이다",
+    tb.indexOf('data-math="c2|s2"') >= 0 && tb.indexOf('data-back="c2|s2"') >= 0);
+  ok("그 칸에는 data-keep 이 붙는다 (없으면 읽기 계정에서 잠긴다)",
+    (tb.match(/data-keep/g) || []).length === 2, String((tb.match(/data-keep/g) || []).length));
+  ok("남의 반은 칸이 아니라 글자다",
+    tb.indexOf('data-math="c1|s1"') < 0 && tb.indexOf('data-back="c1|s1"') < 0);
+  ok("남의 반 복귀가 비었으면 —", tb.indexOf(">—<") >= 0);
+  ok("안 낸 학생은 여전히 «넣기» 뿐이다 (선생님에게는 감춰진다)",
+    tb.indexOf('data-ent="c2|s3"') >= 0 && tb.indexOf('data-math="c2|s3"') < 0);
+  ok("선생님에게는 담당 반만이라고 적어 준다", tb.indexOf("담당 반만") >= 0);
+  run(`S.ro = false; S.claims = { role:"owner", tid:"T1", name:"한민수" };`);
+  const tb2 = run(`return tableHtml(ROWS, daysOfMonth("2026-09"), "2026-09")`);
+  ok("팀장에게는 두 줄 다 칸이다", tb2.indexOf('data-math="c1|s1"') >= 0 && tb2.indexOf('data-back="c1|s1"') >= 0);
+  ok("팀장에게는 «담당 반만» 이 안 붙는다", tb2.indexOf("담당 반만") < 0);
+  run(`S.claims = null;`);
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

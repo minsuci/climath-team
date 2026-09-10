@@ -4307,6 +4307,38 @@ async function deleteExam(cid, sid) {
   await db.collection("classes").doc(cid).collection("exams").doc(examKey(S.term, sid)).delete();
   if (S.exams[cid]) delete S.exams[cid][sid];
 }
+// ---- 선생님이 표에서 바로 고치는 두 칸 — 복귀 · 수학시험 (2026-09-10) ----
+//
+// "선생님들이 내신참여표에서 복귀날짜랑 수학시험날짜 지정할 수 있도록 하자."
+// 읽기 계정은 원래 아무것도 못 쓴다(`guardWrites`). 여기 **두 칸만, 담당 반만** 통과시킨다(`passWrite`).
+// 담당 반은 앱 규칙 `teaches(cid)` 와 **같은 자료**(teachers.classIds)로 판정한다 — 화면이 열어 줘도 규칙이 막고,
+// 규칙이 열어 줘도 화면이 안 열면 못 쓴다. 둘이 같은 답을 내야 한다.
+// 다른 칸(시험 기간·학교·비고)은 그대로 팀장 것이다. 시험 기간은 학교 일정에서 오고, 갈리면 사람이 봐야 한다.
+// ⚠ 아직 참여표가 없는 학생은 여기서 못 만든다 — 복귀만 있는 반쪽 문서가 생기면 띠도 등원 회차도 엉킨다.
+//   팀장이 «학교 일정으로 채우기» 를 누른 뒤에 넣는다.
+var EXAM_RO_FIELDS = ["math", "back"];
+function myClassIds() {
+  var me = S.teachers.filter(function (t) { return t.tid === myTid(); })[0];
+  return (me && me.classIds) || [];
+}
+function canEditExam(cid) { return !S.ro || myClassIds().indexOf(cid) >= 0; }
+// 수학시험을 바꾸면 직보가 전날로 따라간다 — 손으로 고쳐둔 직보(전날이 아닌 것)는 놔둔다. 대신 입력(schedFields)과 같은 규칙.
+function prepFollow(v, math) {
+  if (!math) return (v && v.prep) || "";
+  if (v && v.prep && v.math && v.prep !== dayBefore(v.math)) return v.prep;
+  return dayBefore(math);
+}
+async function saveExamRo(cid, sid, patch) {
+  if (!canEditExam(cid)) throw new Error(RO_MSG + " (담당 반이 아니다)");
+  var v = (S.exams[cid] || {})[sid];
+  if (!v) throw new Error("아직 참여표가 없는 학생이다. 팀장이 학교 일정으로 채운 뒤에 넣을 수 있다");
+  var data = {};
+  EXAM_RO_FIELDS.forEach(function (k) { if (patch[k] !== undefined) data[k] = patch[k] || ""; });
+  if (data.math !== undefined) data.prep = prepFollow(v, data.math);
+  if (!Object.keys(data).length) return;
+  // passWrite 는 동기 구간만 연다 — saveExam 의 set() 은 첫 await 앞에서 불리므로 그 안에 든다 (toggleMyMark 와 같다)
+  return passWrite(function () { return saveExam(cid, sid, data); });
+}
 // 학교 일정(appConfig/schoolTerms)에 적어둔 값. 대신 입력을 열 때 빈 칸을 이걸로 채운다.
 function schedFor(school, grade) {
   var key = String(S.term || "").replace(/[^0-9A-Za-z가-힣]+/g, "_") + "__" + school + "__" + grade;
@@ -4559,12 +4591,16 @@ function renderExams() {
       try { await deleteExam(kk[0], kk[1]); renderExams(); } catch (e) { alert("지우지 못했다: " + e.message); }
     };
   });
-  $$("[data-back]", el).forEach(function (inp) {
-    inp.onchange = async function () {
-      var kk = inp.getAttribute("data-back").split("|");
-      try { await saveExam(kk[0], kk[1], { back: inp.value }); renderExams(); }
-      catch (e) { alert("저장하지 못했다: " + e.message); }
-    };
+  // 복귀·수학시험 — 표에서 바로. 선생님도 담당 반은 쓴다(saveExamRo 가 반과 칸을 가른다).
+  // 실패하면 다시 그려서 칸의 값을 저장된 것으로 되돌린다 — 안 그러면 안 들어간 날짜가 들어간 것처럼 남는다.
+  ["back", "math"].forEach(function (f) {
+    $$("[data-" + f + "]", el).forEach(function (inp) {
+      inp.onchange = async function () {
+        var kk = inp.getAttribute("data-" + f).split("|"), patch = {}; patch[f] = inp.value;
+        try { await saveExamRo(kk[0], kk[1], patch); renderExams(); }
+        catch (e) { alert("저장하지 못했다: " + e.message); renderExams(); }
+      };
+    });
   });
   $("#ex-re").onclick = function () { S.exams = {}; loadExams().then(renderExams); };
   if ($("#ex-mid3")) $("#ex-mid3").onclick = function () {
@@ -4660,18 +4696,25 @@ function tableHtml(rows, monthDays, examMonth) {
         '<td>' + esc(homeroomOf(x.st)) + '</td><td>' + esc(x.school) + '</td>' +
         '<td colspan="6" class="muted">아직 안 냈다</td><td><button class="mini" data-ent="' + esc(k) + '">넣기</button></td></tr>';
       var v = x.v, ac = attendCount(x.cls, x.st, v, monthDays, examMonth);
+      // 복귀·수학시험은 표에서 바로 넣는다. 선생님은 담당 반만 — 그 밖의 반은 글자로만 보인다.
+      // data-keep 이 있어야 읽기 계정의 «감추기»(applyReadOnly)가 칸을 잠그지 않는다.
+      var edit = canEditExam(x.cls.id);
       return '<tr><td><b>' + esc(x.st.name) + '</b>' + (v.byTeacher ? ' <span class="pill">대신</span>' : "") + '</td>' +
         '<td>' + esc(x.cls.name) + '</td><td>' + esc(homeroomOf(x.st)) + '</td><td>' + esc(v.school || "") + '</td>' +
         '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
-        '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>' +
+        (edit ? '<td><input type="date" value="' + esc(v.math || "") + '" data-math="' + esc(k) + '" data-keep style="width:130px"></td>'
+              : '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>') +
         '<td>' + (v.prep ? esc(fmtMD(v.prep)) : "—") + '</td>' +
-        '<td><input type="date" value="' + esc(v.back || "") + '" data-back="' + esc(k) + '" style="width:130px"></td>' +
+        (edit ? '<td><input type="date" value="' + esc(v.back || "") + '" data-back="' + esc(k) + '" data-keep style="width:130px"></td>'
+              : '<td>' + (v.back ? esc(fmtMD(v.back)) : "—") + '</td>') +
         '<td><b>' + ac.come + '</b><span class="muted">/' + ac.total + '</span></td>' +
         '<td class="wrapc">' + esc(v.note || "") + '</td>' +
         '<td><button class="mini" data-fix="' + esc(k) + '">고치기</button> <button class="x" data-del="' + esc(k) + '">×</button></td></tr>';
     }).join("") + '</tbody></table></div>' +
     '<p class="muted" style="font-size:12px;margin:4px 0 0">등원은 <b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "회차 달") +
-    '</b> 기준이다. 그 달 수업일에서 <b>직보 다음날 ~ 복귀 전날</b>을 빼고, 직보·복귀를 더한 값. 수강료에 쓰는 숫자다. 복귀일은 여기서 바로 넣는다.</p>';
+    '</b> 기준이다. 그 달 수업일에서 <b>직보 다음날 ~ 복귀 전날</b>을 빼고, 직보·복귀를 더한 값. 수강료에 쓰는 숫자다. ' +
+    '<b>복귀와 수학시험은 여기서 바로 넣는다</b>' + (S.ro ? ' — 담당 반만. 다른 반은 글자로만 보인다' : "") +
+    '. 수학시험을 바꾸면 직보가 전날로 따라간다(손으로 고쳐둔 직보는 그대로).</p>';
 }
 
 // ---- 대신 입력 — 달력에 칠한다 ----
