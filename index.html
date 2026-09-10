@@ -227,6 +227,29 @@
   .mn.today { color: var(--navy); }
   .mn .tn { background: var(--orange); color: #fff; border-radius: 8px; font-size: 10px;
     padding: 0 5px; font-weight: 700; }
+  /* 달력 머리 — 이 달이 어떤 달인가 · 색이 뜻하는 것 */
+  .calsum { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px;
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; background: #fff; }
+  .calsum b { font-size: 13px; }
+  .calsum .s { color: var(--muted); }
+  .calsum .s b { color: var(--text); }
+  .calsum .s.bad b { color: var(--red); }
+  .calleg { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 11px;
+    color: var(--muted); margin: 0 0 8px; }
+  .calleg .mc { pointer-events: none; }
+  /* 날 칸 안의 할 일 — 숫자만으로는 «무슨 일인지» 를 못 본다 */
+  .mt { z-index: 1; pointer-events: none; padding: 0 3px 3px; display: flex; flex-direction: column; gap: 2px; }
+  .mc { font-size: 10px; line-height: 1.45; border-radius: 4px; padding: 0 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: #eef1f6; color: #374151; }
+  /* 마감·제출·발송 — 부원장님 달력의 검정 칩. 이 날 안에 손을 떠나야 하는 것 */
+  .mc.dl { background: #1f2937; color: #fff; font-weight: 700; }
+  .mc.done { background: transparent; color: var(--muted); text-decoration: line-through; }
+  .mt .more { font-size: 10px; color: var(--muted); padding-left: 4px; }
+  /* 쉬는 날 — 칸을 통째로 물들인다. 칩으로 달면 할 일에 섞여 안 보인다 */
+  .mday.off { background: #fdecf1; border-color: #f3ccd8; }
+  .mn .hol { font-size: 10px; font-weight: 600; color: #9b2246; }
+  .cday.off { background: #fdecf1; }
+  .cday .ch .hol { font-size: 11px; color: #9b2246; font-weight: 600; }
   /* 이어지는 막대 */
   /* ⚠ 높이를 못 박지 않는다. 글꼴이 커지거나 줄바꿈이 생기면 글자가 잘린다. */
   .bar { z-index: 1; pointer-events: none; font-size: 11px; line-height: 1.5; min-height: 17px;
@@ -266,6 +289,20 @@
   .cday .ctask.done span { text-decoration: line-through; color: var(--muted); }
   .cday .ctask i { font-style: normal; font-size: 10px; color: var(--muted); }
   .cday .ctask i.rep { color: #234e9e; }
+
+  /* 인쇄 — 부원장님 달력처럼 A4 가로 한 장. 월간만 나가고 나머지는 안 나간다 */
+  @media print {
+    @page { size: A4 landscape; margin: 8mm; }
+    body { background: #fff; }
+    .top, .nav, .todo, .wk-h, .cal, .wbars, #cal-add, .chips, .calleg, .noprint { display: none !important; }
+    .card { border: 0; box-shadow: none; padding: 0; margin: 0; }
+    .calwrap { overflow: visible; }
+    .mon { min-width: 0; margin-bottom: 0; }
+    .mday { min-height: 74px; }
+    .mc { font-size: 9px; }
+    /* 배경색이 안 찍히면 쉬는 날도 마감 칩도 흰 종이가 된다 */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
 
   /* 반별 배치표 — 열 하나가 반 */
   .gridwrap { overflow: auto; max-height: calc(100vh - 300px); border: 1px solid var(--line); border-radius: 8px; }
@@ -347,11 +384,11 @@
   .entry input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 
   /* 학년 색 — 표 줄과 알약이 같은 색 */
-  tr.g0 td { background: #eaf3ff; }  .pill.g0, .nm.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
-  tr.g1 td { background: #eaf8ee; }  .pill.g1, .nm.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
-  tr.g2 td { background: #fff7e3; }  .pill.g2, .nm.g2 { background: #ffe7a8; color: #7a5200; }   /* 고2 노랑 */
-  tr.g3 td { background: #fdecf1; }  .pill.g3, .nm.g3 { background: #f9cfdb; color: #9b2246; }   /* 고3 분홍 */
-  tr.g9 td { background: #f3f4f6; }  .pill.g9, .nm.g9 { background: #e5e7eb; color: #4b5563; }   /* 학년 없음 */
+  tr.g0 td { background: #eaf3ff; }  .pill.g0, .nm.g0, .mc.g0 { background: #cfe2ff; color: #1d4f9c; }   /* 중3 파랑 */
+  tr.g1 td { background: #eaf8ee; }  .pill.g1, .nm.g1, .mc.g1 { background: #cdeed7; color: #1f6b3a; }   /* 고1 초록 */
+  tr.g2 td { background: #fff7e3; }  .pill.g2, .nm.g2, .mc.g2 { background: #ffe7a8; color: #7a5200; }   /* 고2 노랑 */
+  tr.g3 td { background: #fdecf1; }  .pill.g3, .nm.g3, .mc.g3 { background: #f9cfdb; color: #9b2246; }   /* 고3 분홍 */
+  tr.g9 td { background: #f3f4f6; }  .pill.g9, .nm.g9, .mc.g9 { background: #e5e7eb; color: #4b5563; }   /* 학년 없음 */
   .chips input.mini { padding: 3px 8px; }
   .bar { height: 8px; background: #eef1f6; border-radius: 4px; overflow: hidden; min-width: 80px; }
   .bar i { display: block; height: 100%; background: var(--green); }
@@ -1238,6 +1275,81 @@ function taskDoneOn(t, d) {
   if (t.repeat) return !!(t.doneOn && t.doneOn[d]);
   return t.status === "done";
 }
+// ---- 쉬는 날 (2026-09-10) ----
+//
+// 손으로 적어 넣는다. 나라 공휴일은 해마다 **대체공휴일**이 붙어 셈으로 못 낸다.
+// 틀린 날을 자신 있게 그리느니 **안 적힌 해는 아무것도 안 그리는 편**이 낫다 —
+// 빈 칸은 «아직 안 적었다» 로 읽히지만 틀린 빨간 칸은 아무도 의심하지 않는다.
+// 2026 은 부원장님 「중등관 9월 운영 달력」(9/24~26 추석 · 10/3 개천절 · 10/9 한글날)과 맞춰 봤다.
+var HOLIDAYS = {
+  "2026-01-01": "신정",
+  "2026-02-16": "설 연휴", "2026-02-17": "설날", "2026-02-18": "설 연휴",
+  "2026-03-01": "삼일절", "2026-03-02": "삼일절 대체",
+  "2026-05-05": "어린이날", "2026-05-24": "부처님오신날", "2026-05-25": "부처님오신날 대체",
+  "2026-06-06": "현충일", "2026-08-15": "광복절", "2026-08-17": "광복절 대체",
+  "2026-09-24": "추석 연휴", "2026-09-25": "추석", "2026-09-26": "추석 연휴",
+  "2026-10-03": "개천절", "2026-10-05": "개천절 대체", "2026-10-09": "한글날",
+  "2026-12-25": "성탄절",
+};
+function holidayOf(d) { return HOLIDAYS[d] || ""; }
+// 적어 둔 해. 안 적힌 달을 보고 있으면 «없는 것»이 아니라 «안 적은 것»이라고 화면이 말해야 한다.
+function holidayYears() {
+  var y = {};
+  Object.keys(HOLIDAYS).forEach(function (d) { y[d.slice(0, 4)] = true; });
+  return Object.keys(y).sort();
+}
+function holidayKnown(ym) { return holidayYears().indexOf(ym.slice(0, 4)) >= 0; }
+
+// ---- 눈에 박혀야 하는 것 — 마감과 ★ (2026-09-10) ----
+//
+// 부원장님 운영 달력의 **검정 칩**(제출·발송·확정 마감)과 **★**(개강·설명회·기한) 이 그것이다.
+// 달력에서 제일 먼저 눈에 드는 것이 그 둘이라 색을 따로 준다.
+//
+// ⚠ 새 표시(체크칸)를 달지 않는다. 달면 **안 단 것이 조용히 밋밋해진다.**
+//    글자로 어림잡으면 틀릴 수 있지만, 틀려도 **할 일은 그대로 보인다** — 강조만 안 될 뿐이다.
+//    빠뜨림과 덜 꾸밈 중에 덜 꾸밈을 고른다.
+var DEADLINE_RE = /마감|제출|보고|발송|확정|기한|회신|접수|납부|마무리/;
+var STAR_RE = /개강|종강|설명회|시험|평가|워크샵|워크숍|간담회|상담 ?시작|배부/;
+function taskMark(t) {
+  var s = String((t && t.text) || "");
+  return { deadline: DEADLINE_RE.test(s), star: STAR_RE.test(s) };
+}
+// 그 달에 내가 안고 있는 것. 머리에 한 줄로 적는다 — 달을 넘기기 전에 «이 달이 어떤 달인가»가 먼저다.
+function calMonthSum(ym, want) {
+  var days = daysOfMonth(ym), sum = { n: 0, late: 0, dl: 0, off: 0, done: 0 };
+  days.forEach(function (d) {
+    if (holidayOf(d)) sum.off++;
+    calTasks().forEach(function (t) {
+      if (!gradeHit(taskGrade(t), want) || !taskOnDate(t, d)) return;
+      if (taskDoneOn(t, d)) { sum.done++; return; }
+      sum.n++;
+      if (d < TODAY) sum.late++;
+      if (taskMark(t).deadline) sum.dl++;
+    });
+  });
+  return sum;
+}
+// 한 날의 할 일을 달력 칸에 넣을 만큼만 추린다. 넘치면 «외 N» 으로 접는다 —
+// 다 보이려고 칸을 늘리면 한 달이 한 화면에 안 들어오고, 그러면 달력이 아니다.
+var MDAY_MAX = 3;
+function monthDayTasks(d, want) {
+  var list = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
+  // 안 끝난 것이 먼저, 그 안에서 마감이 먼저. 접히는 것은 늘 «덜 급한 쪽» 이라야 한다.
+  list.sort(function (a, b) {
+    var ad = taskDoneOn(a, d) ? 1 : 0, bd = taskDoneOn(b, d) ? 1 : 0;
+    if (ad !== bd) return ad - bd;
+    var am = taskMark(a).deadline ? 0 : 1, bm = taskMark(b).deadline ? 0 : 1;
+    return am - bm;
+  });
+  return { show: list.slice(0, MDAY_MAX), more: Math.max(0, list.length - MDAY_MAX), all: list };
+}
+function mchipHtml(t, d) {
+  var m = taskMark(t), done = taskDoneOn(t, d);
+  return '<span class="mc ' + (done ? "done" : m.deadline ? "dl" : gradeCls(taskGrade(t))) + '"' +
+    ' title="' + esc(t.text + (t.who ? " · " + t.who : "")) + '">' +
+    (m.star && !done ? "★" : "") + esc(t.text) + '</span>';
+}
+
 // 앱이 이미 아는 일정. 손으로 안 넣어도 달력에 뜬다.
 //
 // ⚠ 시험은 **기간**이지 하루가 아니다. 날마다 칩을 하나씩 찍으면 사흘짜리 시험이
@@ -1381,13 +1493,31 @@ function renderCal() {
     '<button class="mini" data-cm="-1">‹</button>' +
     '<b style="font-size:14px">' + Number(ym.slice(0, 4)) + '. ' + Number(ym.slice(5)) + '월</b>' +
     '<button class="mini" data-cm="1">›</button>' +
-    (thisMonth && thisWeek ? "" : '<button class="mini" data-cw="0">오늘로</button>') + '</h2>' +
+    (thisMonth && thisWeek ? "" : '<button class="mini" data-cw="0">오늘로</button>') +
+    '<button class="mini" data-cprint title="이 달을 A4 가로 한 장으로">인쇄</button></h2>' +
     '<div class="chips">' + GRADE_TABS.map(function (g) {
       var n = g === "전체" ? todo.length : dueThrough(g, days).length;
       return '<button class="mini ' + (g === want ? "on" : "") + '" data-cg="' + esc(g) + '">' +
         (GRADES.indexOf(g) >= 0 ? '<span class="pill ' + gradeCls(g) + '">' + g + '</span>' : esc(g)) +
         (n ? ' ' + n : "") + '</button>';
     }).join("") + '</div>' +
+    // ---- 이 달이 어떤 달인가 — 달을 넘기기 전에 이것부터 ----
+    (function () {
+      var sm = calMonthSum(ym, want);
+      return '<div class="calsum"><b>' + Number(ym.slice(5)) + '월</b>' +
+        '<span class="s">할 일 <b>' + sm.n + '</b></span>' +
+        (sm.late ? '<span class="s bad">기한 지남 <b>' + sm.late + '</b></span>' : "") +
+        (sm.dl ? '<span class="s">마감 <b>' + sm.dl + '</b></span>' : "") +
+        (sm.done ? '<span class="s">끝냄 <b>' + sm.done + '</b></span>' : "") +
+        (sm.off ? '<span class="s">쉬는 날 <b>' + sm.off + '</b></span>' : "") +
+        (holidayKnown(ym) ? "" : '<span class="s bad">쉬는 날을 아직 안 적은 해다</span>') +
+        '</div>';
+    })() +
+    '<div class="calleg"><span class="mc dl">마감</span> 제출·보고·발송·확정' +
+    '<span class="mc g1">★개강</span> 개강·설명회·시험' +
+    '<span class="mc g0">학년 색</span>' +
+    '<span class="mc done">끝낸 것</span>' +
+    '<span>· 분홍 칸은 쉬는 날 · 파란 칸이 아래 주간 달력에 열린 주다</span></div>' +
     // ---- 월간 달력 — 시험은 이어진 막대로 눕는다 ----
     '<div class="calwrap"><div class="mon">' +
     '<div class="mhrow">' + DOW_KO.slice(1).concat([DOW_KO[0]]).map(function (w, i) {
@@ -1403,15 +1533,27 @@ function renderCal() {
             var outm = monthOf(d) !== ym, dow = parseYmd(d).getDay();
             return '<div class="mday' + (outm ? " out" : "") + (d === TODAY ? " today" : "") +
               (d >= from && d <= to ? " inweek" : "") + (dow === 0 || dow === 6 ? " wend" : "") +
-              '" style="grid-column:' + (i + 1) + ';grid-row:1/' + (lay.lanes + 2) + '" data-cjump="' + d + '"></div>';
+              (holidayOf(d) ? " off" : "") +
+              '" style="grid-column:' + (i + 1) + ';grid-row:1/' + (lay.lanes + 3) + '" data-cjump="' + d + '"></div>';
           }).join("") +
           wd.map(function (d, i) {
             var tn = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d) && !taskDoneOn(t, d); }).length;
+            var hol = holidayOf(d);
             return '<div class="mn' + (monthOf(d) !== ym ? " out" : "") + (d === TODAY ? " today" : "") +
               '" style="grid-column:' + (i + 1) + ';grid-row:1">' + Number(d.slice(8)) +
+              (hol ? '<span class="hol">' + esc(hol) + '</span>' : "") +
               (tn ? '<span class="tn">' + tn + '</span>' : "") + '</div>';
           }).join("") +
           lay.segs.map(function (g) { return barHtml(g, 2); }).join("") +
+          // 숫자만으로는 «무슨 일인지» 를 못 본다. 막대 아래 줄에 글자로 깐다 —
+          // 한 주의 칸들이 같은 격자 줄을 쓰므로 제일 바쁜 날에 맞춰 줄 높이가 함께 는다.
+          wd.map(function (d, i) {
+            var mt = monthDayTasks(d, want);
+            if (!mt.all.length) return "";
+            return '<div class="mt" style="grid-column:' + (i + 1) + ';grid-row:' + (lay.lanes + 2) + '">' +
+              mt.show.map(function (t) { return mchipHtml(t, d); }).join("") +
+              (mt.more ? '<span class="more">외 ' + mt.more + '</span>' : "") + '</div>';
+          }).join("") +
           '</div>');
       }
       return rows.join("");
@@ -1433,14 +1575,19 @@ function renderCal() {
     '<div class="calwrap"><div class="cal">' + days.map(function (d) {
       var dow = parseYmd(d).getDay();
       var mine = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
-      return '<div class="cday' + (d === TODAY ? " today" : "") + (dow === 0 || dow === 6 ? " wend" : "") + '">' +
+      var hol = holidayOf(d);
+      return '<div class="cday' + (d === TODAY ? " today" : "") + (dow === 0 || dow === 6 ? " wend" : "") +
+        (hol ? " off" : "") + '">' +
         '<div class="ch"><b>' + Number(d.slice(8)) + '</b> <span>' + DOW_KO[dow] + '</span>' +
+        (hol ? '<span class="hol">' + esc(hol) + '</span>' : "") +
         '<button class="add" data-cadd="' + d + '" title="여기에 할 일 넣기">＋</button></div>' +
         mine.map(function (t) {
           var done = taskDoneOn(t, d);
+          var mk = taskMark(t);
           return '<div class="ctask' + (done ? " done" : "") + '" data-tid="' + esc(t.id) + '" data-td="' + d + '">' +
             '<input type="checkbox"' + (done ? " checked" : "") + '>' +
-            '<span>' + esc(t.text) + (t.repeat ? ' <i class="rep">매주</i>' : "") +
+            '<span>' + (!done && mk.deadline ? '<span class="mc dl">마감</span> ' : "") +
+            (!done && mk.star ? "★" : "") + esc(t.text) + (t.repeat ? ' <i class="rep">매주</i>' : "") +
             (t.who ? ' <i class="who">' + esc(t.who) + '</i>' : "") + '</span></div>';
         }).join("") +
         '</div>';
@@ -1449,11 +1596,17 @@ function renderCal() {
     '<p class="muted" style="font-size:12px;margin:6px 0 0"><b>이 달력에는 내 할 일만 나온다</b> — ' +
     '담당에 내 이름(또는 «전원»·«담임 전원» 같은 묶음)이 걸린 것. 팀 전체는 <b>할 일</b> 메뉴에서 사람으로 골라 본다. ' +
     '월간 달력의 날을 누르면 그 주가 아래에 열린다. ' +
-    '날짜 옆 숫자는 그날 남은 할 일이다. 막대는 <b>시험 성적에 만든 시험</b>과 <b>반 종강</b>이고, ' +
+    '날짜 옆 숫자는 그날 남은 할 일이다. 칸 안에는 할 일이 <b>글자로</b> 뜨고, 넘치면 «외 N» 으로 접힌다 ' +
+    '(안 끝난 것 · 마감이 먼저 남는다). <b>검정 칩</b>은 제출·보고·발송·확정 같은 <b>마감</b>이고 <b>★</b>는 개강·설명회·시험이다 — ' +
+    '<b>할 일 제목의 글자로 어림잡는다.</b> 틀려도 할 일이 사라지지는 않고 강조만 안 된다. ' +
+    '<b>분홍 칸은 쉬는 날</b>이고 손으로 적어 둔다 — 안 적은 해는 머리에 그렇게 뜬다. ' +
+    '<b>인쇄</b>를 누르면 이 달만 A4 가로 한 장으로 나간다. ' +
+    '막대는 <b>시험 성적에 만든 시험</b>과 <b>반 종강</b>이고, ' +
     '겹치면 한 막대로 묶여 앞에 개수가 붙는다(손을 올리면 전부 보인다). ' +
     '<b>학교 내신 일정은 여기 안 나온다</b> — 달력이 시험 막대로 뒤덮이므로 <b>내신 참여표</b>의 날짜 띠에서 본다. ' +
     '손으로 넣은 할 일만 체크가 붙고, <b>매주</b>가 붙은 것은 날짜마다 따로 체크한다.</p>';
 
+  $$("[data-cprint]", el).forEach(function (b) { b.onclick = function () { window.print(); }; });
   $$("[data-cw]", el).forEach(function (b) {
     b.onclick = function () {
       var n = Number(b.getAttribute("data-cw"));

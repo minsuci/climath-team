@@ -252,6 +252,62 @@ ctx.__t.then((r) => {
   run(`S.claims = null;`);
   ok("누구인지 모르면 안 가린다 (빈 달력보다 낫다)", run(`return calTasks().length`) === 4);
 
+  // ---- 한눈에 들어오게 (2026-09-10) — 쉬는 날 · 마감 · 칸 안의 글자 ----
+  // 부원장님 「중등관 9월 운영 달력」을 보고 넣은 것들이다.
+  run(`S.claims = null; S.ro = false;`);
+
+  // 쉬는 날. 원장님 달력의 9월과 맞아야 한다 — 여기가 어긋나면 두 달력이 서로 다른 말을 한다.
+  ok("추석 사흘이 들어 있다 (9/24~26)",
+    run(`return [holidayOf("2026-09-24"), holidayOf("2026-09-25"), holidayOf("2026-09-26")].join("|")`) === "추석 연휴|추석|추석 연휴");
+  ok("개천절·한글날", run(`return holidayOf("2026-10-03") && holidayOf("2026-10-09")`) === "한글날");
+  ok("토요일에 걸린 개천절은 대체가 붙는다 (10/5 월)", run(`return holidayOf("2026-10-05")`) === "개천절 대체");
+  ok("현충일은 대체가 없다 (대체공휴일 대상이 아니다)", run(`return holidayOf("2026-06-08")`) === "");
+  ok("보통 날은 빈 글자", run(`return holidayOf("2026-09-22")`) === "");
+  // ⚠ 안 적은 해를 «쉬는 날 없음» 으로 그리면 아무도 의심하지 않는다. 화면이 스스로 말해야 한다.
+  ok("적어 둔 해는 안다", run(`return holidayKnown("2026-09")`) === true);
+  ok("안 적은 해는 안 적었다고 한다", run(`return holidayKnown("2030-09")`) === false);
+
+  // 마감과 ★ — 글자로 어림잡는다
+  ok("«제출» 은 마감", run(`return taskMark({text:"1부 성적 취합표 제출"}).deadline`) === true);
+  ok("«보고» 도 마감", run(`return taskMark({text:"한 달 그림 보고"}).deadline`) === true);
+  ok("«개강» 은 ★", run(`return taskMark({text:"내신 2부 개강"}).star`) === true);
+  ok("«설명회» 도 ★", run(`return taskMark({text:"10월 개강 설명회"}).star`) === true);
+  ok("보통 할 일은 둘 다 아니다",
+    run(`var m = taskMark({text:"학생 오답 정리"}); return m.deadline || m.star`) === false);
+  ok("빈 할 일에도 안 터진다", run(`var m = taskMark({}); return m.deadline || m.star`) === false);
+
+  // 칸 안의 글자 — 넘치면 접히되 **접히는 것은 늘 덜 급한 쪽**
+  run(`S.tasks = [
+    { id:"c1", text:"학생 오답 정리", due:"2026-09-16", status:"open" },
+    { id:"c2", text:"저조자 통합 보고", due:"2026-09-16", status:"open" },
+    { id:"c3", text:"채점 기준 영상 촬영", due:"2026-09-16", status:"open" },
+    { id:"c4", text:"진도 확인", due:"2026-09-16", status:"done" },
+    { id:"c5", text:"학부모 통보", due:"2026-09-16", status:"open" } ];`);
+  const md = JSON.parse(run(`var m = monthDayTasks("2026-09-16","전체");
+    return JSON.stringify({ show: m.show.map(function(t){return t.id;}), more: m.more, all: m.all.length });`));
+  ok("칸에는 세 개까지", md.show.length === 3 && md.all === 5, JSON.stringify(md));
+  ok("마감이 맨 앞에 남는다", md.show[0] === "c2", md.show.join(","));
+  ok("끝낸 것은 맨 뒤로 밀린다 (접히는 쪽)", md.show.indexOf("c4") < 0, md.show.join(","));
+  ok("접힌 개수를 말한다", md.more === 2, String(md.more));
+  ok("아무 일 없는 날은 빈 것", run(`return monthDayTasks("2026-09-17","전체").all.length`) === 0);
+
+  const chip = run(`return mchipHtml({id:"c2",text:"저조자 통합 보고",grade:"고1"},"2026-09-16")`);
+  ok("마감 칩은 학년 색이 아니라 검정", chip.indexOf('class="mc dl"') >= 0, chip);
+  const chip2 = run(`return mchipHtml({id:"c9",text:"내신 2부 개강",grade:"고1"},"2026-09-16")`);
+  ok("★ 가 앞에 붙는다", chip2.indexOf(">★내신 2부 개강<") >= 0, chip2);
+  ok("학년 색이 붙는다", chip2.indexOf("mc g1") >= 0, chip2);
+  const chip3 = run(`return mchipHtml({id:"c4",text:"진도 확인",status:"done"},"2026-09-16")`);
+  ok("끝낸 것은 ★ 도 마감도 안 붙는다", chip3.indexOf("mc done") >= 0 && chip3.indexOf("★") < 0, chip3);
+
+  // 머리 한 줄 — 이 달이 어떤 달인가
+  const sm = JSON.parse(run(`return JSON.stringify(calMonthSum("2026-09","전체"))`));
+  ok("이 달 할 일을 센다 (끝낸 것은 따로)", sm.n === 4 && sm.done === 1, JSON.stringify(sm));
+  ok("마감 개수를 센다", sm.dl === 1, String(sm.dl));
+  ok("쉬는 날 셋 (추석)", sm.off === 3, String(sm.off));
+  ok("기한 지난 것을 센다 (오늘은 9/4)", sm.late === 0, String(sm.late));
+  run(`S.tasks = [{ id:"z1", text:"지난 일", due:"2026-09-01", status:"open" }];`);
+  ok("오늘보다 앞선 것은 기한 지남", run(`return calMonthSum("2026-09","전체").late`) === 1);
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
