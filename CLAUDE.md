@@ -1361,7 +1361,7 @@ node tools/test-done.js
 
 시험 `tools/test-exec.js` 43건.
 
-## 업무보고 (2026-09-11 초안 — `report-draft` 브랜치, **아직 안 올림**)
+## 업무보고 (2026-09-11 — 상의해 정하고 같은 날 올림)
 
 "고등부 선생님들이 그날그날 어떤 수업을 했는지와 어떤 업무를 했는지 보고할 수 있도록."
 마왕님 결정: 수업은 **학생 단위**(명단 전원 + 옆에 특이사항) · 일일테스트·수업준비는 안 넣음 ·
@@ -1398,7 +1398,8 @@ node tools/test-done.js
 ⚠ 함수 이름을 `saveReport` 로 지었다가 «한 줄 보고» 의 `saveReport(id, text)` 와 겹쳐 **나중 것이 조용히 덮었다.**
 `saveDailyReport` 로 바꾸고 `test-wiring.js` 에 «같은 이름의 함수가 둘» 검사를 넣었다.
 
-**올릴 때:** `RP_START` 를 올리는 날로 바꾼다(그 전 날들이 전부 «안 냄» 으로 뜬다) → `node tools/publish-rules.mjs` → main 에 합친다.
+`RP_START = 2026-09-14` — 9/11(금)에 올리고 월요일부터 «안 냄» 을 센다. 날을 앞당기면 그 전 날들이 전부 «안 냄» 으로 뜬다.
+규칙(`dailyReports`)은 **콘솔에 붙여넣어 게시**한다(서비스 계정에 게시 권한이 없다). 게시 뒤 `node tools/check-rules.mjs` — 남의 보고 읽기·쓰기가 막히는지 본다.
 
 시험 `tools/test-dailyreport.js` 103건 (명단 변동 28건 포함).
 

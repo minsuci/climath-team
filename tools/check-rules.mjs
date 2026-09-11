@@ -129,6 +129,23 @@ async function main() {
     T.push((d.status === 200 ? "  ·   " : "FAIL  ") + "되돌렸다 (없던 문서를 지웠다)   HTTP " + d.status);
   }
 
+  // ---- 업무보고 (2026-09-11) — 선생님끼리는 서로 못 본다 ----
+  // ⚠ 여기가 marks·myTasks 와 다르다. 남의 보고는 **읽기도** 막혀야 한다.
+  const RP_DAY = "2000-01-01";   // 쓰기 시험용 날짜. 진짜 보고와 안 겹친다
+  say(false, "남의 업무보고는 못 읽는다", gone(await read("dailyReports/" + other.tid + "/days/" + RP_DAY)));
+  say(false, "남의 업무보고 목록 쿼리도 거절", (await fetch(BASE + "/dailyReports/" + other.tid + ":runQuery", { method: "POST", headers: H,
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: "days" }] } }) })).status === 403);
+  say(false, "남의 업무보고 칸에는 못 쓴다",
+    (await write("dailyReports/" + other.tid + "/days/" + RP_DAY, { tid: { stringValue: other.tid } })) === 403);
+  const wr = await write("dailyReports/" + me.tid + "/days/" + RP_DAY,
+    { tid: { stringValue: me.tid }, date: { stringValue: RP_DAY }, updated: { integerValue: String(Date.now()) } });
+  say(true, "자기 업무보고 칸에는 쓴다", wr === 200, "HTTP " + wr);
+  say(true, "자기 업무보고는 읽는다", (await read("dailyReports/" + me.tid + "/days/" + RP_DAY)) === 200);
+  if (wr === 200) {
+    const d = await fetch(BASE + "/dailyReports/" + me.tid + "/days/" + RP_DAY, { method: "DELETE", headers: H });
+    T.push((d.status === 200 ? "  ·   " : "FAIL  ") + "되돌렸다 (시험용 보고를 지웠다)   HTTP " + d.status);
+  }
+
   // ---- 규칙에 안 적은 것은 닫혀 있어야 한다 ----
   say(false, "규칙에 없는 컬렉션은 아무도 못 읽는다", (await read("students/anything")) === 403);
 
