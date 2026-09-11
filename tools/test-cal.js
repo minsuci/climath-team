@@ -216,7 +216,7 @@ ok("이어지는 막대는 ◂ 를 달고 왼쪽 모서리를 안 둥글린다",
   H.indexOf("◂") >= 0 && H.indexOf('class="bar exam e"') >= 0, H.slice(0, 150));
 ok("손 올리면 묶인 것이 전부 보인다", H.indexOf("지난주부터 · 이 주 안") >= 0, H.slice(0, 200));
 
-ctx.__t.then((r) => {
+ctx.__t.then(async (r) => {     // 저장을 기다리는 시험이 있어 async
   const [doneOn, after] = r.split(" | ");
   ok("반복을 체크하면 그날만 끝난다", doneOn === '{"2026-09-04":true}', doneOn);
   ok("체크한 날은 목록에서 빠지고 다른 날은 남는다",
@@ -413,6 +413,100 @@ ctx.__t.then((r) => {
   run(`S.events = [{ id:"h3", text:"개원기념일", from:"2026-09-10", to:"", color:"pink", off:true }];`);
   ok("over 없이도 쉬는 날이 된다", run(`return holidayOf("2026-09-10")`) === "개원기념일");
   run(`S.events = []; S.tasks = [];`);
+
+  // ---- 달력에 뜨는 것은 전부 달력에서 고친다 (2026-09-11) ----
+  // 사본을 안 둔다. 고친 것이 **원래 자리**(할 일 · tests/{tid} · classes/{cid})에 바로 들어가야 한다.
+  const W = [];
+  ctx.W = W;
+  run(`S.ro = false; S.claims = null; S.events = []; TODAY = "2026-09-04";
+    S.teamOk = true;
+    tdb = { collection: function (c) { return { doc: function (id) { return {
+      set: function (d, o) { W.push({ db: "team", path: c + "/" + id, data: JSON.parse(JSON.stringify(d)), merge: !!(o && o.merge) }); return Promise.resolve(); },
+      get: function () { return Promise.resolve({ exists: false }); } }; } }; } };
+    db = { collection: function (c) { return { doc: function (id) { return {
+      update: function (d) { W.push({ db: "class", path: c + "/" + id, data: JSON.parse(JSON.stringify(d)) }); return Promise.resolve(); } }; } }; } };
+    S.tests = [ { tid:"T1", kind:"midterm", name:"가고", grade:"고1", date:"2026-09-22" },
+                { tid:"T2", kind:"midterm", name:"나고", grade:"고1", date:"2026-09-22" },
+                { tid:"T3", kind:"mock",    name:"9월 모평", grade:"고2", date:"2026-09-30" } ];
+    S.classes = [ { id:"c1", name:"고1S", endDate:"2026-10-31" }, { id:"c2", name:"예비고1", endDate:"" } ];`);
+
+  // 막대가 어느 문서에서 왔는지를 들고 다녀야 눌러서 **그 문서를** 고친다
+  const refsT = JSON.parse(run(`return JSON.stringify(calRanges("전체").map(function(r){ return r.kind + ":" + (r.ref || ""); }))`));
+  ok("시험 막대는 시험 id 를 든다", refsT.indexOf("test:T1") >= 0 && refsT.indexOf("test:T3") >= 0, refsT.join(","));
+  ok("종강 막대는 반 id 를 든다", refsT.indexOf("class:c1") >= 0, refsT.join(","));
+  const mgT = JSON.parse(run(`return JSON.stringify(mergeRanges(calRanges("전체")).filter(function(m){return m.kind==="test";})
+    .map(function(m){ return { n: m.n, refs: m.refs }; }))`));
+  ok("묶여도 무엇이 묶였는지 남는다 (가고·나고)",
+    mgT.some(function (m) { return m.n === 2 && m.refs.join(",") === "T1,T2"; }), JSON.stringify(mgT));
+  const barT = run(`var lay = weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-22"));
+    return lay.segs.filter(function(g){return g.kind==="test";}).map(function(g){ return barHtml(g, 1); }).join("")`);
+  ok("팀장에게는 막대를 누를 수 있다", barT.indexOf('data-cref="test|T1,T2"') >= 0 && barT.indexOf(" pick") >= 0, barT.slice(0, 160));
+  run(`S.ro = true; S.claims = { role:"teacher", tid:"T2", name:"이현우" };`);
+  const bar2 = run(`var lay = weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-22"));
+    return lay.segs.map(function(g){ return barHtml(g, 1); }).join("")`);
+  ok("선생님에게는 시험·종강 막대가 안 눌린다", bar2.indexOf("data-cref") < 0 && bar2.indexOf(" pick") < 0);
+  run(`S.ro = false; S.claims = null;`);
+
+  // 시험 — tests/{tid} 에 **합쳐** 쓴다. 점수 문서는 안 건드린다.
+  W.length = 0;
+  await run(`return saveTestFix("T1", { kind:"final", name:"가고", date:"2026-09-24", grade:"고1" })`);
+  ok("시험은 tests/{tid} 에 쓴다", W.length === 1 && W[0].path === "tests/T1" && W[0].db === "team", JSON.stringify(W));
+  ok("합쳐 쓴다 (다른 칸이 안 날아간다)", W[0] && W[0].merge === true);
+  ok("점수 문서는 안 건드린다", !W.some(function (w) { return /testScores/.test(w.path); }));
+  ok("화면의 시험도 바뀐다", run(`return testById("T1").date + "|" + testById("T1").kind`) === "2026-09-24|final");
+  ok("달력 막대가 새 날로 옮겨 간다",
+    run(`return calRanges("전체").filter(function(r){return r.ref==="T1";})[0].s`) === "2026-09-24");
+  let errT = "";
+  try { await run(`return saveTestFix("없는시험", { name:"x" })`); } catch (e) { errT = e.message; }
+  ok("없는 시험은 못 고친다", /못 찾았다/.test(errT), errT);
+
+  // 반 종강 — 수업관리 앱의 그 반 문서에 **update** 로 쓴다. 명단(roster)을 덮으면 안 된다.
+  W.length = 0;
+  await run(`return saveClassEnd("c1", "2026-11-14")`);
+  ok("종강은 classes/{cid} 에 쓴다", W.length === 1 && W[0].path === "classes/c1" && W[0].db === "class", JSON.stringify(W));
+  ok("endDate 한 칸만 쓴다 (명단을 안 덮는다)", W[0] && Object.keys(W[0].data).join(",") === "endDate", W[0] && JSON.stringify(W[0].data));
+  ok("화면의 반도 바뀐다", run(`return classById("c1").endDate`) === "2026-11-14");
+  W.length = 0;
+  await run(`return saveClassEnd("c1", "")`);
+  ok("비우면 종강 없는 반", W[0] && W[0].data.endDate === "" && run(`return activeClass(classById("c1"))`) === true);
+
+  // 선생님은 시험도 종강도 못 고친다 — 규칙도 막지만 여기서 먼저 막는다
+  run(`S.ro = true; S.claims = { role:"teacher", tid:"T2", name:"이현우" };`);
+  W.length = 0;
+  let e1 = "", e2 = "";
+  try { await run(`return saveTestFix("T1", { name:"몰래" })`); } catch (e) { e1 = e.message; }
+  try { await run(`return saveClassEnd("c1", "2026-09-01")`); } catch (e) { e2 = e.message; }
+  ok("선생님은 시험을 못 고친다", !!e1 && !W.length, e1);
+  ok("선생님은 종강을 못 고친다", !!e2 && !W.length, e2);
+  run(`S.ro = false; S.claims = null;`);
+
+  // 할 일 — 한 번 ↔ 매주 로 바꿀 때 옛 칸을 치운다
+  const f1 = JSON.parse(run(`return JSON.stringify(applyTaskFix({ id:"x", text:"a", due:"2026-09-10", status:"open" },
+    { text:"b", repeat:{ dow:[1,5] } }))`));
+  ok("매주로 바꾸면 기한이 빠진다", !("due" in f1) && f1.repeat.dow.join(",") === "1,5", JSON.stringify(f1));
+  ok("매주로 바꾸면 날짜별 끝냄 칸이 생긴다", !!f1.doneOn);
+  ok("글자도 바뀐다", f1.text === "b");
+  const f2 = JSON.parse(run(`return JSON.stringify(applyTaskFix({ id:"x", text:"a", repeat:{dow:[1]}, doneOn:{"2026-09-07":true} },
+    { text:"a", due:"2026-09-12" }))`));
+  ok("한 번으로 되돌리면 반복·날짜별 끝냄이 빠진다", !("repeat" in f2) && !("doneOn" in f2) && f2.due === "2026-09-12", JSON.stringify(f2));
+  const f3 = JSON.parse(run(`return JSON.stringify(applyTaskFix({ id:"x", text:"a", due:"2026-09-10", who:"이현우", src:"회의록" },
+    { text:"a", due:"2026-09-11", grade:"고1" }))`));
+  ok("고치지 않은 칸은 남는다 (담당·출처)", f3.who === "이현우" && f3.src === "회의록" && f3.grade === "고1", JSON.stringify(f3));
+
+  // 할 일 칩 — 고칠 수 있는 사람에게만 누를 표가 붙는다
+  run(`S.tasks = [ { id:"k1", text:"공용 할 일", due:"2026-09-10", who:"이현우", status:"open" },
+                   { id:"k2", text:"내가 적은 것", due:"2026-09-10", who:"이현우", status:"open", own:"T2" } ];`);
+  ok("팀장에게는 공용 할 일도 눌린다",
+    run(`return mchipHtml(taskById("k1"), "2026-09-10")`).indexOf('data-ctask="k1"') >= 0);
+  run(`S.ro = true; S.claims = { role:"teacher", tid:"T2", name:"이현우" };`);
+  ok("선생님에게 공용 할 일은 안 눌린다",
+    run(`return mchipHtml(taskById("k1"), "2026-09-10")`).indexOf("data-ctask") < 0);
+  ok("선생님도 자기가 적은 것은 눌린다",
+    run(`return mchipHtml(taskById("k2"), "2026-09-10")`).indexOf('data-ctask="k2"') >= 0);
+  ok("이번 주 목록 줄도 같다",
+    run(`return todoRowHtml({ t: taskById("k2"), date:"2026-09-10", late:false })`).indexOf('data-ctask="k2"') >= 0 &&
+    run(`return todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false })`).indexOf("data-ctask") < 0);
+  run(`S.ro = false; S.claims = null; S.tasks = []; S.tests = []; S.classes = [];`);
 
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;

@@ -246,7 +246,10 @@ const setup = (who) => {
 
   // ---- 숫자 상자를 누르면 그것만 (2026-09-08) ----
   // "기한지남 빨간색으로 표시되는데, 누르면 뭔지도 표시하자"
+  // ⚠ 오늘을 못 박는다. 안 박으면 날이 바뀌는 순간 «이번 주» 줄이 «기한 지남» 으로 넘어가 시험이 깨진다
+  //   (2026-09-11 에 실제로 깨졌다 — 코드는 그대로인데 9/10 이 어제가 됐다).
   setup();
+  run(`TODAY = "2026-09-08";`);
   run(`S.statPick = ""; S.tasks = [
     { id:"v1", text:"지난 것",     who:"이현우", status:"open", due:"2026-09-01" },
     { id:"v2", text:"또 지난 것",  who:"전원",   status:"open", due:"2026-09-05" },
@@ -272,6 +275,7 @@ const setup = (who) => {
   run("S.statPick = 'week'; S.filterWho = '이창혁A'; renderTasks()");
   ok("담당 칩과 겹치면 둘 다 만족하는 것만 — 없으면 빈 줄에 이유가 적힌다", ids() === "" && /이번 주 할 일이 없다/.test(EL["#sec-tasks"].innerHTML), ids());
   run("S.statPick = ''; S.filterWho = ''");
+  run("TODAY = " + JSON.stringify(TODAY));      // 다른 절은 진짜 오늘을 쓴다
 
   // ---- 완료 현황에 글까지 ----
   setup("owner");
