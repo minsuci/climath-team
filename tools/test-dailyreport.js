@@ -206,6 +206,93 @@ ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진
   ok("쓰기는 누구든 자기 칸만 (팀장도)", /allow\s+write:\s*if\s+team\(\)\s*&&\s*tid\s*==\s*myTid\(\)/.test(b), b.trim());
   ok("재귀 와일드카드가 아니다", !/match\s*\/dailyReports\/\{[^}]*=\*\*\}/.test(rules));
 
+  // ---- 명단 변동 — 반 이동 · 퇴원 (9/11 추가) ----
+  // 선생님이 적어 올리고, 팀장이 «앱에 반영» 을 누른다. 저절로 안 바뀐다.
+  {
+    run(`
+      __cls = S.classes; __reps = S.reports; __ro = S.ro; __cl = S.claims;
+      S.classes = [
+        { id:"pS", name:"예비고1 S반", classDays:[1,3,5], roster:[ { id:"a1", pid:"P1", name:"김도윤" }, { id:"a2", pid:"P2", name:"박지우" }, { id:"a3", name:"옛줄" } ] },
+        { id:"pT", name:"예비고1 T반", classDays:[1,3,5], roster:[ { id:"b1", pid:"P9", name:"남궁민" } ] },
+        { id:"ind", name:"개별진도", type:"individual", roster:[ { id:"c1", pid:"P2", name:"박지우", days:[2] } ] },
+        { id:"old", name:"끝난 반", classDays:[1], endDate:"2026-09-01", roster:[] } ];
+      S.teachers = [ { tid:"T1", name:"한민수", role:"owner", classIds:[] },
+                     { tid:"T2", name:"이현우", role:"teacher", classIds:["pS","ind"] } ];
+      S.claims = { role:"teacher", tid:"T2", name:"이현우" }; S.ro = true; S.reports = {};
+      __ops = [];
+      stAssign = async function (cid, p) { __ops.push("넣음 " + cid + " " + p.pid);
+        var c = S.classes.filter(function (x) { return x.id === cid; })[0]; c.roster = c.roster.concat([{ id:"n" + p.pid, pid:p.pid, name:p.name }]); };
+      stUnassign = async function (cid, pid) { __ops.push("뺌 " + cid + " " + pid);
+        var c = S.classes.filter(function (x) { return x.id === cid; })[0]; c.roster = c.roster.filter(function (r) { return r.pid !== pid; }); };
+    `);
+    const who = JSON.parse(run(`return JSON.stringify(rpMyRoster("T2", "2026-09-14").map(function (r) { return r.name + "@" + r.cname; }))`));
+    ok("고를 학생은 내 반 전부 — 그 날 수업 없는 개별진도 학생도", who.join() === "박지우@개별진도,김도윤@예비고1 S반,박지우@예비고1 S반,옛줄@예비고1 S반", who.join());
+    const tg = run(`return rpMoveTargets("2026-09-14", "pS").map(function (c) { return c.name; }).join()`);
+    ok("옮겨 갈 반은 남의 반까지, 옛 반·끝난 반은 빼고", tg === "개별진도,예비고1 T반", tg);
+
+    const draft = JSON.parse(run(`var r = rpDraft("T2", "2026-09-14", null); return JSON.stringify(r);`));
+    ok("판에 명단 변동 칸이 있다 (처음엔 비어 있다)", Array.isArray(draft.moves) && draft.moves.length === 0);
+    ok("학생 줄이 pid 를 든다", draft.classes[0].students.some(function (s) { return s.pid === "P1"; }));
+
+    run(`__rep = rpDraft("T2", "2026-09-14", null); __rep.tomorrow = "내일";
+      __rep.moves = [ { kind:"move", sid:"a1", pid:"P1", name:"김도윤", fromCid:"pS", fromName:"예비고1 S반", toCid:"", toName:"", date:"2026-09-14", note:"" } ];`);
+    const stop = JSON.parse(run(`return JSON.stringify(rpCheck(__rep).stop)`));
+    ok("반 이동인데 «어디로» 가 비면 못 낸다", stop.some(function (s) { return /김도윤: 어느 반으로/.test(s); }), JSON.stringify(stop));
+    run(`__rep.moves[0].toCid = "pT"; __rep.moves[0].toName = "예비고1 T반"; __rep.moves[0].toOther = false;
+      __rep.moves.push({ kind:"move", name:"" });                                     // 학생도 안 고른 줄
+      __rep.moves.push({ kind:"leave", sid:"a2", pid:"P2", name:"박지우", fromCid:"pS", fromName:"예비고1 S반", toCid:"pT", toName:"x", date:"2026-09-20", note:"  이사  " });`);
+    ok("다 채우면 낼 수 있다", run(`return rpCheck(__rep).stop.length`) === 0, run(`return JSON.stringify(rpCheck(__rep).stop)`));
+    const cm = JSON.parse(run(`return JSON.stringify(rpClean(__rep).moves)`));
+    ok("학생을 안 고른 줄은 버린다", cm.length === 2, JSON.stringify(cm));
+    ok("퇴원은 «어디로» 를 안 남긴다", cm[1].kind === "leave" && cm[1].toCid === "" && cm[1].toName === "" && cm[1].note === "이사", JSON.stringify(cm[1]));
+    ok("화면용 칸(toOther)은 안 남긴다", !("toOther" in cm[0]));
+    ok("글자는 «예비고1 S반 → 예비고1 T반» · «예비고1 S반 · 퇴원»",
+      run(`return rpMoveText(rpClean(__rep).moves[0]) + "|" + rpMoveText(rpClean(__rep).moves[1])`) === "예비고1 S반 → 예비고1 T반|예비고1 S반 · 퇴원");
+
+    W.length = 0;
+    await run(`return saveDailyReport(__rep)`);
+    ok("명단 변동도 보고와 같이 저장된다 (자기 칸)", W.length === 1 && W[0].path === "dailyReports/T2/days/2026-09-14" && W[0].data.moves.length === 2, JSON.stringify(W.map(function (w) { return w.path; })));
+    const again = JSON.parse(run(`return JSON.stringify(rpDraft("T2", "2026-09-14", S.reports.T2["2026-09-14"]).moves.map(function (m) { return m.name; }))`));
+    ok("다시 열면 적은 명단 변동이 그대로", again.join() === "김도윤,박지우", again.join());
+
+    // 앱에 반영됐나
+    const st = () => JSON.parse(run(`var m = S.reports.T2["2026-09-14"].moves; return JSON.stringify([rpMoveState(m[0]), rpMoveState(m[1])])`));
+    ok("처음엔 둘 다 «안 옮겼다»", !st()[0].done && !st()[1].done && /안 옮겼다/.test(st()[0].text), JSON.stringify(st()));
+    ok("퇴원은 남아 있는 반을 다 말한다 (개별진도 포함)", /예비고1 S반, 개별진도/.test(st()[1].text), st()[1].text);
+    ok("선생님은 앱 명단을 못 고친다", await run(`return rpApplyMove(S.reports.T2["2026-09-14"].moves[0]).then(function(){return "됨";}, function(e){return e.message;})`) === "팀장만 앱 명단을 고친다");
+    ok("팀장 알림에 안 옮긴 것 둘", run(`return rpPendingMoves().length`) === 2);
+
+    run(`S.claims = { role:"owner", tid:"T1", name:"한민수" }; S.ro = false;`);
+    await run(`return rpApplyMove(S.reports.T2["2026-09-14"].moves[0])`);
+    ok("반 이동 = 새 반에 넣고 옛 반에서 뺀다 (학생 명단 메뉴의 넣기·빼기)", run(`return __ops.join("|")`) === "넣음 pT P1|뺌 pS P1", run(`return __ops.join("|")`));
+    ok("옮기고 나면 «앱에 옮겼다»", st()[0].done && st()[0].text === "앱에 옮겼다", JSON.stringify(st()[0]));
+    run(`__ops.length = 0;`);
+    await run(`return rpApplyMove(S.reports.T2["2026-09-14"].moves[0])`);
+    ok("두 번 눌러도 또 안 넣는다", run(`return __ops.length`) === 0, run(`return __ops.join("|")`));
+    await run(`return rpApplyMove(S.reports.T2["2026-09-14"].moves[1])`);
+    ok("퇴원 = 든 반에서 전부 뺀다 (사람 문서는 안 지운다)", run(`return __ops.join("|")`) === "뺌 pS P2|뺌 ind P2", run(`return __ops.join("|")`));
+    ok("다 옮기면 팀장 알림이 사라진다", run(`return rpPendingMoves().length`) === 0);
+
+    // 반쯤 된 것 · 번호 없는 옛 줄
+    run(`S.classes[1].roster.push({ id:"z", pid:"P7", name:"둘다" }); S.classes[0].roster.push({ id:"y", pid:"P7", name:"둘다" });`);
+    ok("새 반에 들어갔는데 옛 반에 남아 있으면 «안 됨»",
+      run(`var s = rpMoveState({ kind:"move", pid:"P7", name:"둘다", fromCid:"pS", toCid:"pT" }); return s.done + "|" + s.text`) === "false|새 반에는 들어갔는데 옛 반에도 남아 있다");
+    ok("목록에 없는 곳으로 가면 옛 반에서 빠진 것만 본다",
+      run(`var s = rpMoveState({ kind:"move", pid:"P1", name:"김도윤", fromCid:"pS", toCid:"", toName:"중등관" }); return s.done + "|" + s.text`) === "true|옛 반에서 뺐다");
+    ok("⚠ 학생 번호(pid)가 없는 줄은 안 옮긴다 — stUnassign 이 번호 없는 줄을 전부 지운다",
+      await run(`return rpApplyMove({ kind:"leave", sid:"a3", pid:"", name:"옛줄", fromCid:"pS" }).then(function(){return "됨";}, function(e){return e.message;})`).then(function (x) { return /학생 번호가 없다/.test(x); }));
+    ok("번호 없는 옛 줄은 옛 반에서 sid 로 찾는다", run(`return rpInClass("pS", { sid:"a3", pid:"", name:"옛줄", fromCid:"pS" })`) === true);
+
+    // 팀장 화면 · 원장님 문서
+    const sm = JSON.parse(run(`return JSON.stringify(rpSummary("2026-09-14").moves.map(function (x) { return x.who + ":" + x.m.name; }))`));
+    ok("받은 보고에 명단 변동을 모은다", sm.join() === "이현우:김도윤,이현우:박지우", sm.join());
+    const dg = run(`return rpDigest("2026-09-14")`);
+    ok("원장님 문서 머리에 명단 변동", dg.indexOf("- **명단 변동 2건** — 김도윤 예비고1 S반 → 예비고1 T반(9/14(월)), 박지우 예비고1 S반 · 퇴원(9/20(일))") >= 0, dg.split("\n").filter(function (l) { return /명단/.test(l); }).join(" / "));
+    ok("선생님 절에도 한 줄씩", dg.indexOf("- (퇴원) 박지우 예비고1 S반 · 퇴원 · 9/20(일)부터 — 이사") >= 0);
+
+    run(`S.classes = __cls; S.reports = __reps; S.ro = __ro; S.claims = __cl;`);
+  }
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");

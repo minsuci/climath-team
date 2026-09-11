@@ -340,6 +340,10 @@
   .rp-task input { flex: 1 1 200px; }
   .rp-seg { display: flex; gap: 2px; }
   .rp-extra { margin-bottom: 4px; }
+  .rp-move { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .rp-move .rp-mnote { flex: 1 1 180px; }
+  .rp-moves { border: 1px solid #c7d6ee; background: #f5f8fd; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
+  .rp-mrow { margin-top: 5px; line-height: 1.8; }
   .rp-warn { font-size: 12px; color: #b35d00; margin: 10px 0 0; line-height: 1.6; }
   textarea[data-rpf] { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; }
   .rp-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; margin-bottom: 8px; }
@@ -1003,6 +1007,11 @@ function renderBanner() {
 var RP_ATT = ["출석", "결석", "지각", "조퇴"];
 var RP_STATE = { done: "완료", doing: "진행", hold: "보류" };
 var RP_KINDS = ["학부모 연락", "상담", "자료 제작", "채점·검사", "행정", "기타"];
+// 명단 변동 (9/11 추가) — «예비고1 S → 예비고1 T» 같은 반 이동과 퇴원을 보고에 적는다.
+// 선생님은 앱 명단을 못 고친다(읽기 계정). 적어 올리면 **팀장이 보고 누른다** — 저절로 바뀌지 않는다.
+//   moves: [{ kind: "move"|"leave", sid, pid, name, fromCid, fromName, toCid, toName, date, note }]
+//   toCid 가 비고 toName 만 있으면 목록에 없는 곳(«중등관» 따위)이다 — 앱에 넣을 반이 없다.
+var RP_MOVE = { move: "반 이동", leave: "퇴원" };
 var RP_DUE_HOUR = 8;               // 그 날 보고는 **다음 날 아침 8시**까지
 // 이 날부터 «안 냈다» 를 센다. 기능을 올리기 전 날들이 전부 «안 냄» 으로 뜨면 안 된다 — **올리는 날로 바꾼다.**
 var RP_START = "2026-09-14";
@@ -1076,7 +1085,7 @@ function rpDraft(tid, d, prev) {
       attRead: false,
       students: rpStudentsOn(c, d).map(function (r) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
-        return { sid: r.id, name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
+        return { sid: r.id, pid: r.pid || "", name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
           called: ps ? !!ps.called : false, note: ps ? (ps.note || "") : "",
           consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
       }) };
@@ -1088,7 +1097,82 @@ function rpDraft(tid, d, prev) {
   });
   return { tid: tid, name: teacherName(tid), date: d, classes: classes, tasks: tasks,
     extra: (prev.extra || []).slice(), tomorrow: prev.tomorrow || "", toLead: prev.toLead || "",
+    moves: (prev.moves || []).map(function (m) { return Object.assign({}, m); }),
     submitted: prev.submitted || 0, updated: prev.updated || 0 };
+}
+// 명단 변동에서 고를 학생 — 그 날 수업이 없어도 **내 반 학생은 전부**. 개별진도반은 요일이 달라 그 날 명단에 없을 수 있다.
+function rpMyRoster(tid, d) {
+  var t = rpTeacher(tid), out = [];
+  if (!t) return out;
+  S.classes.forEach(function (c) {
+    if ((t.classIds || []).indexOf(c.id) < 0 || (c.endDate && d > c.endDate)) return;
+    (c.roster || []).forEach(function (r) {
+      if (r.teacher || !rpActiveOn(r, d)) return;
+      out.push({ cid: c.id, cname: c.name, sid: r.id, pid: r.pid || "", name: r.name });
+    });
+  });
+  return out.sort(function (a, b) { return a.cname.localeCompare(b.cname, "ko") || String(a.name).localeCompare(String(b.name), "ko"); });
+}
+// 옮겨 갈 수 있는 반 — 그 날 끝나지 않은 반 전부(남의 반 포함).
+function rpMoveTargets(d, fromCid) {
+  return S.classes.filter(function (c) { return c.id !== fromCid && !(c.endDate && d > c.endDate); })
+    .sort(function (a, b) { return String(a.name).localeCompare(String(b.name), "ko"); });
+}
+function rpMoveText(m) {
+  if (m.kind === "leave") return (m.fromName ? m.fromName + " · " : "") + "퇴원";
+  return (m.fromName || "?") + " → " + (m.toName || "?");
+}
+// 앱 명단에 반영됐나. ⚠ **pid 로 맞춘다** — 반마다 명단 번호(sid)가 따로라, 새 반에서는 sid 가 다르다.
+//   pid 가 없는 옛 줄은 옛 반에서만 sid 로 찾고, 새 반은 이름으로 본다.
+function rpInClass(cid, m) {
+  var c = S.classes.filter(function (x) { return x.id === cid; })[0];
+  if (!c) return false;
+  return (c.roster || []).some(function (r) {
+    if (r.teacher || isEnded(r)) return false;
+    if (m.pid) return r.pid === m.pid;
+    return cid === m.fromCid ? r.id === m.sid : r.name === m.name;
+  });
+}
+function rpMoveState(m) {
+  if (m.kind === "leave") {
+    var still = S.classes.filter(function (c) { return rpInClass(c.id, m); });
+    return still.length ? { done: false, text: "앱 명단에 아직 있다 — " + still.map(function (c) { return c.name; }).join(", ") }
+                        : { done: true, text: "앱에서 뺐다" };
+  }
+  var inFrom = rpInClass(m.fromCid, m), inTo = m.toCid ? rpInClass(m.toCid, m) : null;
+  if (!inFrom && inTo !== false) return { done: true, text: m.toCid ? "앱에 옮겼다" : "옛 반에서 뺐다" };
+  if (inFrom && inTo) return { done: false, text: "새 반에는 들어갔는데 옛 반에도 남아 있다" };
+  if (!inFrom && inTo === false) return { done: false, text: "옛 반에서는 빠졌는데 새 반에 없다" };
+  return { done: false, text: "앱에 아직 안 옮겼다" };
+}
+// 팀장이 누르면 앱 명단을 바꾼다 — 학생 명단 메뉴의 반에 넣기·빼기(stAssign·stUnassign)를 그대로 쓴다.
+// 그래서 명단 변경 기록에도 남고, 옛 명단 번호도 pastIds 에 적힌다(다시 오면 기록이 이어진다).
+// ⚠ **pid 가 없으면 안 한다.** stUnassign 은 `r.pid !== pid` 로 거르는데, pid 가 undefined 면
+//   **pid 없는 줄이 전부** 빠진다. 그런 학생은 학생 명단 메뉴에서 손으로 옮긴다.
+// 퇴원은 **반에서 빼기**다. 사람 문서는 안 지운다(출결·과제가 그 번호에 달려 있다).
+async function rpApplyMove(m) {
+  if (S.ro) throw new Error("팀장만 앱 명단을 고친다");
+  if (!m.pid) throw new Error("이 학생은 명단에 학생 번호가 없다 — 학생 명단 메뉴에서 직접 옮겨 주세요");
+  if (m.kind === "leave") {
+    var inCls = S.classes.filter(function (c) { return rpInClass(c.id, m); });
+    for (var i = 0; i < inCls.length; i++) await stUnassign(inCls[i].id, m.pid);
+    return;
+  }
+  if (m.toCid && !rpInClass(m.toCid, m)) await stAssign(m.toCid, S.byPid[m.pid] || { pid: m.pid, name: m.name });
+  if (rpInClass(m.fromCid, m)) await stUnassign(m.fromCid, m.pid);
+}
+// 보고로 올라왔는데 앱에 아직 안 옮긴 것 — 읽어 둔 보고 전부(최근 3주)에서. 팀장 알림 띠가 이걸 센다.
+function rpPendingMoves() {
+  var out = [];
+  Object.keys(S.reports || {}).forEach(function (tid) {
+    var m = S.reports[tid] || {};
+    Object.keys(m).sort().forEach(function (d) {
+      var rep = m[d];
+      if (!(rep && rep.submitted)) return;
+      (rep.moves || []).forEach(function (mv) { if (!rpMoveState(mv).done) out.push({ tid: tid, d: d, m: mv }); });
+    });
+  });
+  return out;
 }
 // 수업관리 앱에서 읽은 것을 판에 얹는다. app = { cid: { att: {sid:true}|null, consult: {sid:[..]}, makeup: {sid:{..}} } }
 // 앱에 출석이 찍혔으면 출석, 안 찍혔으면 결석. **못 읽었으면 비운다** — 모르는 걸 결석으로 적지 않는다.
@@ -1121,6 +1205,12 @@ function rpCheck(rep) {
     if (nc) warn.push(c.name + " — 결석인데 연락 안 한 학생 " + nc + "명");
     if (!String(c.progress || "").trim()) warn.push(c.name + " — 진도가 비었다");
   });
+  // 명단 변동은 학생을 골랐으면 끝까지 — «어디로» 가 빈 반 이동은 팀장이 받아도 할 수 있는 게 없다.
+  // 학생도 안 고른 줄은 막지 않고 버린다(rpClean).
+  (rep.moves || []).forEach(function (m) {
+    if (!m.name || m.kind !== "move") return;
+    if (!m.toCid && !String(m.toName || "").trim()) stop.push("반 이동 — " + m.name + ": 어느 반으로 가는지 골라야 낼 수 있다");
+  });
   return { stop: stop, warn: warn };
 }
 // 저장할 모양. 화면에만 쓰는 칸(attRead · due)은 뗀다.
@@ -1129,7 +1219,7 @@ function rpClean(rep) {
     classes: rep.classes.map(function (c) {
       return { cid: c.cid, name: c.name, progress: String(c.progress || "").trim(), homework: String(c.homework || "").trim(),
         students: c.students.map(function (s) {
-          return { sid: s.sid, name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
+          return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
                    note: String(s.note || "").trim(), consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
         }) };
     }),
@@ -1137,6 +1227,13 @@ function rpClean(rep) {
       .map(function (t) { return { id: t.id, text: t.text, state: t.state || "", note: String(t.note || "").trim() }; }),
     extra: rep.extra.filter(function (x) { return String(x.text || "").trim(); })
       .map(function (x) { return { kind: x.kind || "기타", text: String(x.text).trim() }; }),
+    moves: (rep.moves || []).filter(function (m) { return m.name; }).map(function (m) {
+      var leave = m.kind === "leave";
+      return { kind: leave ? "leave" : "move", sid: m.sid || "", pid: m.pid || "", name: m.name,
+        fromCid: m.fromCid || "", fromName: m.fromName || "",
+        toCid: leave ? "" : (m.toCid || ""), toName: leave ? "" : String(m.toName || "").trim(),
+        date: m.date || rep.date, note: String(m.note || "").trim() };
+    }),
     tomorrow: String(rep.tomorrow || "").trim(), toLead: String(rep.toLead || "").trim() };
 }
 // ⚠ **자기 칸에만 쓴다.** 팀장도 남의 보고는 못 고친다 — 규칙도 같다(tid == myTid()).
@@ -1191,7 +1288,7 @@ async function rpLoadApp(tid, d) {
 
 // ---- 팀장이 아침에 보는 것 · 원장님께 올리는 것 ----
 function rpSummary(d) {
-  var sm = { expect: [], got: [], missing: [], noCall: [], notes: [], asks: [], tomorrow: [] };
+  var sm = { expect: [], got: [], missing: [], noCall: [], notes: [], asks: [], tomorrow: [], moves: [] };
   S.teachers.forEach(function (t) {
     var rep = ((S.reports || {})[t.tid] || {})[d];
     var exp = rpExpected(t.tid, d);
@@ -1204,6 +1301,7 @@ function rpSummary(d) {
         if (s.note || (s.att && s.att !== "출석")) sm.notes.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name, att: s.att, note: s.note, called: s.called });
       });
     });
+    (rep.moves || []).forEach(function (m) { sm.moves.push({ tid: t.tid, who: t.name, m: m }); });
     if (rep.toLead) sm.asks.push({ tid: t.tid, who: t.name, text: rep.toLead });
     if (rep.tomorrow) sm.tomorrow.push({ tid: t.tid, who: t.name, text: rep.tomorrow });
   });
@@ -1219,6 +1317,8 @@ function rpDigest(d) {
     (sm.missing.length ? " · **안 낸 사람: " + sm.missing.map(nm).join(", ") + "**" : ""));
   if (sm.noCall.length) L.push("- **결석인데 연락 안 된 학생 " + sm.noCall.length + "명** — " +
     sm.noCall.map(function (x) { return x.name + "(" + x.cls + ")"; }).join(", "));
+  if (sm.moves.length) L.push("- **명단 변동 " + sm.moves.length + "건** — " +
+    sm.moves.map(function (x) { return x.m.name + " " + rpMoveText(x.m) + (x.m.date ? "(" + fmtMD(x.m.date) + ")" : ""); }).join(", "));
   if (sm.asks.length) L.push("- 요청 " + sm.asks.length + "건");
   sm.got.forEach(function (tid) {
     var rep = S.reports[tid][d];
@@ -1238,6 +1338,9 @@ function rpDigest(d) {
       tk.forEach(function (t) { L.push("- [" + (RP_STATE[t.state] || "—") + "] " + t.text + (t.note ? " — " + t.note : "")); });
     }
     (rep.extra || []).forEach(function (x) { L.push("- (" + x.kind + ") " + x.text); });
+    (rep.moves || []).forEach(function (m) {
+      L.push("- (" + RP_MOVE[m.kind] + ") " + m.name + " " + rpMoveText(m) + (m.date ? " · " + fmtMD(m.date) + "부터" : "") + (m.note ? " — " + m.note : ""));
+    });
     L.push(""); L.push("내일: " + (rep.tomorrow || "—"));
     if (rep.toLead) L.push("요청: " + rep.toLead);
   });
@@ -1273,6 +1376,11 @@ function rpBannerHtml() {
     if (all.length) out += '<div class="banner rp-late"><b>업무보고 안 낸 선생님</b> — ' +
       all.map(function (x) { return esc(x.name) + ' ' + x.days.map(function (d) { return esc(fmtMD(d)); }).join("·"); }).join(" / ") +
       ' <button class="mini" data-rpall>받은 보고 보기</button></div>';
+    // 명단 변동은 팀장이 눌러야 앱에 들어간다. 그 날 보고를 지나쳐도 여기 남는다.
+    var pm = rpPendingMoves();
+    if (pm.length) out += '<div class="banner"><b>명단 변동 — 앱에 아직 안 옮긴 것 ' + pm.length + '건</b> — ' +
+      pm.slice(0, 4).map(function (x) { return esc(x.m.name) + ' ' + esc(rpMoveText(x.m)); }).join(" / ") + (pm.length > 4 ? " …" : "") +
+      ' <button class="mini" data-rpmgo="' + pm[0].d + '">보고에서 보기</button></div>';
   }
   return out;
 }
@@ -1284,6 +1392,9 @@ function rpBannerWire(el) {
       S.rpTab = "all"; S.rpDate = all.length ? all[0].days[all[0].days.length - 1] : TODAY;
       showPage("report"); renderReport();
     };
+  });
+  $$("[data-rpmgo]", el).forEach(function (b) {
+    b.onclick = function () { S.rpTab = "all"; S.rpDate = b.getAttribute("data-rpmgo"); S.rpEdit = null; showPage("report"); renderReport(); };
   });
 }
 
@@ -1351,8 +1462,10 @@ function rpDrawMine(box, d) {
       '<div class="rpwrap"><table class="rp-t"><thead><tr><th>#</th><th>이름</th><th>출결</th><th>결석 연락</th><th>앱에 적힌 것</th><th style="width:40%">특이사항</th></tr></thead><tbody>' +
       c.students.map(function (s, si) {
         var k = ci + "|" + si;
+        var mv = (rep.moves || []).filter(function (m) { return m.name && m.fromCid === c.cid && m.sid === s.sid; })[0];
         return '<tr class="' + (s.att === "결석" ? "abs" : s.att === "지각" || s.att === "조퇴" ? "late" : "") + '">' +
-          '<td class="muted">' + (si + 1) + '</td><td><b>' + esc(s.name) + '</b></td>' +
+          '<td class="muted">' + (si + 1) + '</td><td><b>' + esc(s.name) + '</b>' +
+          (mv ? ' <span class="pill ' + (mv.kind === "leave" ? "red" : "blue") + '">' + esc(mv.kind === "leave" ? "퇴원" : "→ " + (mv.toName || "?")) + '</span>' : "") + '</td>' +
           '<td><select data-rps="' + k + '|att"' + RPK + '><option value="">—</option>' +
           RP_ATT.map(function (a) { return '<option' + (a === s.att ? " selected" : "") + '>' + a + '</option>'; }).join("") + '</select>' +
           (s.auto && s.att && s.auto !== s.att ? ' <span class="rp-auto">앱: ' + esc(s.auto) + '</span>' : "") + '</td>' +
@@ -1364,6 +1477,34 @@ function rpDrawMine(box, d) {
             (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '></td></tr>';
       }).join("") + '</tbody></table></div></div>';
   });
+
+  // 명단 변동 — 반 이동 · 퇴원
+  var roster = rpMyRoster(me, d);
+  h += '<h3 class="rp-h">명단 변동 <span class="muted" style="font-size:12px;font-weight:400">— 반이 바뀐 학생 · 퇴원생. 팀장이 보고 앱 명단에 옮긴다</span></h3>';
+  h += rep.moves.map(function (m, mi) {
+    var st = m.name && saved && saved.submitted ? rpMoveState(m) : null;
+    var other = m.toOther || (!m.toCid && m.toName);
+    return '<div class="rp-move"><span class="pill ' + (m.kind === "leave" ? "red" : "blue") + '">' + RP_MOVE[m.kind] + '</span>' +
+      '<select data-rpm="' + mi + '|who"' + RPK + '><option value="">학생 고르기</option>' +
+      roster.map(function (r) {
+        var v = r.cid + "|" + r.sid;
+        return '<option value="' + esc(v) + '"' + (m.fromCid === r.cid && m.sid === r.sid ? " selected" : "") + '>' + esc(r.name) + ' (' + esc(r.cname) + ')</option>';
+      }).join("") + '</select>' +
+      (m.kind === "move"
+        ? '<span class="muted">→</span><select data-rpm="' + mi + '|to"' + RPK + '><option value="">어느 반으로</option>' +
+          rpMoveTargets(d, m.fromCid).map(function (c) { return '<option value="' + esc(c.id) + '"' + (m.toCid === c.id ? " selected" : "") + '>' + esc(c.name) + '</option>'; }).join("") +
+          '<option value="__other"' + (other ? " selected" : "") + '>목록에 없는 곳 — 직접 적기</option></select>' +
+          (other ? '<input type="text" data-rpm="' + mi + '|toName" value="' + esc(m.toName || "") + '" placeholder="예: 중등관 · 다른 관" style="width:140px"' + RPK + '>' : "")
+        : "") +
+      '<label class="muted" style="font-size:12px">' + (m.kind === "leave" ? "마지막 수업" : "옮기는 날") +
+      ' <input type="date" data-rpm="' + mi + '|date" value="' + esc(m.date || d) + '"' + RPK + '></label>' +
+      '<input type="text" data-rpm="' + mi + '|note" value="' + esc(m.note || "") + '" placeholder="' + (m.kind === "leave" ? "퇴원 사유" : "왜 옮기나") + '" class="rp-mnote"' + RPK + '>' +
+      (st ? '<span class="pill ' + (st.done ? "green" : "") + '">' + esc(st.done ? "팀장이 앱에 반영함" : "팀장 확인 전") + '</span>' : "") +
+      '<button class="x" data-rpmdel="' + mi + '"' + RPK + ' title="이 줄 빼기">×</button></div>';
+  }).join("") +
+    '<div class="row"><button class="mini" data-rpmadd="move"' + RPK + '>＋ 반 이동</button>' +
+    '<button class="mini" data-rpmadd="leave"' + RPK + '>＋ 퇴원</button>' +
+    (roster.length ? "" : '<span class="muted" style="font-size:12px">맡은 반 명단이 없다</span>') + '</div>';
 
   // 업무 — 할 일
   h += '<h3 class="rp-h">업무 <span class="muted" style="font-size:12px;font-weight:400">— 그 날까지 기한인 내 할 일. «완료» 는 할 일 메뉴의 내 완료로도 남는다</span></h3>';
@@ -1425,6 +1566,32 @@ function rpWireMine(box) {
   var add = $("[data-rpxadd]", box);
   if (add) add.onclick = function () { rep.extra.push({ kind: RP_KINDS[0], text: "" }); re(); };
   $$("[data-rpf]", box).forEach(function (i) { i.oninput = function () { rep[i.getAttribute("data-rpf")] = i.value; }; });
+  // 명단 변동
+  var mroster = rpMyRoster(rep.tid, rep.date);
+  $$("[data-rpmadd]", box).forEach(function (b) {
+    b.onclick = function () {
+      rep.moves.push({ kind: b.getAttribute("data-rpmadd"), sid: "", pid: "", name: "", fromCid: "", fromName: "", toCid: "", toName: "", date: rep.date, note: "" });
+      re();
+    };
+  });
+  $$("[data-rpmdel]", box).forEach(function (b) { b.onclick = function () { rep.moves.splice(+b.getAttribute("data-rpmdel"), 1); re(); }; });
+  $$("[data-rpm]", box).forEach(function (i) {
+    var k = i.getAttribute("data-rpm").split("|"), m = rep.moves[+k[0]];
+    if (k[1] === "who") i.onchange = function () {
+      var p = i.value.split("|"), r = mroster.filter(function (x) { return x.cid === p[0] && x.sid === p[1]; })[0];
+      Object.assign(m, r ? { sid: r.sid, pid: r.pid, name: r.name, fromCid: r.cid, fromName: r.cname }
+                         : { sid: "", pid: "", name: "", fromCid: "", fromName: "" });
+      if (m.toCid && m.toCid === m.fromCid) { m.toCid = ""; m.toName = ""; }   // 같은 반으로는 못 간다
+      re();
+    };
+    else if (k[1] === "to") i.onchange = function () {
+      if (i.value === "__other") { m.toCid = ""; m.toName = ""; m.toOther = true; }
+      else { m.toCid = i.value; m.toName = i.value ? className(i.value) : ""; m.toOther = false; }
+      re();
+    };
+    else if (k[1] === "date") i.onchange = function () { m.date = i.value || rep.date; };
+    else i.oninput = function () { m[k[1]] = i.value; };      // toName · note — 다시 그리지 않는다
+  });
   var go = $("[data-rpsave]", box);
   if (go) go.onclick = async function () {
     var chk = rpCheck(rep);
@@ -1446,11 +1613,27 @@ function rpDrawAll(box, d, sm) {
     '<div class="' + (sm.missing.length && passed ? "bad" : "") + '"><b>' + sm.missing.length + '</b>안 낸 사람</div>' +
     '<div class="' + (sm.noCall.length ? "bad" : "") + '"><b>' + sm.noCall.length + '</b>연락 안 된 결석</div>' +
     '<div><b>' + sm.notes.length + '</b>특이사항</div>' +
-    '<div><b>' + sm.asks.length + '</b>요청</div></div>';
+    '<div><b>' + sm.asks.length + '</b>요청</div>' +
+    '<div class="' + (sm.moves.some(function (x) { return !rpMoveState(x.m).done; }) ? "bad" : "") + '"><b>' + sm.moves.length + '</b>명단 변동</div></div>';
   if (sm.missing.length) h += '<p style="font-size:13px"><b>안 낸 사람</b> — ' + sm.missing.map(function (t) { return esc(teacherName(t)); }).join(", ") +
     (passed ? ' <span class="red">(아침 8시 지남 — 본인에게도 알림이 떠 있다)</span>' : ' <span class="muted">(아직 기한 전 — 다음 날 아침 8시까지)</span>') + '</p>';
   if (sm.asks.length) h += '<div class="rp-asks"><b>팀장에게 온 것</b>' + sm.asks.map(function (x) {
     return '<div><span class="pill">' + esc(x.who) + '</span> ' + esc(x.text) + '</div>'; }).join("") + '</div>';
+  // 명단 변동 — 팀장이 보고 누른다. 저절로 안 바뀐다 (시트 대조와 같은 원칙).
+  if (sm.moves.length) h += '<div class="rp-moves"><b>명단 변동</b> <span class="muted" style="font-size:12px">«앱에 반영» 을 누르면 수업관리 앱 명단이 바뀐다 (학생 명단 메뉴의 반에 넣기·빼기와 같다)</span>' +
+    sm.moves.map(function (x, i) {
+      var m = x.m, st = rpMoveState(m);
+      return '<div class="rp-mrow"><span class="pill ' + (m.kind === "leave" ? "red" : "blue") + '">' + RP_MOVE[m.kind] + '</span> ' +
+        '<b>' + esc(m.name) + '</b> ' + esc(rpMoveText(m)) +
+        (m.date ? ' <span class="muted">· ' + esc(fmtMD(m.date)) + (m.kind === "leave" ? " 마지막" : "부터") + '</span>' : "") +
+        (m.note ? ' <span class="muted">— ' + esc(m.note) + '</span>' : "") +
+        ' <span class="muted" style="font-size:12px">(' + esc(x.who) + ')</span> ' +
+        (st.done ? '<span class="pill green">' + esc(st.text) + '</span>'
+          : '<span class="pill orange">' + esc(st.text) + '</span>' +
+            (m.pid && (m.kind === "leave" || m.toCid || rpInClass(m.fromCid, m))
+              ? ' <button class="mini" data-rpmv="' + i + '">앱에 반영</button>'
+              : !m.pid ? ' <span class="muted" style="font-size:12px">학생 번호가 없는 줄 — 학생 명단 메뉴에서 직접</span>' : "")) + '</div>';
+    }).join("") + '</div>';
   h += '<div class="row" style="margin:8px 0"><button class="btn" data-rpdig>원장님께 올릴 문서</button>' +
     '<span class="muted" style="font-size:12px">낸 보고를 한 장으로 모은다 (마크다운). 복사해서 올린다.</span></div>' +
     (S.rpDig === d ? '<textarea class="rp-dig" rows="16" readonly>' + esc(rpDigest(d)) + '</textarea>' +
@@ -1490,10 +1673,29 @@ function rpDrawAll(box, d, sm) {
         return '<div><span class="pill">' + esc(x.kind) + '</span> ' + esc(x.text) + '</div>';
       }).join("") + '</div>';
     }
+    if ((rep.moves || []).length) h += '<div class="rp-sub"><b>명단 변동</b>' + rep.moves.map(function (m) {
+      return '<div><span class="pill ' + (m.kind === "leave" ? "red" : "blue") + '">' + RP_MOVE[m.kind] + '</span> ' + esc(m.name) + ' ' + esc(rpMoveText(m)) +
+        (m.note ? ' <span class="muted">— ' + esc(m.note) + '</span>' : "") + '</div>';
+    }).join("") + '</div>';
     h += '<div class="rp-sub"><b>내일</b> ' + esc(rep.tomorrow || "—") + '</div>' +
       (rep.toLead ? '<div class="rp-sub"><b>팀장에게</b> ' + esc(rep.toLead) + '</div>' : "") + '</div>';
   });
   box.innerHTML = h;
+  $$("[data-rpmv]", box).forEach(function (b) {
+    b.onclick = async function () {
+      var m = sm.moves[+b.getAttribute("data-rpmv")].m;
+      var what = m.kind === "leave"
+        ? m.name + " 을(를) 앱 명단에서 뺍니다 — " + S.classes.filter(function (c) { return rpInClass(c.id, m); }).map(function (c) { return c.name; }).join(", ") +
+          "\n(학생 기록은 안 지웁니다. 다시 오면 반에 넣으면 이어집니다)"
+        : m.name + " — " + rpMoveText(m) + (m.toCid ? "" : "\n(가는 곳이 앱에 없는 반이라 옛 반에서 빼기만 합니다)");
+      if (m.date && m.date > TODAY) what += "\n\n⚠ 보고에 적힌 날은 " + fmtMD(m.date) + " 입니다. 지금 누르면 오늘부터 바뀝니다.";
+      if (!confirm(what + "\n\n진행할까요?")) return;
+      b.disabled = true; b.textContent = "옮기는 중…";
+      try { await rpApplyMove(m); }
+      catch (e) { alert("못 옮겼다: " + e.message); }
+      renderBanner(); renderReport();
+    };
+  });
   var dg = $("[data-rpdig]", box);
   if (dg) dg.onclick = function () { S.rpDig = S.rpDig === d ? "" : d; renderReport(); };
   var dx = $("[data-rpdigx]", box);

@@ -1379,12 +1379,27 @@ node tools/test-done.js
 - 팀장 «받은 보고»: 낸 사람/수업한 사람, 안 낸 사람, 결석 연락 안 된 학생, 요청, **«원장님께 올릴 문서»**(마크다운 `rpDigest` — 출석이고 적은 것 없는 학생은 뺀다)
 - 8시 전에 열면 어제 보고를 먼저 편다(`rpDefaultDate`)
 
+### 명단 변동 — 반 이동 · 퇴원 (같은 날 추가)
+
+"반이 바뀐 학생이 어디서 어디로 가게 됐는지 보고할 수 있도록, 퇴원생도 보고할 수 있도록."
+
+- 보고의 `moves: [{ kind: "move"|"leave", sid, pid, name, fromCid, fromName, toCid, toName, date, note }]`
+- 선생님: «＋ 반 이동» · «＋ 퇴원». 학생은 **내 반 전부**에서 고른다(`rpMyRoster` — 그 날 수업 없는 개별진도 학생도).
+  가는 반은 끝나지 않은 반 전부(`rpMoveTargets`) + «목록에 없는 곳 — 직접 적기»(`toCid` 없이 `toName` 만). 학생 줄에 «→ 예비고1 T반» · «퇴원» 칩
+- 학생을 골랐는데 «어디로» 가 빈 반 이동은 **못 낸다**(`rpCheck` stop). 학생도 안 고른 줄은 버린다(`rpClean`)
+- 팀장: 받은 보고에 «명단 변동» 상자. 줄마다 앱에 반영됐나(`rpMoveState`) + **«앱에 반영»** 단추(`rpApplyMove`). **저절로 안 바뀐다** — 시트 대조와 같은 원칙
+  - 반영은 학생 명단 메뉴의 `stAssign`·`stUnassign` 을 그대로 쓴다 → 명단 변경 기록·`pastIds` 가 따라온다. 퇴원은 **반에서 빼기**(사람 문서는 안 지운다), 든 반 전부에서
+  - 반영됐나는 **pid 로** 본다 — 반마다 명단 번호(sid)가 따로라 새 반에서는 sid 가 다르다
+  - ⚠ **pid 없는 줄은 반영하지 않는다.** `stUnassign` 이 `r.pid !== pid` 로 걸러서, pid 가 undefined 면 번호 없는 줄이 **전부** 빠진다
+  - 보고에 적힌 날이 미래여도 누르면 **오늘부터** 바뀐다(`stAssign` 은 시작일을 안 받는다) — 누를 때 한 번 더 묻는다
+- 안 옮긴 명단 변동은 팀장 알림 띠에 남는다(`rpPendingMoves` — 읽어 둔 3주 치). 원장님 문서에도 «명단 변동 n건» 줄
+
 ⚠ 함수 이름을 `saveReport` 로 지었다가 «한 줄 보고» 의 `saveReport(id, text)` 와 겹쳐 **나중 것이 조용히 덮었다.**
 `saveDailyReport` 로 바꾸고 `test-wiring.js` 에 «같은 이름의 함수가 둘» 검사를 넣었다.
 
 **올릴 때:** `RP_START` 를 올리는 날로 바꾼다(그 전 날들이 전부 «안 냄» 으로 뜬다) → `node tools/publish-rules.mjs` → main 에 합친다.
 
-시험 `tools/test-dailyreport.js` 73건.
+시험 `tools/test-dailyreport.js` 101건 (명단 변동 28건 포함).
 
 ## 개발 현황 (2026-09-05)
 
