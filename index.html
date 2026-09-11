@@ -1002,7 +1002,7 @@ function renderBanner() {
 //     { tid, name, date, submitted(처음 낸 시각), updated,
 //       classes: [{ cid, name, progress, homework,
 //                   students: [{ sid, name, att, auto, called, note, consult, makeup }] }],
-//       tasks: [{ id, text, state, note }], extra: [{ kind, text }], tomorrow, toLead }
+//       tasks: [{ id, text, state, note }], extra: [{ kind, text }], toLead }
 //   사람마다 칸 하나(marks·myTasks 와 같은 모양). 문서 이름이 곧 누구인지라 규칙이 남의 것을 막는다.
 var RP_ATT = ["출석", "결석", "지각", "조퇴"];
 var RP_STATE = { done: "완료", doing: "진행", hold: "보류" };
@@ -1096,7 +1096,7 @@ function rpDraft(tid, d, prev) {
              note: pt ? (pt.note || "") : "" };
   });
   return { tid: tid, name: teacherName(tid), date: d, classes: classes, tasks: tasks,
-    extra: (prev.extra || []).slice(), tomorrow: prev.tomorrow || "", toLead: prev.toLead || "",
+    extra: (prev.extra || []).slice(), toLead: prev.toLead || "",
     moves: (prev.moves || []).map(function (m) { return Object.assign({}, m); }),
     submitted: prev.submitted || 0, updated: prev.updated || 0 };
 }
@@ -1193,11 +1193,11 @@ function rpApplyApp(rep, app) {
   });
   return rep;
 }
-// 내기 전에 걸리는 것. **막는 것은 «내일 할 일» 하나뿐이다** — 원장님이 제일 중요하다고 한 칸이다.
+// 내기 전에 걸리는 것. 대부분 알려만 준다.
+// «내일 할 일» 칸은 처음엔 필수였다가 **뺐다**(9/11 마왕님). 금·토에 수업 없는 사람도 뭔가 적어야 했고, 막으면 한 줄로 때운다.
 // 나머지는 알려만 준다. 다 막으면 5분 안에 못 낸다.
 function rpCheck(rep) {
   var stop = [], warn = [];
-  if (!String(rep.tomorrow || "").trim()) stop.push("내일 할 일을 적어야 낼 수 있다");
   rep.classes.forEach(function (c) {
     var none = c.students.filter(function (s) { return !s.att; }).length;
     if (none) warn.push(c.name + " — 출결을 안 고른 학생 " + none + "명");
@@ -1234,7 +1234,7 @@ function rpClean(rep) {
         toCid: leave ? "" : (m.toCid || ""), toName: leave ? "" : String(m.toName || "").trim(),
         date: m.date || rep.date, note: String(m.note || "").trim() };
     }),
-    tomorrow: String(rep.tomorrow || "").trim(), toLead: String(rep.toLead || "").trim() };
+    toLead: String(rep.toLead || "").trim() };
 }
 // ⚠ **자기 칸에만 쓴다.** 팀장도 남의 보고는 못 고친다 — 규칙도 같다(tid == myTid()).
 //   선생님은 읽기 계정이라 쓰기 가로채기(guardWrites)를 passWrite 로 한 번 연다 (toggleMyMark 와 같다).
@@ -1288,7 +1288,7 @@ async function rpLoadApp(tid, d) {
 
 // ---- 팀장이 아침에 보는 것 · 원장님께 올리는 것 ----
 function rpSummary(d) {
-  var sm = { expect: [], got: [], missing: [], noCall: [], notes: [], asks: [], tomorrow: [], moves: [] };
+  var sm = { expect: [], got: [], missing: [], noCall: [], notes: [], asks: [], moves: [] };
   S.teachers.forEach(function (t) {
     var rep = ((S.reports || {})[t.tid] || {})[d];
     var exp = rpExpected(t.tid, d);
@@ -1303,7 +1303,6 @@ function rpSummary(d) {
     });
     (rep.moves || []).forEach(function (m) { sm.moves.push({ tid: t.tid, who: t.name, m: m }); });
     if (rep.toLead) sm.asks.push({ tid: t.tid, who: t.name, text: rep.toLead });
-    if (rep.tomorrow) sm.tomorrow.push({ tid: t.tid, who: t.name, text: rep.tomorrow });
   });
   return sm;
 }
@@ -1341,8 +1340,7 @@ function rpDigest(d) {
     (rep.moves || []).forEach(function (m) {
       L.push("- (" + RP_MOVE[m.kind] + ") " + m.name + " " + rpMoveText(m) + (m.date ? " · " + fmtMD(m.date) + "부터" : "") + (m.note ? " — " + m.note : ""));
     });
-    L.push(""); L.push("내일: " + (rep.tomorrow || "—"));
-    if (rep.toLead) L.push("요청: " + rep.toLead);
+    if (rep.toLead) { L.push(""); L.push("요청: " + rep.toLead); }
   });
   return L.join("\n");
 }
@@ -1526,9 +1524,7 @@ function rpDrawMine(box, d) {
     }).join("") +
     '<button class="mini" data-rpxadd' + RPK + '>＋ 한 줄</button>';
 
-  h += '<h3 class="rp-h">내일 할 일 <span class="red">*</span></h3>' +
-    '<textarea data-rpf="tomorrow" rows="3" placeholder="내일 할 것 — 이 칸은 비우면 못 낸다"' + RPK + '>' + esc(rep.tomorrow) + '</textarea>' +
-    '<h3 class="rp-h">팀장에게</h3>' +
+  h += '<h3 class="rp-h">팀장에게</h3>' +
     '<textarea data-rpf="toLead" rows="2" placeholder="막힌 것 · 필요한 것 · 데스크에 부탁할 것 (없으면 비움)"' + RPK + '>' + esc(rep.toLead) + '</textarea>';
 
   h += (chk.warn.length ? '<div class="rp-warn">' + chk.warn.map(esc).join("<br>") + '</div>' : "") +
@@ -1677,8 +1673,7 @@ function rpDrawAll(box, d, sm) {
       return '<div><span class="pill ' + (m.kind === "leave" ? "red" : "blue") + '">' + RP_MOVE[m.kind] + '</span> ' + esc(m.name) + ' ' + esc(rpMoveText(m)) +
         (m.note ? ' <span class="muted">— ' + esc(m.note) + '</span>' : "") + '</div>';
     }).join("") + '</div>';
-    h += '<div class="rp-sub"><b>내일</b> ' + esc(rep.tomorrow || "—") + '</div>' +
-      (rep.toLead ? '<div class="rp-sub"><b>팀장에게</b> ' + esc(rep.toLead) + '</div>' : "") + '</div>';
+    h += (rep.toLead ? '<div class="rp-sub"><b>팀장에게</b> ' + esc(rep.toLead) + '</div>' : "") + '</div>';
   });
   box.innerHTML = h;
   $$("[data-rpmv]", box).forEach(function (b) {

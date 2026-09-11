@@ -65,7 +65,7 @@ ok("8:00 이 되면 알림", run(`return rpOverdue("T2", ${at("2026-09-15T08:00:
 ok("수업 없는 날은 알림이 없다 (이현우 화요일)", run(`return rpOverdue("T2", ${at("2026-09-16T09:00:00")}).join()`) === "2026-09-14");
 run(`S.reports = { T2: { "2026-09-14": { submitted: 1 } } };`);
 ok("낸 날은 빠진다", run(`return rpOverdue("T2", ${at("2026-09-16T09:00:00")}).join()`) === "");
-run(`S.reports = { T2: { "2026-09-14": { tomorrow: "x" } } };`);
+run(`S.reports = { T2: { "2026-09-14": { toLead: "x" } } };`);
 ok("적다 만 것(안 낸 것)은 안 낸 것", run(`return rpOverdue("T2", ${at("2026-09-16T09:00:00")}).join()`) === "2026-09-14");
 run(`S.reports = {};`);
 const all = JSON.parse(run(`return JSON.stringify(rpOverdueAll(${at("2026-09-17T08:30:00")}))`));
@@ -117,20 +117,19 @@ ok("매주 하는 일은 그 요일에", tk.indexOf("g") >= 0 && run(`return rpT
 
 // ---- 내기 전에 ----
 const ck = JSON.parse(run(`var r = rpDraft("T2", "2026-09-14", null); rpApplyApp(r, { c2: { att: { s1: true } } }); return JSON.stringify(rpCheck(r));`));
-ok("내일 할 일이 비면 못 낸다", ck.stop.length === 1 && /내일 할 일/.test(ck.stop[0]), JSON.stringify(ck));
+// «내일 할 일» 칸은 뺐다(9/11 마왕님) — 처음엔 비면 못 냈다.
+ok("막히는 것이 없다 (내일 할 일 칸은 뺐다)", ck.stop.length === 0, JSON.stringify(ck));
 ok("결석인데 연락 안 한 학생을 알려 준다", ck.warn.some(function (w) { return /연락 안 한 학생 1명/.test(w); }), JSON.stringify(ck.warn));
 ok("출결을 안 고른 반을 알려 준다 (못 읽은 반)", ck.warn.some(function (w) { return /개별진도 — 출결을 안 고른/.test(w); }), JSON.stringify(ck.warn));
 ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진도가 비었다/.test(w); }));
 
 // ---- 저장 — 자기 칸만 ----
 (async () => {
-  let e1 = "";
-  try { await run(`var r = rpDraft("T2","2026-09-14",null); return saveDailyReport(r);`); } catch (e) { e1 = e.message; }
-  ok("내일 할 일 없이는 저장도 안 된다", /내일 할 일/.test(e1), e1);
+  ok("판에 «내일 할 일» 칸이 없다", run(`return "tomorrow" in rpDraft("T2","2026-09-14",null)`) === false);
   W.length = 0;
   run(`toggleMyMark = function (id) { W.push({ mark: id }); return Promise.resolve(); };`);
   await run(`var r = rpDraft("T2","2026-09-14",null); rpApplyApp(r, { c2: { att: { s1: true } } });
-    r.tomorrow = "고2A 오답 확인"; r.classes[0].students[0].note = "결석 — 병원"; r.classes[0].students[0].called = true;
+    r.classes[0].students[0].note = "결석 — 병원"; r.classes[0].students[0].called = true;
     r.tasks.filter(function(t){ return t.id === "b"; })[0].state = "done";
     r.tasks.filter(function(t){ return t.id === "a"; })[0].state = "hold";
     r.tasks.filter(function(t){ return t.id === "a"; })[0].note = "자료 대기";
@@ -149,15 +148,16 @@ ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진
   ok("이미 내 완료가 된 것은 또 누르지 않는다 (누르면 풀린다)", !W.some(function (x) { return x.mark === "f"; }));
   const sub1 = w.data.submitted;
   W.length = 0;
-  await run(`var r = rpDraft("T2","2026-09-14", S.reports.T2["2026-09-14"]); r.tomorrow = "바꿈"; return saveDailyReport(r);`);
+  await run(`var r = rpDraft("T2","2026-09-14", S.reports.T2["2026-09-14"]); r.toLead = "바꿈"; return saveDailyReport(r);`);
   const w2 = W.filter(function (x) { return x.path; })[0];
-  ok("다시 내면 처음 낸 시각은 그대로 (8시 넘어 고쳐도 늦게 낸 게 아니다)", !!w2 && w2.data.submitted === sub1 && w2.data.tomorrow === "바꿈");
+  ok("다시 내면 처음 낸 시각은 그대로 (8시 넘어 고쳐도 늦게 낸 게 아니다)", !!w2 && w2.data.submitted === sub1 && w2.data.toLead === "바꿈");
+  ok("저장에도 «내일 할 일» 이 없다", !!w2 && !("tomorrow" in w2.data));
   let e2 = "";
-  try { await run(`var r = rpDraft("T1","2026-09-15",null); r.tomorrow = "x"; return saveDailyReport(r);`); } catch (e) { e2 = e.message; }
+  try { await run(`var r = rpDraft("T1","2026-09-15",null); return saveDailyReport(r);`); } catch (e) { e2 = e.message; }
   ok("남의 보고는 못 쓴다", /남의 보고/.test(e2), e2);
   run(`S.claims = { role:"owner", tid:"T1", name:"한민수" }; S.ro = false;`);
   let e3 = "";
-  try { await run(`var r = rpDraft("T2","2026-09-14",null); r.tomorrow = "x"; return saveDailyReport(r);`); } catch (e) { e3 = e.message; }
+  try { await run(`var r = rpDraft("T2","2026-09-14",null); return saveDailyReport(r);`); } catch (e) { e3 = e.message; }
   ok("팀장도 남의 보고는 못 고친다", /남의 보고/.test(e3), e3);
 
   // ---- 읽기 — 선생님은 자기 칸만 부른다 ----
@@ -172,7 +172,7 @@ ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진
 
   // ---- 팀장 아침 정리 · 원장님께 올리는 한 장 ----
   run(`S.reports = { T2: { "2026-09-14": {
-    submitted: 1, updated: 1, name:"이현우", tomorrow:"고2A 오답 확인", toLead:"프린터 토너",
+    submitted: 1, updated: 1, name:"이현우", toLead:"프린터 토너",
     classes: [ { cid:"c2", name:"고2A", progress:"수열 3단원", homework:"워크북 12~15",
                  students: [ { sid:"s1", name:"최하윤", att:"출석", note:"" },
                              { sid:"s2", name:"안유진", att:"결석", called:false, note:"" } ] },
@@ -191,7 +191,8 @@ ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진
   ok("반마다 출석·진도·과제", dg.indexOf("**고2A** · 출석 1/2 · 진도: 수열 3단원 · 과제: 워크북 12~15") >= 0, dg);
   ok("연락 안 된 결석이 굵게 뜬다", dg.indexOf("안유진 — 결석(**연락 안 함**)") >= 0);
   ok("출석이고 적은 게 없는 학생은 원장님 문서에서 빠진다 (길어지지 않게)", dg.indexOf("최하윤") < 0);
-  ok("업무·내일·요청이 들어간다", dg.indexOf("[보류] 지난 일 — 자료 대기") >= 0 && dg.indexOf("내일: 고2A 오답 확인") >= 0 && dg.indexOf("요청: 프린터 토너") >= 0);
+  ok("업무·요청이 들어간다", dg.indexOf("[보류] 지난 일 — 자료 대기") >= 0 && dg.indexOf("요청: 프린터 토너") >= 0);
+  ok("«내일» 줄은 없다 (칸을 뺐다)", dg.indexOf("내일:") < 0);
   ok("일일테스트는 어디에도 없다 (마왕님 결정)", !/테스트|점수/.test(dg));
 
   // ---- 규칙 — 선생님끼리는 서로 못 본다 ----
@@ -234,7 +235,7 @@ ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진
     ok("판에 명단 변동 칸이 있다 (처음엔 비어 있다)", Array.isArray(draft.moves) && draft.moves.length === 0);
     ok("학생 줄이 pid 를 든다", draft.classes[0].students.some(function (s) { return s.pid === "P1"; }));
 
-    run(`__rep = rpDraft("T2", "2026-09-14", null); __rep.tomorrow = "내일";
+    run(`__rep = rpDraft("T2", "2026-09-14", null); 
       __rep.moves = [ { kind:"move", sid:"a1", pid:"P1", name:"김도윤", fromCid:"pS", fromName:"예비고1 S반", toCid:"", toName:"", date:"2026-09-14", note:"" } ];`);
     const stop = JSON.parse(run(`return JSON.stringify(rpCheck(__rep).stop)`));
     ok("반 이동인데 «어디로» 가 비면 못 낸다", stop.some(function (s) { return /김도윤: 어느 반으로/.test(s); }), JSON.stringify(stop));
