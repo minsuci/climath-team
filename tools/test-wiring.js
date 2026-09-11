@@ -52,7 +52,7 @@ const typeOf = (f) => vm.runInContext("typeof " + f, ctx);
   .forEach((f) => ok("로그인 길: " + f, typeOf(f) === "function", typeOf(f)));
 
 // ---- 메뉴마다 그릴 함수가 있고, 불러도 안 터진다 ----
-const RENDER = { cal: "renderCal", tasks: "renderTasks", report: "renderReport", done: "renderDone", exec: "renderExec", minutes: "renderMinutes", dev: "renderDev", week: "renderWeek",
+const RENDER = { cal: "renderCal", plan: "renderPlan", tasks: "renderTasks", report: "renderReport", done: "renderDone", exec: "renderExec", minutes: "renderMinutes", dev: "renderDev", week: "renderWeek",
   students: "renderStudents", terms: "renderTerms", exams: "renderExams", scores: "renderScores", sheets: "renderSheets" };
 // ---- 같은 이름의 함수가 둘이면 안 된다 ----
 // 나중 선언이 **조용히** 앞의 것을 덮는다. 문법도 화면도 멀쩡하고 엉뚱한 것이 돈다.
@@ -67,7 +67,9 @@ const RENDER = { cal: "renderCal", tasks: "renderTasks", report: "renderReport",
 }
 const pages = JSON.parse(vm.runInContext("JSON.stringify(PAGES)", ctx));
 // 9/11 «업무보고» 가 열셋째. 선생님도 보는 메뉴다 — 안이 갈린다(자기 것 · 팀장은 받은 보고까지).
-ok("메뉴가 열셋이다", pages.length === 13, String(pages.length));
+// 9/11 «월간계획» 이 열넷째 — 업무 달력 옆. 선생님도 본다(읽기만).
+ok("메뉴가 열넷이다", pages.length === 14, String(pages.length));
+ok("월간계획 메뉴가 있고 선생님도 본다", pages.some(function (p) { return p[0] === "plan" && p[2] !== "owner"; }));
 ok("업무보고 메뉴가 있고 선생님도 본다", pages.some(function (p) { return p[0] === "report" && p[2] !== "owner"; }));
 
 // ---- 팀장만 보는 메뉴 ----
@@ -76,8 +78,8 @@ ok("업무보고 메뉴가 있고 선생님도 본다", pages.some(function (p) 
 {
   const mine = (ro) => JSON.parse(vm.runInContext(
     "(function(){ var b=S.ro; S.ro=" + ro + "; var r=JSON.stringify(myPages().map(function(p){return p[0]})); S.ro=b; return r; })()", ctx));
-  ok("팀장은 열셋을 다 본다", mine(false).length === 13, mine(false).join(","));
-  ok("선생님에게는 «완료 현황»·«간부회의» 가 안 보인다", mine(true).indexOf("done") < 0 && mine(true).indexOf("exec") < 0 && mine(true).length === 11, mine(true).join(","));
+  ok("팀장은 열넷을 다 본다", mine(false).length === 14, mine(false).join(","));
+  ok("선생님에게는 «완료 현황»·«간부회의» 가 안 보인다", mine(true).indexOf("done") < 0 && mine(true).indexOf("exec") < 0 && mine(true).length === 12, mine(true).join(","));
   ok("선생님도 회의록 메뉴는 있다 (안이 갈린다)", mine(true).indexOf("minutes") >= 0);
   ok("선생님이 주소에 #done 을 쳐도 안 열린다", (() => {
     const r = vm.runInContext(`(function(){ var b=S.ro; S.ro=true; var v=isPage("done"); S.ro=b; return v; })()`, ctx);
@@ -97,7 +99,7 @@ ok("업무보고 메뉴가 있고 선생님도 본다", pages.some(function (p) 
     p.length = 2; S.ro = b;
     return JSON.stringify(out);
   })()`, ctx));
-  ok("«owner» 를 달면 선생님 목록에서 빠진다", hid.pages.indexOf("dev") < 0 && hid.pages.length === 10, hid.pages.join(","));
+  ok("«owner» 를 달면 선생님 목록에서 빠진다", hid.pages.indexOf("dev") < 0 && hid.pages.length === 11, hid.pages.join(","));
   ok("«owner» 를 단 페이지는 없는 페이지가 된다", !hid.isP);
   ok("주소로 직접 들어와도 할 일로 보낸다", hid.landed === "#tasks", hid.landed);
   const isP = (ro, id) => vm.runInContext(
