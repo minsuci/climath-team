@@ -769,6 +769,12 @@ async function boot() {
     renderLogin("선생님 계정만 들어올 수 있습니다 (" + (c.role || "역할 없음") + ")");
     return;
   }
+  // ⚠ **다른 사람으로 바뀌면 페이지를 새로 연다.** S 에는 앞사람이 읽은 것이 그대로 남아 있다 —
+  //   2026-09-11: 팀장이 로그아웃하고 같은 창에서 선생님으로 들어가니 **간부회의록이 보였다.**
+  //   회의록은 «처음 열 때 한 번만» 읽어서(S.minutes === null 일 때만) 팀장이 읽어 둔 목록을 그대로 썼다.
+  //   규칙은 제대로 막고 있었다 — 새로 부르지 않았을 뿐. 칸 하나하나 비우는 것보다 새로 여는 게 빠짐이 없다.
+  //   다른 탭에서 다른 계정으로 들어와도 여기로 온다(로그인 상태는 탭끼리 같이 쓴다).
+  if (S.claims && S.claims.tid !== c.tid) { location.reload(); return; }
   S.claims = c;
   S.ro = c.role !== "owner";
   if (S.ro) S.filterWho = MINE;   // 선생님이 열면 자기 것부터. 전체는 칩 한 번이면 된다
@@ -814,7 +820,8 @@ function renderShell() {
     '</div><div class="grid">' +
     myPages().map(function (p) { return '<div class="card" id="sec-' + p[0] + '" hidden></div>'; }).join("") +
     '</div></div>';
-  $("#btn-out").onclick = function () { signOutAll(); };
+  // 로그아웃은 **새로 열기까지.** 안 그러면 다음 사람이 앞사람의 자료(간부회의록 등)를 본다 — boot() 의 주석
+  $("#btn-out").onclick = function () { signOutAll().then(function () { location.reload(); }); };
   $("#btn-reload").onclick = function () { location.reload(); };
   $$(".nav button").forEach(function (b) { b.onclick = function () { showPage(b.getAttribute("data-page")); }; });
   renderBell();
