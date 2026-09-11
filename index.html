@@ -318,6 +318,44 @@
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 
+  /* 업무보고 */
+  .rp-state { font-size: 13px; margin: 2px 0 6px; }
+  .rp-h { font-size: 14px; margin: 16px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .rp-cls { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; background: #fff; }
+  .rp-cls .row { margin-bottom: 6px; }
+  .rp-two label { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 220px; font-size: 13px; }
+  .rp-two input { flex: 1; }
+  .rpwrap { overflow-x: auto; }
+  table.rp-t { min-width: 680px; font-size: 13px; }
+  table.rp-t th { font-size: 12px; color: var(--muted); font-weight: 600; text-align: left; }
+  table.rp-t td, table.rp-t th { padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.rp-t input[type=text] { width: 100%; }
+  table.rp-t tr.abs td { background: #fff1f1; }
+  table.rp-t tr.late td { background: #fffbea; }
+  table.rp-read { min-width: 480px; }
+  table.rp-t tr.rp-dim td { color: #9aa3af; }
+  .rp-auto { font-size: 10px; color: var(--muted); }
+  .rp-task { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .rp-task .t { flex: 1 1 260px; }
+  .rp-task input { flex: 1 1 200px; }
+  .rp-seg { display: flex; gap: 2px; }
+  .rp-extra { margin-bottom: 4px; }
+  .rp-warn { font-size: 12px; color: #b35d00; margin: 10px 0 0; line-height: 1.6; }
+  textarea[data-rpf] { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; }
+  .rp-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; margin-bottom: 8px; }
+  .rp-sum div { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: #fff; }
+  .rp-sum b { display: block; font-size: 18px; color: var(--text); }
+  .rp-sum .bad b { color: var(--red); }
+  .rp-asks { border: 1px solid #c7d6ee; background: #eef3fb; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
+  .rp-asks div { margin-top: 3px; }
+  .rp-dig { width: 100%; box-sizing: border-box; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+  .rp-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 10px 0; background: #fafbfc; }
+  .rp-card.miss { border-color: #f0a8a8; background: #fff8f8; }
+  .rp-card .rp-cls { margin: 6px 0; }
+  .rp-sub { font-size: 13px; margin-top: 6px; }
+  .rp-sub div { margin-top: 2px; }
+  .banner.rp-late { background: #fff4f4; border-color: #f0a8a8; }
+
   /* 반별 배치표 — 열 하나가 반 */
   .gridwrap { overflow: auto; max-height: calc(100vh - 300px); border: 1px solid var(--line); border-radius: 8px; }
   .gh { margin: 14px 0 6px; font-size: 14px; display: flex; gap: 8px; align-items: center; }
@@ -599,6 +637,8 @@ var S = {
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   events: [],     // 달력 일정 (dash/calEvents). 할 일과 달리 **팀 전체가 같은 것을 본다**
+  reports: null,  // 업무보고 { tid: { date: doc } }. 선생님은 자기 것만 온다(규칙). null = 아직 안 읽음
+  rpDate: "", rpTab: "mine", rpEdit: null, rpDig: "",
   fmOpen: false,  // «회의록에서 온 할 일» 상자를 폈나
   calGrade: "전체", calAnchor: "", calAdd: "",
   minutes: null, minutesLoading: false, minutesErr: "", minPick: "", minQ: "", minName: "",
@@ -737,6 +777,7 @@ async function boot() {
   renderBell();
   watchTasks();
   renderAll();
+  loadReports(addDays(TODAY, -21)).then(function () { renderBanner(); renderReport(); });
   loadExams().then(renderExams);
   loadScores().then(renderScores);
   loadSheetsAll();
@@ -783,7 +824,7 @@ function renderShell() {
 // ⚠ 메뉴를 감추는 것은 **화면 정리지 자물쇠가 아니다.** 팀장만 볼 자료라면 규칙으로도 막아야 한다.
 //   완료 현황이 쓰는 marks·myTasks 는 원래 팀 전체가 읽는 것이라(누가 끝냈나를 서로 본다)
 //   여기서 새로 여는 것이 없다. **모아 보는 화면만** 팀장 것이다.
-var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["done", "완료 현황", "owner"], ["exec", "간부회의", "owner"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
+var PAGES = [["cal", "업무 달력"], ["tasks", "할 일"], ["report", "업무보고"], ["done", "완료 현황", "owner"], ["exec", "간부회의", "owner"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
@@ -821,7 +862,7 @@ function navBadge(id, n, red) {
   var el = $("#nb-" + id); if (!el) return;
   el.hidden = !n; el.textContent = n; el.className = "b" + (red ? " red" : "");
 }
-function renderAll() { renderBanner(); renderCal(); renderTasks(); renderDone(); renderExec(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
+function renderAll() { renderBanner(); renderCal(); renderTasks(); renderReport(); renderDone(); renderExec(); renderMinutes(); renderDev(); renderWeek(); renderStudents(); renderTerms(); renderExams(); renderScores(); renderSheets(); }
 
 // ---------- 불러오기 ----------
 // ---- 선생님 명단은 계정에 따라 오는 길이 다르다 ----
@@ -934,10 +975,536 @@ function renderBanner() {
   var rd = (S.readErr && S.readErr.length)
     ? '<div class="banner"><b>수업관리 앱 DB에서 못 읽은 것</b> — ' + esc(S.readErr.join(", ")) + '.<br>' +
       '그 화면만 비어 있고 나머지는 그대로 돈다. climath-class 쪽 <code>firestore.rules</code> 를 본다.</div>' : "";
-  if (S.teamOk) { el.innerHTML = rd + ro; return; }
+  if (S.teamOk) { el.innerHTML = rd + rpBannerHtml() + ro; rpBannerWire(el); return; }
   el.innerHTML = rd + '<div class="banner"><b>팀체크 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
     'Firebase 콘솔의 climath-team 프로젝트에서 Firestore가 켜져 있고 규칙이 게시됐는지 본다. 규칙은 저장소 <code>firestore.rules</code>. ' +
     '나머지 상자(앱 데이터)는 그대로 돈다.</div>' + ro;
+}
+
+// ---------- 업무보고 (2026-09-11 초안 — 마왕님과 상의 중, 아직 안 올린다) ----------
+//
+// 선생님이 그날 한 **수업**과 **업무**를 보고한다. 팀장이 다음 날 아침 정리해 **원장님께 바로** 올린다.
+// 9/7·9/11 간부회의: 강사 퇴근 전 보고 → 팀장 다음 날 출근 30분 정리 → 원장 보고.
+//   원장님이 제일 중요하다고 한 것은 **«다음 날 뭐 할지»**. 그리고 «자동화 못 하는 건 강사에게 얹지 마라».
+//
+// 마왕님 결정 (9/11)
+//   · 수업은 **학생 단위** — 명단을 쫙 뽑고 옆에 특이사항. (특이 학생만 골라 적게 하지 않는다)
+//   · 일일테스트는 안 넣는다. 수업 준비 여부도 안 넣는다 (교재를 받고 있다)
+//   · 마감 시각은 없다. **다음 날 아침 8시까지 안 내면 알림** — 팀장에게도, 본인에게도
+//   · 받는 사람은 원장님. 부원장님은 중등관이라 안 거친다
+//   · **선생님끼리는 서로 못 본다.** 자기 것과 팀장만 — 화면이 아니라 **규칙**이 막는다
+//
+//   dailyReports/{tid}/days/{date}
+//     { tid, name, date, submitted(처음 낸 시각), updated,
+//       classes: [{ cid, name, progress, homework,
+//                   students: [{ sid, name, att, auto, called, note, consult, makeup }] }],
+//       tasks: [{ id, text, state, note }], extra: [{ kind, text }], tomorrow, toLead }
+//   사람마다 칸 하나(marks·myTasks 와 같은 모양). 문서 이름이 곧 누구인지라 규칙이 남의 것을 막는다.
+var RP_ATT = ["출석", "결석", "지각", "조퇴"];
+var RP_STATE = { done: "완료", doing: "진행", hold: "보류" };
+var RP_KINDS = ["학부모 연락", "상담", "자료 제작", "채점·검사", "행정", "기타"];
+var RP_DUE_HOUR = 8;               // 그 날 보고는 **다음 날 아침 8시**까지
+// 이 날부터 «안 냈다» 를 센다. 기능을 올리기 전 날들이 전부 «안 냄» 으로 뜨면 안 된다 — **올리는 날로 바꾼다.**
+var RP_START = "2026-09-14";
+function rpCol(tid) { return tdb.collection("dailyReports").doc(tid).collection("days"); }
+function rpTeacher(tid) { return S.teachers.filter(function (t) { return t.tid === tid; })[0] || null; }
+
+// ---- 그 날 누가 무엇을 가르쳤나 — 수업관리 앱의 판정(attendsOn · scheduledDates)을 그대로 옮긴다 ----
+// ⚠ 정규반은 **반 요일**에 명단 **전원**이 대상이다. 학생마다 요일이 다른 것은 개별진도반뿐이다.
+//   정규반에 학생 요일을 대면 요일이 비어 있는 학생이 전부 빠진다.
+function rpIndividual(c) { return c.type === "individual"; }
+function rpActiveOn(r, d) { return !(r.startDate && d < r.startDate) && !(r.endDate && d > r.endDate); }
+function rpMeets(c, d) {
+  if (c.endDate && d > c.endDate) return false;
+  var dow = parseYmd(d).getDay();
+  if (!rpIndividual(c)) return (c.classDays || []).indexOf(dow) >= 0;
+  return (c.roster || []).some(function (r) { return !r.teacher && rpActiveOn(r, d) && (r.days || []).indexOf(dow) >= 0; });
+}
+function rpStudentsOn(c, d) {
+  var dow = parseYmd(d).getDay();
+  return (c.roster || []).filter(function (r) {
+    if (r.teacher || !rpActiveOn(r, d)) return false;
+    return !rpIndividual(c) || (r.days || []).indexOf(dow) >= 0;
+  }).sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || ""), "ko"); });
+}
+// 그 선생님이 그 날 들어간 반. 쉬는 날에는 없다(업무 달력의 쉬는 날과 같은 것을 본다).
+function rpClassesOn(tid, d) {
+  var t = rpTeacher(tid);
+  if (!t || holidayOf(d)) return [];
+  return S.classes.filter(function (c) { return (t.classIds || []).indexOf(c.id) >= 0 && rpMeets(c, d); });
+}
+// 보고해야 하는 날 = 수업이 있는 날. 수업이 없는 날에 적는 것은 막지 않지만 «안 냈다» 로 세지는 않는다.
+function rpExpected(tid, d) { return d >= RP_START && rpClassesOn(tid, d).length > 0; }
+function rpDeadline(d) { var x = parseYmd(addDays(d, 1)); x.setHours(RP_DUE_HOUR, 0, 0, 0); return x.getTime(); }
+function rpGot(tid, d) { var m = (S.reports || {})[tid]; return !!(m && m[d] && m[d].submitted); }
+// 8시가 지났는데 안 낸 날 (최근 14일). 이게 알림이다 — 팀장 화면에는 사람마다, 본인 화면에는 자기 것.
+function rpOverdue(tid, now) {
+  var ms = now ? now.getTime() : Date.now(), today = ymd(new Date(ms)), out = [];
+  for (var i = 1; i <= 14; i++) {
+    var d = addDays(today, -i);
+    if (rpExpected(tid, d) && rpDeadline(d) <= ms && !rpGot(tid, d)) out.push(d);
+  }
+  return out.sort();
+}
+function rpOverdueAll(now) {
+  return S.teachers.map(function (t) { return { tid: t.tid, name: t.name, days: rpOverdue(t.tid, now) }; })
+    .filter(function (x) { return x.days.length; });
+}
+
+// ---- 보고에 뜨는 할 일 — 그 날까지 기한인 내 할 일 + 그 날 끝낸 것 ----
+// 월요일 간부회의에서 나온 일은 금요일에 빠짐없이 답이 있어야 한다(9/11). 보고가 그 답이 된다.
+function rpTasksFor(tid, d) {
+  var name = teacherName(tid), dow = parseYmd(d).getDay();
+  return (S.tasks || []).filter(function (t) {
+    if (!taskIsFor(t, name)) return false;
+    var md = markDate(tid, t.id);
+    if (md === d) return true;                               // 그 날 끝낸 것
+    if (t.repeat && t.repeat.dow) return t.repeat.dow.indexOf(dow) >= 0 && !(t.doneOn && t.doneOn[d]);
+    if (md || t.status === "done") return false;
+    return !!t.due && t.due <= d;                            // 기한이 그 날까지(지난 것 포함)
+  });
+}
+
+// ---- 쓰는 판 — 저장된 보고가 있으면 그것, 없으면 앱이 아는 것으로 채운다 ----
+// ⚠ 명단은 **다시 뽑는다.** 저장된 보고의 명단을 그대로 쓰면 그 사이 들어온 학생이 안 보인다.
+//   적어 둔 것은 학생 id 로 다시 붙인다.
+function rpDraft(tid, d, prev) {
+  prev = prev || {};
+  var classes = rpClassesOn(tid, d).map(function (c) {
+    var pc = (prev.classes || []).filter(function (x) { return x.cid === c.id; })[0] || {};
+    return { cid: c.id, name: c.name, progress: pc.progress || "", homework: pc.homework || "",
+      attRead: false,
+      students: rpStudentsOn(c, d).map(function (r) {
+        var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
+        return { sid: r.id, name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
+          called: ps ? !!ps.called : false, note: ps ? (ps.note || "") : "",
+          consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
+      }) };
+  });
+  var tasks = rpTasksFor(tid, d).map(function (t) {
+    var pt = (prev.tasks || []).filter(function (x) { return x.id === t.id; })[0] || null;
+    return { id: t.id, text: t.text, due: t.due || "", state: pt ? pt.state : (markDate(tid, t.id) === d ? "done" : ""),
+             note: pt ? (pt.note || "") : "" };
+  });
+  return { tid: tid, name: teacherName(tid), date: d, classes: classes, tasks: tasks,
+    extra: (prev.extra || []).slice(), tomorrow: prev.tomorrow || "", toLead: prev.toLead || "",
+    submitted: prev.submitted || 0, updated: prev.updated || 0 };
+}
+// 수업관리 앱에서 읽은 것을 판에 얹는다. app = { cid: { att: {sid:true}|null, consult: {sid:[..]}, makeup: {sid:{..}} } }
+// 앱에 출석이 찍혔으면 출석, 안 찍혔으면 결석. **못 읽었으면 비운다** — 모르는 걸 결석으로 적지 않는다.
+// ⚠ **선생님이 이미 고른 출결은 안 덮는다.** 앱은 «찍혔나» 만 알고, 지각·조퇴·늦게 찍은 것은 선생님이 안다.
+function rpApplyApp(rep, app) {
+  rep.classes.forEach(function (c) {
+    var ad = (app && app[c.cid]) || {};
+    c.attRead = !!ad.att;
+    c.students.forEach(function (s) {
+      var auto = ad.att ? (ad.att[s.sid] ? "출석" : "결석") : "";
+      if (auto) s.auto = auto;
+      if (!s.att) s.att = auto;
+      var cs = (ad.consult && ad.consult[s.sid]) || [];
+      if (cs.length) s.consult = Math.max.apply(null, cs.map(function (x) { return Number(x.risk) || 0; }));
+      var mk = ad.makeup && ad.makeup[s.sid];
+      if (mk) s.makeup = mk.planned || mk.date || "";
+    });
+  });
+  return rep;
+}
+// 내기 전에 걸리는 것. **막는 것은 «내일 할 일» 하나뿐이다** — 원장님이 제일 중요하다고 한 칸이다.
+// 나머지는 알려만 준다. 다 막으면 5분 안에 못 낸다.
+function rpCheck(rep) {
+  var stop = [], warn = [];
+  if (!String(rep.tomorrow || "").trim()) stop.push("내일 할 일을 적어야 낼 수 있다");
+  rep.classes.forEach(function (c) {
+    var none = c.students.filter(function (s) { return !s.att; }).length;
+    if (none) warn.push(c.name + " — 출결을 안 고른 학생 " + none + "명");
+    var nc = c.students.filter(function (s) { return s.att === "결석" && !s.called; }).length;
+    if (nc) warn.push(c.name + " — 결석인데 연락 안 한 학생 " + nc + "명");
+    if (!String(c.progress || "").trim()) warn.push(c.name + " — 진도가 비었다");
+  });
+  return { stop: stop, warn: warn };
+}
+// 저장할 모양. 화면에만 쓰는 칸(attRead · due)은 뗀다.
+function rpClean(rep) {
+  return { tid: rep.tid, name: rep.name, date: rep.date,
+    classes: rep.classes.map(function (c) {
+      return { cid: c.cid, name: c.name, progress: String(c.progress || "").trim(), homework: String(c.homework || "").trim(),
+        students: c.students.map(function (s) {
+          return { sid: s.sid, name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
+                   note: String(s.note || "").trim(), consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
+        }) };
+    }),
+    tasks: rep.tasks.filter(function (t) { return t.state || String(t.note || "").trim(); })
+      .map(function (t) { return { id: t.id, text: t.text, state: t.state || "", note: String(t.note || "").trim() }; }),
+    extra: rep.extra.filter(function (x) { return String(x.text || "").trim(); })
+      .map(function (x) { return { kind: x.kind || "기타", text: String(x.text).trim() }; }),
+    tomorrow: String(rep.tomorrow || "").trim(), toLead: String(rep.toLead || "").trim() };
+}
+// ⚠ **자기 칸에만 쓴다.** 팀장도 남의 보고는 못 고친다 — 규칙도 같다(tid == myTid()).
+//   선생님은 읽기 계정이라 쓰기 가로채기(guardWrites)를 passWrite 로 한 번 연다 (toggleMyMark 와 같다).
+// ⚠ 이름을 saveReport 로 지었다가 «한 줄 보고» 의 saveReport(id, text) 와 겹쳐 **조용히 덮였다** (2026-09-11).
+//   나중 선언이 이긴다 — 문법도 멀쩡하고 저장은 엉뚱하게 marks 로 갔다. test-wiring 이 이제 겹치는 이름을 잡는다.
+async function saveDailyReport(rep) {
+  var tid = myTid();
+  if (!tid) throw new Error("누구인지 알 수 없다");
+  if (rep.tid !== tid) throw new Error("남의 보고는 고칠 수 없다");
+  var chk = rpCheck(rep);
+  if (chk.stop.length) throw new Error(chk.stop.join(" · "));
+  var now = Date.now(), prev = ((S.reports || {})[tid] || {})[rep.date];
+  var doc = Object.assign(rpClean(rep), { submitted: (prev && prev.submitted) || now, updated: now });
+  await passWrite(function () { return rpCol(tid).doc(rep.date).set(doc); });
+  S.reports = S.reports || {}; S.reports[tid] = S.reports[tid] || {}; S.reports[tid][rep.date] = doc;
+  // 보고에서 «완료» 로 고른 할 일은 **내 완료 표시**로도 남긴다 — 할 일 메뉴·완료 현황이 같은 것을 보게.
+  var todo = doc.tasks.filter(function (t) { return t.state === "done" && !markDate(tid, t.id); });
+  for (var i = 0; i < todo.length; i++) { try { await toggleMyMark(todo[i].id); } catch (e) {} }
+  return doc;
+}
+// 팀장은 전부, 선생님은 자기 것만 읽는다. **선생님이 남의 칸을 부르면 규칙이 거절한다** — 그래서 아예 안 부른다.
+async function loadReports(from) {
+  var tids = S.ro ? [myTid()] : S.teachers.map(function (t) { return t.tid; });
+  var got = {};
+  await Promise.all(tids.filter(Boolean).map(function (tid) {
+    return rpCol(tid).where("date", ">=", from).get().then(function (s) {
+      var m = {}; s.forEach(function (d) { m[d.id] = d.data(); }); got[tid] = m;
+    }).catch(function () { got[tid] = {}; });
+  }));
+  S.reports = got;
+}
+// 쓰는 판을 열 때만 수업관리 앱을 읽는다 — 출석·상담·보강. 못 읽은 것은 비워 둔다(결석으로 적지 않는다).
+async function rpLoadApp(tid, d) {
+  var out = {};
+  await Promise.all(rpClassesOn(tid, d).map(function (c) {
+    var one = out[c.id] = { att: null, consult: {}, makeup: {} };
+    var cref = db.collection("classes").doc(c.id);
+    return Promise.all([
+      cref.collection("days").doc(d).collection("attendance").get()
+        .then(function (s) { one.att = {}; s.forEach(function (x) { one.att[x.id] = true; }); }).catch(function () {}),
+      db.collection("consultations").where("cid", "==", c.id).get()
+        .then(function (s) { s.forEach(function (x) { var v = x.data(); if (String(v.date || "").slice(0, 10) === d) (one.consult[v.sid] = one.consult[v.sid] || []).push(v); }); })
+        .catch(function () {}),
+      cref.collection("makeups").get()
+        .then(function (s) { s.forEach(function (x) { var v = x.data(); if (v.date === d || v.planned === d) one.makeup[v.sid] = v; }); })
+        .catch(function () {}),
+    ]);
+  }));
+  return out;
+}
+
+// ---- 팀장이 아침에 보는 것 · 원장님께 올리는 것 ----
+function rpSummary(d) {
+  var sm = { expect: [], got: [], missing: [], noCall: [], notes: [], asks: [], tomorrow: [] };
+  S.teachers.forEach(function (t) {
+    var rep = ((S.reports || {})[t.tid] || {})[d];
+    var exp = rpExpected(t.tid, d);
+    if (exp) sm.expect.push(t.tid);
+    if (!(rep && rep.submitted)) { if (exp) sm.missing.push(t.tid); return; }
+    sm.got.push(t.tid);
+    (rep.classes || []).forEach(function (c) {
+      (c.students || []).forEach(function (s) {
+        if (s.att === "결석" && !s.called) sm.noCall.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name });
+        if (s.note || (s.att && s.att !== "출석")) sm.notes.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name, att: s.att, note: s.note, called: s.called });
+      });
+    });
+    if (rep.toLead) sm.asks.push({ tid: t.tid, who: t.name, text: rep.toLead });
+    if (rep.tomorrow) sm.tomorrow.push({ tid: t.tid, who: t.name, text: rep.tomorrow });
+  });
+  return sm;
+}
+// 원장님께 올리는 한 장 — **마크다운**이다. 원장님이 회의록을 AI 에 넣어 읽는다고 했다(9/11). 표보다 글이 잘 읽힌다.
+function rpDigest(d) {
+  var sm = rpSummary(d), L = [];
+  var nm = function (tid) { return teacherName(tid); };
+  L.push("# 고등부 업무보고 — " + fmtMD(d));
+  L.push("");
+  L.push("- 낸 사람 " + sm.got.length + " / 수업한 사람 " + sm.expect.length +
+    (sm.missing.length ? " · **안 낸 사람: " + sm.missing.map(nm).join(", ") + "**" : ""));
+  if (sm.noCall.length) L.push("- **결석인데 연락 안 된 학생 " + sm.noCall.length + "명** — " +
+    sm.noCall.map(function (x) { return x.name + "(" + x.cls + ")"; }).join(", "));
+  if (sm.asks.length) L.push("- 요청 " + sm.asks.length + "건");
+  sm.got.forEach(function (tid) {
+    var rep = S.reports[tid][d];
+    L.push(""); L.push("## " + nm(tid));
+    (rep.classes || []).forEach(function (c) {
+      var st = c.students || [], come = st.filter(function (s) { return s.att === "출석" || s.att === "지각" || s.att === "조퇴"; }).length;
+      L.push("");
+      L.push("**" + c.name + "** · 출석 " + come + "/" + st.length +
+        (c.progress ? " · 진도: " + c.progress : "") + (c.homework ? " · 과제: " + c.homework : ""));
+      st.filter(function (s) { return s.note || (s.att && s.att !== "출석"); }).forEach(function (s) {
+        L.push("- " + s.name + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") + (s.note || ""));
+      });
+    });
+    var tk = rep.tasks || [];
+    if (tk.length) {
+      L.push(""); L.push("업무");
+      tk.forEach(function (t) { L.push("- [" + (RP_STATE[t.state] || "—") + "] " + t.text + (t.note ? " — " + t.note : "")); });
+    }
+    (rep.extra || []).forEach(function (x) { L.push("- (" + x.kind + ") " + x.text); });
+    L.push(""); L.push("내일: " + (rep.tomorrow || "—"));
+    if (rep.toLead) L.push("요청: " + rep.toLead);
+  });
+  return L.join("\n");
+}
+
+// ---- 화면 ----
+// ⚠ 선생님은 읽기 계정이다. 이 화면의 칸·단추에는 전부 data-keep 을 단다 —
+//   안 달면 «감추기»(applyReadOnly)가 칸을 잠그고 «제출» 단추를 감춘다.
+var RPK = " data-keep";
+function rpHM(ms) { if (!ms) return ""; var x = new Date(ms); return fmtMD(ymd(x)) + " " + pad2(x.getHours()) + ":" + pad2(x.getMinutes()); }
+// 아침 8시 전에 열면 **어제 것**을 먼저 편다. 그 시간에 여는 사람은 어제 보고를 내러 온 것이다.
+function rpDefaultDate(now) {
+  now = now || new Date();
+  var y = addDays(ymd(now), -1);
+  if (now.getHours() < RP_DUE_HOUR && rpClassesOn(myTid(), y).length && !rpGot(myTid(), y)) return y;
+  return ymd(now);
+}
+function rpOpen(d) {
+  S.rpDate = d; S.rpTab = "mine"; S.rpEdit = null;
+  if (typeof showPage === "function") showPage("report");
+  renderReport();
+}
+// 알림 — 8시가 지났는데 안 낸 것. **맨 위 띠**에 뜬다(어느 메뉴에 있든 보인다).
+function rpBannerHtml() {
+  if (!S.claims || !S.reports) return "";
+  var me = myTid(), mine = rpOverdue(me), out = "";
+  if (mine.length) out += '<div class="banner rp-late"><b>업무보고를 아직 안 냈다</b> — ' +
+    mine.map(function (d) { return '<button class="mini" data-rpgo="' + d + '"' + RPK + '>' + esc(fmtMD(d)) + '</button>'; }).join(" ") +
+    ' · 그 다음 날 아침 8시가 지났다. 누르면 그 날 보고가 열린다.</div>';
+  if (!S.ro) {
+    var all = rpOverdueAll().filter(function (x) { return x.tid !== me; });
+    if (all.length) out += '<div class="banner rp-late"><b>업무보고 안 낸 선생님</b> — ' +
+      all.map(function (x) { return esc(x.name) + ' ' + x.days.map(function (d) { return esc(fmtMD(d)); }).join("·"); }).join(" / ") +
+      ' <button class="mini" data-rpall>받은 보고 보기</button></div>';
+  }
+  return out;
+}
+function rpBannerWire(el) {
+  $$("[data-rpgo]", el).forEach(function (b) { b.onclick = function () { rpOpen(b.getAttribute("data-rpgo")); }; });
+  $$("[data-rpall]", el).forEach(function (b) {
+    b.onclick = function () {
+      var all = rpOverdueAll();
+      S.rpTab = "all"; S.rpDate = all.length ? all[0].days[all[0].days.length - 1] : TODAY;
+      showPage("report"); renderReport();
+    };
+  });
+}
+
+function renderReport() {
+  var el = $("#sec-report");
+  if (!el) return;
+  var me = myTid();
+  if (!S.rpDate) S.rpDate = rpDefaultDate();
+  var d = S.rpDate, tab = S.ro ? "mine" : (S.rpTab || "mine");
+  var late = S.ro ? rpOverdue(me).length : rpOverdue(me).length + rpOverdueAll().filter(function (x) { return x.tid !== me; }).length;
+  navBadge("report", late, true);
+  var sm = S.ro ? null : rpSummary(d);
+  el.innerHTML = '<h2>업무보고 <span class="sp"></span>' +
+    '<button class="mini" data-rpd="-1"' + RPK + '>‹</button><b style="font-size:14px">' + esc(fmtMD(d)) + '</b>' +
+    '<button class="mini" data-rpd="1"' + RPK + '>›</button>' +
+    (d !== TODAY ? '<button class="mini" data-rpd="0"' + RPK + '>오늘로</button>' : "") + '</h2>' +
+    (S.ro ? "" : '<div class="chips">' +
+      '<button class="mini' + (tab === "mine" ? " on" : "") + '" data-rpt="mine">내 보고</button>' +
+      '<button class="mini' + (tab === "all" ? " on" : "") + '" data-rpt="all">받은 보고 ' + sm.got.length + '/' + sm.expect.length + '</button></div>') +
+    '<div id="rp-body"></div>';
+  $$("[data-rpd]", el).forEach(function (b) {
+    b.onclick = function () {
+      var n = Number(b.getAttribute("data-rpd"));
+      S.rpDate = n === 0 ? TODAY : addDays(S.rpDate, n); S.rpEdit = null; renderReport();
+    };
+  });
+  $$("[data-rpt]", el).forEach(function (b) { b.onclick = function () { S.rpTab = b.getAttribute("data-rpt"); renderReport(); }; });
+  if (tab === "all") rpDrawAll($("#rp-body", el), d, sm); else rpDrawMine($("#rp-body", el), d);
+}
+
+// ---- 내 보고 ----
+function rpDrawMine(box, d) {
+  var me = myTid(), saved = ((S.reports || {})[me] || {})[d] || null;
+  if (!S.rpEdit || S.rpEdit.d !== d) {
+    S.rpEdit = { d: d, rep: rpDraft(me, d, saved), app: false };
+    // 수업관리 앱의 출석·상담·보강은 판을 연 뒤에 읽어 얹는다 — 기다리느라 빈 화면을 두지 않는다
+    var ed = S.rpEdit;
+    rpLoadApp(me, d).then(function (app) {
+      if (S.rpEdit !== ed) return;
+      rpApplyApp(ed.rep, app); ed.app = true;
+      keepScrollIn("#sec-report", renderReport);
+    }).catch(function () { ed.app = true; });
+  }
+  var rep = S.rpEdit.rep, chk = rpCheck(rep);
+  var st = saved && saved.submitted
+    ? '<span class="pill green">냈다 ' + esc(rpHM(saved.updated || saved.submitted)) + '</span> <span class="muted">고친 뒤 다시 내면 덮어쓴다</span>'
+    : (rpExpected(me, d) && rpDeadline(d) <= Date.now()
+        ? '<span class="pill red">안 냈다 — 다음 날 아침 8시가 지났다</span>'
+        : '<span class="pill">아직 안 냈다</span> <span class="muted">다음 날 아침 8시까지 내면 된다</span>');
+  var h = '<div class="rp-state">' + st + '</div>';
+
+  // 수업 — 학생 단위
+  h += '<h3 class="rp-h">수업</h3>';
+  if (!rep.classes.length) h += '<p class="muted" style="font-size:13px">' +
+    (holidayOf(d) ? "쉬는 날이다 (" + esc(holidayOf(d)) + ")." : "이 날은 들어간 수업이 없다.") +
+    ' 업무만 적어도 된다. 안 내도 «안 냈다» 로 세지 않는다.</p>';
+  rep.classes.forEach(function (c, ci) {
+    var come = c.students.filter(function (s) { return s.auto === "출석"; }).length;
+    h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b>' +
+      '<span class="muted" style="font-size:12px">학생 ' + c.students.length + '명 · ' +
+      (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명 — 출결을 미리 채워 뒀다"
+        : "앱 출석을 못 읽었다 — 직접 고른다") + '</span></div>' +
+      '<div class="row rp-two"><label>진도 <input type="text" data-rpc="' + ci + '|progress" value="' + esc(c.progress) + '" placeholder="교재 · 단원 · 어디까지"' + RPK + '></label>' +
+      '<label>과제 <input type="text" data-rpc="' + ci + '|homework" value="' + esc(c.homework) + '" placeholder="낸 과제"' + RPK + '></label></div>' +
+      '<div class="rpwrap"><table class="rp-t"><thead><tr><th>#</th><th>이름</th><th>출결</th><th>결석 연락</th><th>앱에 적힌 것</th><th style="width:40%">특이사항</th></tr></thead><tbody>' +
+      c.students.map(function (s, si) {
+        var k = ci + "|" + si;
+        return '<tr class="' + (s.att === "결석" ? "abs" : s.att === "지각" || s.att === "조퇴" ? "late" : "") + '">' +
+          '<td class="muted">' + (si + 1) + '</td><td><b>' + esc(s.name) + '</b></td>' +
+          '<td><select data-rps="' + k + '|att"' + RPK + '><option value="">—</option>' +
+          RP_ATT.map(function (a) { return '<option' + (a === s.att ? " selected" : "") + '>' + a + '</option>'; }).join("") + '</select>' +
+          (s.auto && s.att && s.auto !== s.att ? ' <span class="rp-auto">앱: ' + esc(s.auto) + '</span>' : "") + '</td>' +
+          '<td>' + (s.att === "결석" ? '<label style="font-size:12px"><input type="checkbox" data-rps="' + k + '|called"' +
+            (s.called ? " checked" : "") + RPK + '> 연락함</label>' : "") + '</td>' +
+          '<td>' + (s.consult != null ? '<span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담' + (s.consult ? " · 위험 " + s.consult : "") + '</span> ' : "") +
+            (s.makeup ? '<span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td>' +
+          '<td><input type="text" data-rps="' + k + '|note" value="' + esc(s.note) + '" placeholder="' +
+            (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '></td></tr>';
+      }).join("") + '</tbody></table></div></div>';
+  });
+
+  // 업무 — 할 일
+  h += '<h3 class="rp-h">업무 <span class="muted" style="font-size:12px;font-weight:400">— 그 날까지 기한인 내 할 일. «완료» 는 할 일 메뉴의 내 완료로도 남는다</span></h3>';
+  h += rep.tasks.length ? rep.tasks.map(function (t, ti) {
+    return '<div class="rp-task"><div class="t">' + esc(t.text) +
+      (t.due ? ' <span class="muted" style="font-size:12px">' + esc(fmtMD(t.due)) + (t.due < d ? ' · 기한 지남' : "") + '</span>' : "") + '</div>' +
+      '<div class="rp-seg">' + Object.keys(RP_STATE).map(function (k) {
+        return '<button class="mini' + (t.state === k ? " on" : "") + '" data-rpk="' + ti + '|' + k + '"' + RPK + '>' + RP_STATE[k] + '</button>';
+      }).join("") + '</div>' +
+      '<input type="text" data-rpn="' + ti + '" value="' + esc(t.note) + '" placeholder="한 줄 (보류면 왜)"' + RPK + '></div>';
+  }).join("") : '<p class="muted" style="font-size:13px">그 날까지 기한인 내 할 일이 없다.</p>';
+
+  h += '<h3 class="rp-h">할 일에 없던 업무</h3>' +
+    rep.extra.map(function (x, xi) {
+      return '<div class="row rp-extra"><select data-rpx="' + xi + '|kind"' + RPK + '>' +
+        RP_KINDS.map(function (k) { return '<option' + (k === x.kind ? " selected" : "") + '>' + k + '</option>'; }).join("") + '</select>' +
+        '<input type="text" data-rpx="' + xi + '|text" value="' + esc(x.text) + '" placeholder="무엇을 했나" style="flex:1"' + RPK + '>' +
+        '<button class="x" data-rpxdel="' + xi + '"' + RPK + ' title="이 줄 빼기">×</button></div>';
+    }).join("") +
+    '<button class="mini" data-rpxadd' + RPK + '>＋ 한 줄</button>';
+
+  h += '<h3 class="rp-h">내일 할 일 <span class="red">*</span></h3>' +
+    '<textarea data-rpf="tomorrow" rows="3" placeholder="내일 할 것 — 이 칸은 비우면 못 낸다"' + RPK + '>' + esc(rep.tomorrow) + '</textarea>' +
+    '<h3 class="rp-h">팀장에게</h3>' +
+    '<textarea data-rpf="toLead" rows="2" placeholder="막힌 것 · 필요한 것 · 데스크에 부탁할 것 (없으면 비움)"' + RPK + '>' + esc(rep.toLead) + '</textarea>';
+
+  h += (chk.warn.length ? '<div class="rp-warn">' + chk.warn.map(esc).join("<br>") + '</div>' : "") +
+    '<div class="row" style="margin-top:10px"><button class="btn" data-rpsave' + RPK + '>' + (saved && saved.submitted ? "다시 내기" : "제출") + '</button>' +
+    '<span class="muted" style="font-size:12px">' + (S.ro ? "팀장만 본다. 다른 선생님은 못 본다." : "팀장 것도 같은 칸에 적는다.") + '</span></div>';
+  box.innerHTML = h;
+  rpWireMine(box);
+}
+function rpWireMine(box) {
+  var rep = S.rpEdit.rep;
+  var re = function () { keepScrollIn("#sec-report", renderReport); };
+  // 글자 칸은 **다시 그리지 않는다** — 다시 그리면 치던 칸에서 포커스가 날아간다
+  $$("[data-rpc]", box).forEach(function (i) {
+    i.oninput = function () { var k = i.getAttribute("data-rpc").split("|"); rep.classes[+k[0]][k[1]] = i.value; };
+  });
+  $$("[data-rps]", box).forEach(function (i) {
+    var k = i.getAttribute("data-rps").split("|"), s = rep.classes[+k[0]].students[+k[1]];
+    if (k[2] === "note") i.oninput = function () { s.note = i.value; };
+    else if (k[2] === "called") i.onchange = function () { s.called = i.checked; re(); };
+    else i.onchange = function () { s.att = i.value; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
+  });
+  $$("[data-rpk]", box).forEach(function (b) {
+    b.onclick = function () {
+      var k = b.getAttribute("data-rpk").split("|"), t = rep.tasks[+k[0]];
+      t.state = t.state === k[1] ? "" : k[1]; re();                // 한 번 더 누르면 푼다
+    };
+  });
+  $$("[data-rpn]", box).forEach(function (i) { i.oninput = function () { rep.tasks[+i.getAttribute("data-rpn")].note = i.value; }; });
+  $$("[data-rpx]", box).forEach(function (i) {
+    var k = i.getAttribute("data-rpx").split("|");
+    var f = function () { rep.extra[+k[0]][k[1]] = i.value; };
+    i.oninput = f; i.onchange = f;
+  });
+  $$("[data-rpxdel]", box).forEach(function (b) { b.onclick = function () { rep.extra.splice(+b.getAttribute("data-rpxdel"), 1); re(); }; });
+  var add = $("[data-rpxadd]", box);
+  if (add) add.onclick = function () { rep.extra.push({ kind: RP_KINDS[0], text: "" }); re(); };
+  $$("[data-rpf]", box).forEach(function (i) { i.oninput = function () { rep[i.getAttribute("data-rpf")] = i.value; }; });
+  var go = $("[data-rpsave]", box);
+  if (go) go.onclick = async function () {
+    var chk = rpCheck(rep);
+    if (chk.stop.length) { alert(chk.stop.join("\n")); return; }
+    if (chk.warn.length && !confirm("이대로 낼까?\n\n" + chk.warn.join("\n"))) return;
+    go.disabled = true;
+    try { await saveDailyReport(rep); S.rpEdit = null; renderBanner(); renderReport(); }
+    catch (e) { go.disabled = false; alert("내지 못했다: " + e.message); }
+  };
+}
+
+// ---- 받은 보고 (팀장) — 아침 30분 정리 ----
+function rpDrawAll(box, d, sm) {
+  var tids = S.teachers.map(function (t) { return t.tid; })
+    .filter(function (tid) { return sm.expect.indexOf(tid) >= 0 || sm.got.indexOf(tid) >= 0; });
+  var passed = rpDeadline(d) <= Date.now();
+  var h = '<div class="rp-sum">' +
+    '<div><b>' + sm.got.length + '/' + sm.expect.length + '</b>낸 사람</div>' +
+    '<div class="' + (sm.missing.length && passed ? "bad" : "") + '"><b>' + sm.missing.length + '</b>안 낸 사람</div>' +
+    '<div class="' + (sm.noCall.length ? "bad" : "") + '"><b>' + sm.noCall.length + '</b>연락 안 된 결석</div>' +
+    '<div><b>' + sm.notes.length + '</b>특이사항</div>' +
+    '<div><b>' + sm.asks.length + '</b>요청</div></div>';
+  if (sm.missing.length) h += '<p style="font-size:13px"><b>안 낸 사람</b> — ' + sm.missing.map(function (t) { return esc(teacherName(t)); }).join(", ") +
+    (passed ? ' <span class="red">(아침 8시 지남 — 본인에게도 알림이 떠 있다)</span>' : ' <span class="muted">(아직 기한 전 — 다음 날 아침 8시까지)</span>') + '</p>';
+  if (sm.asks.length) h += '<div class="rp-asks"><b>팀장에게 온 것</b>' + sm.asks.map(function (x) {
+    return '<div><span class="pill">' + esc(x.who) + '</span> ' + esc(x.text) + '</div>'; }).join("") + '</div>';
+  h += '<div class="row" style="margin:8px 0"><button class="btn" data-rpdig>원장님께 올릴 문서</button>' +
+    '<span class="muted" style="font-size:12px">낸 보고를 한 장으로 모은다 (마크다운). 복사해서 올린다.</span></div>' +
+    (S.rpDig === d ? '<textarea class="rp-dig" rows="16" readonly>' + esc(rpDigest(d)) + '</textarea>' +
+      '<div class="row"><button class="mini" data-rpcopy>복사</button><button class="mini" data-rpdigx>접기</button></div>' : "");
+  if (!tids.length) h += '<p class="muted">' + esc(fmtMD(d)) + ' 에 수업한 선생님이 없다.</p>';
+  tids.forEach(function (tid) {
+    var rep = ((S.reports || {})[tid] || {})[d];
+    if (!(rep && rep.submitted)) {
+      h += '<div class="rp-card miss"><div class="row"><b>' + esc(teacherName(tid)) + '</b>' +
+        '<span class="pill red">안 냄</span><span class="muted" style="font-size:12px">' +
+        rpClassesOn(tid, d).map(function (c) { return esc(c.name); }).join(" · ") + '</span></div></div>';
+      return;
+    }
+    h += '<div class="rp-card"><div class="row"><b>' + esc(rep.name || teacherName(tid)) + '</b>' +
+      '<span class="pill green">냈다 ' + esc(rpHM(rep.updated || rep.submitted)) + '</span>' +
+      (rep.submitted && rpDeadline(d) < rep.submitted ? '<span class="pill orange">8시 넘어 냄</span>' : "") + '</div>';
+    (rep.classes || []).forEach(function (c) {
+      var ss = c.students || [];
+      var come = ss.filter(function (s) { return s.att && s.att !== "결석"; }).length;
+      h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b><span class="muted" style="font-size:12px">출석 ' + come + '/' + ss.length +
+        (c.progress ? ' · 진도 ' + esc(c.progress) : ' · <span class="red">진도 안 적음</span>') +
+        (c.homework ? ' · 과제 ' + esc(c.homework) : "") + '</span></div>' +
+        '<div class="rpwrap"><table class="rp-t rp-read"><tbody>' + ss.map(function (s) {
+          var quiet = s.att === "출석" && !s.note;
+          return '<tr class="' + (quiet ? "rp-dim" : s.att === "결석" ? "abs" : s.att === "지각" || s.att === "조퇴" ? "late" : "") + '">' +
+            '<td style="width:90px"><b>' + esc(s.name) + '</b></td><td style="width:90px">' + esc(s.att || "—") +
+            (s.att === "결석" ? (s.called ? ' <span class="muted">연락함</span>' : ' <span class="red">연락 안 함</span>') : "") + '</td>' +
+            '<td>' + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
+            (s.makeup ? ' <span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td></tr>';
+        }).join("") + '</tbody></table></div></div>';
+    });
+    if ((rep.tasks || []).length || (rep.extra || []).length) {
+      h += '<div class="rp-sub"><b>업무</b>' + (rep.tasks || []).map(function (t) {
+        return '<div><span class="pill ' + ({ done: "green", doing: "blue", hold: "yellow" }[t.state] || "") + '">' + esc(RP_STATE[t.state] || "—") + '</span> ' +
+          esc(t.text) + (t.note ? ' <span class="muted">— ' + esc(t.note) + '</span>' : "") + '</div>';
+      }).join("") + (rep.extra || []).map(function (x) {
+        return '<div><span class="pill">' + esc(x.kind) + '</span> ' + esc(x.text) + '</div>';
+      }).join("") + '</div>';
+    }
+    h += '<div class="rp-sub"><b>내일</b> ' + esc(rep.tomorrow || "—") + '</div>' +
+      (rep.toLead ? '<div class="rp-sub"><b>팀장에게</b> ' + esc(rep.toLead) + '</div>' : "") + '</div>';
+  });
+  box.innerHTML = h;
+  var dg = $("[data-rpdig]", box);
+  if (dg) dg.onclick = function () { S.rpDig = S.rpDig === d ? "" : d; renderReport(); };
+  var dx = $("[data-rpdigx]", box);
+  if (dx) dx.onclick = function () { S.rpDig = ""; renderReport(); };
+  var cp = $("[data-rpcopy]", box);
+  if (cp) cp.onclick = function () {
+    var ta = $(".rp-dig", box), txt = ta ? ta.value : "";
+    var ok = function () { cp.textContent = "복사했다"; };
+    try { navigator.clipboard.writeText(txt).then(ok, function () { ta.select(); document.execCommand("copy"); ok(); }); }
+    catch (e) { ta.select(); try { document.execCommand("copy"); ok(); } catch (e2) {} }
+  };
 }
 
 // ---------- 회의록 ----------

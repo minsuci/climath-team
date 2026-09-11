@@ -58,6 +58,15 @@ service cloud.firestore {
       allow write: if role() == "owner";
     }
 
+    // 업무보고 (2026-09-11) — 사람마다 자기 칸. **선생님끼리는 서로 못 본다.**
+    // 팀장은 전부 읽는다(아침에 정리해 원장님께 올린다). 쓰는 것은 누구든 **자기 칸만** —
+    // 팀장도 남의 보고는 못 고친다. 보고는 쓴 사람의 말이어야 한다.
+    // ⚠ 선생님 읽기에 조건 없는 team() 을 쓰면 **서로의 보고가 다 열린다.** marks·myTasks 와 여기가 다른 점이다.
+    match /dailyReports/{tid}/days/{date} {
+      allow read: if role() == "owner" || (role() == "teacher" && tid == myTid());
+      allow write: if team() && tid == myTid();
+    }
+
     // 나머지는 팀 전체가 읽고, 쓰는 것은 관리자뿐이다.
     match /devtools/{doc=**}   { allow read: if team(); allow write: if role() == "owner"; }
     match /devlog/{doc=**}     { allow read: if team(); allow write: if role() == "owner"; }
