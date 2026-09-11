@@ -251,6 +251,8 @@
   .cday [data-ctask], .todo [data-ctask] { cursor: pointer; }
   .cday [data-ctask]:hover, .todo [data-ctask]:hover { color: var(--navy); text-decoration: underline; }
   .cday .ec { display: block; margin-bottom: 3px; }
+  .mc .ew { font-style: normal; opacity: .7; font-size: 9px; }
+  .mc.evdone { text-decoration: line-through; opacity: .6; }
   /* 색 고르는 단추 */
   .csw { border: 1px solid var(--line); border-radius: 6px; font-size: 11px; padding: 2px 8px;
     cursor: pointer; font-weight: 600; }
@@ -1370,7 +1372,8 @@ function calMonthSum(ym, want) {
 // 다 보이려고 칸을 늘리면 한 달이 한 화면에 안 들어오고, 그러면 달력이 아니다.
 var MDAY_MAX = 3;
 function monthDayTasks(d, want, max) {
-  var list = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
+  // 달력에 올린 업무(cal)는 일정 칩으로 이미 뜬다. 여기서 또 세우면 한 칸에 같은 줄이 둘이다.
+  var list = calTasks().filter(function (t) { return !t.cal && gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
   // 안 끝난 것이 먼저, 그 안에서 마감이 먼저. 접히는 것은 늘 «덜 급한 쪽» 이라야 한다.
   list.sort(function (a, b) {
     var ad = taskDoneOn(a, d) ? 1 : 0, bd = taskDoneOn(b, d) ? 1 : 0;
@@ -1473,7 +1476,7 @@ function weekSegments(ranges, days) {
     var b = days.indexOf(r.e > to ? to : r.e);
     if (a < 0 || b < 0) return;
     var seg = { a: a, b: b, kind: r.kind, text: r.text, full: r.full || r.text, n: r.n || 1,
-                color: r.color || "", id: r.id || "", refs: r.refs || [], head: r.s >= from, tail: r.e <= to };
+                color: r.color || "", id: r.id || "", task: !!r.task, refs: r.refs || [], head: r.s >= from, tail: r.e <= to };
     var i = 0;
     while (lanes[i] && lanes[i].some(function (x) { return !(seg.b < x.a || seg.a > x.b); })) i++;
     lanes[i] = lanes[i] || [];
@@ -1486,7 +1489,7 @@ function weekSegments(ranges, days) {
 function barHtml(g, rowBase) {
   var fix = !S.ro && (g.kind === "test" || g.kind === "class") && g.refs && g.refs.length;
   return '<div class="bar ' + g.kind + (g.head ? " s" : "") + (g.tail ? " e" : "") + (g.id ? " ec" : "") + (fix ? " pick" : "") + '"' +
-    (g.id ? ' data-cev="' + esc(g.id) + '"' : "") +
+    (g.id ? (g.task ? ' data-ctask="' + esc(g.id) + '"' : ' data-cev="' + esc(g.id) + '"') : "") +
     (fix ? ' data-cref="' + esc(g.kind + "|" + g.refs.join(",")) + '"' : "") +
     ' style="grid-column:' + (g.a + 1) + '/span ' + (g.b - g.a + 1) + ';grid-row:' + (rowBase + g.lane) + ';' +
     (g.color ? evStyle(g.color) : "") + '"' +
@@ -1532,7 +1535,7 @@ function evSpan(e) { return evEnd(e) > e.from; }        // 이틀 이상이면 �
 // 일정은 **모두의 것**이라 담당으로 안 가른다. 학년 탭만 탄다.
 function evHit(e, want) { return gradeHit(e.grade || "공통", want); }
 function eventsOn(d, want) {
-  return (S.events || []).filter(function (e) {
+  return allEvents().filter(function (e) {
     // ⚠ 쉬는 날은 칩으로 안 뜬다. 칸을 통째로 물들이고 날짜 옆에 이름이 붙는 쪽이라,
     //    칩으로도 뜨면 같은 말이 한 칸에 두 번 적힌다.
     // ⚠ 다만 «안 쉼» 으로 고친 것(over && !off)은 **보통 일정으로 뜬다.** 연휴에 특강을 연다고
@@ -1542,15 +1545,67 @@ function eventsOn(d, want) {
 }
 // 이틀 이상짜리는 시험 막대와 같은 길로 보낸다 — 주 경계에서 잘리고 겹치면 층이 갈린다.
 function evRanges(want) {
-  return (S.events || []).filter(function (e) { return evHit(e, want) && !e.off && evSpan(e); })
+  return allEvents().filter(function (e) { return evHit(e, want) && !e.off && evSpan(e); })
     .map(function (e) {
-      return { s: e.from, e: evEnd(e), kind: "ev", text: e.text, full: e.text, n: 1,
-               color: e.color || "gray", id: e.id };
+      var tx = (e.done ? "✓ " : "") + e.text + (e.who ? " · " + e.who : "");
+      return { s: e.from, e: evEnd(e), kind: "ev", text: tx, full: tx, n: 1,
+               color: e.color || "gray", id: e.id, task: !!e.task };
     });
 }
 function evChipHtml(e) {
-  return '<span class="mc ec" style="' + evStyle(e.color) + '" data-cev="' + esc(e.id) + '"' +
-    ' title="' + esc(e.text) + (S.ro ? "" : " (눌러서 고치기)") + '">' + esc(e.text) + '</span>';
+  // 담당 붙은 업무는 할 일 줄이라 누르면 **그 줄**을 고친다(data-ctask). 끝나면 ✓ 와 줄을 긋는다.
+  var hit = e.task ? ' data-ctask="' + esc(e.id) + '" data-cd="' + esc(e.from) + '"' : ' data-cev="' + esc(e.id) + '"';
+  return '<span class="mc ec' + (e.done ? " evdone" : "") + '" style="' + evStyle(e.color) + '"' + hit +
+    ' title="' + esc(e.text + (e.who ? " · 담당 " + e.who : "") + (e.done ? " · 끝남" : "")) +
+    (S.ro ? "" : " (눌러서 고치기)") + '">' + (e.done ? "✓ " : "") + esc(e.text) +
+    (e.who ? ' <i class="ew">' + esc(e.who) + '</i>' : "") + '</span>';
+}
+// ---- 담당이 붙은 달력 업무 = 할 일 한 줄 (2026-09-11) ----
+//
+// 마왕님 말씀 — «업무달력에서 추가하면 할 일에도 자동 등록되는 거지? 그러려면 담당도 넣어야 할 듯».
+// 그때까지는 «일정» 으로 넣으면 할 일에 안 들어가고 담당 칸도 없었다. 기본 탭이 그쪽이라 헷갈렸다.
+//
+// ⚠ 달력 일정과 할 일을 **두 벌로 두지 않는다.** 담당을 넣으면 그것은 **할 일 한 줄**이다(dash/tasks).
+//    달력은 그 줄을 일정처럼 **색을 입혀 모두에게** 그린다. 일정 사본을 따로 두면 한쪽을 고칠 때
+//    다른 쪽이 옛 날짜를 말하고, 할 일 메뉴에서 지워도 달력에는 남는다.
+//      cal: true   — 운영 달력에 모두가 보는 업무다 (담당이 아니어도 달력에 뜬다)
+//      color       — 고른 글씨 색
+//      from ~ due  — 여러 날짜리면 시작 ~ 끝. due 가 **마감**이다(할 일 메뉴의 기한 칸이 그걸 본다)
+// 담당이 없으면 지금처럼 일정(dash/calEvents)이다. 쉬는 날은 누구의 일도 아니라 담당을 안 받는다.
+function calTaskList() { return (S.tasks || []).filter(function (t) { return t.cal && t.due; }); }
+function taskAsEv(t) {
+  var from = t.from && t.from < t.due ? t.from : t.due;
+  return { id: t.id, text: t.text, from: from, to: from < t.due ? t.due : "", color: t.color || "gray",
+           grade: t.grade || "", who: t.who || "", task: true, done: t.status === "done" };
+}
+// 달력에 일정으로 그릴 것 전부 — 손으로 넣은 일정 + 담당 붙은 업무
+function allEvents() { return (S.events || []).concat(calTaskList().map(taskAsEv)); }
+// 폼에 적힌 값 → 어디에 무엇을 둘지. **담당이 있으면 할 일, 없으면 일정.**
+function calSavePlan(v) {
+  var who = (v.off || v.over) ? "" : String(v.who || "").trim();
+  if (who) return { as: "task", rec: { text: v.text, who: who, grade: v.grade || "", due: v.to || v.from,
+    from: v.to ? v.from : "", color: v.color || "gray", cal: true } };
+  var ev = { text: v.text, from: v.from, to: v.to || "", color: v.color || "gray", grade: v.grade || "", off: !!v.off };
+  if (v.over) ev.over = true;
+  return { as: "ev", rec: ev };
+}
+// 계획대로 옮긴다. 일정 ↔ 할 일로 **갈래가 바뀌면 옛 쪽을 치운다** — 안 치우면 한 칸에 둘이 뜬다.
+// 무엇을 저장해야 하는지를 돌려준다.
+function applyCalSave(plan, curEv, curTask) {
+  var dirty = { tasks: false, events: false };
+  if (plan.as === "task") {
+    if (curTask) { Object.assign(curTask, plan.rec); if (!plan.rec.from) delete curTask.from; }
+    else S.tasks.push(Object.assign({ id: newTaskId(), status: "open", src: "업무 달력", created: TODAY }, plan.rec));
+    dirty.tasks = true;
+    if (!plan.rec.from && !curTask) delete S.tasks[S.tasks.length - 1].from;
+    if (curEv) { S.events = (S.events || []).filter(function (x) { return x.id !== curEv.id; }); dirty.events = true; }
+  } else {
+    if (curEv) Object.assign(curEv, plan.rec);
+    else S.events = (S.events || []).concat([Object.assign({ id: newId(), created: TODAY }, plan.rec)]);
+    dirty.events = true;
+    if (curTask) { S.tasks = S.tasks.filter(function (x) { return x.id !== curTask.id; }); dirty.tasks = true; }
+  }
+  return dirty;
 }
 async function saveEvents() {
   if (!S.teamOk) return;
@@ -1701,7 +1756,7 @@ function renderCal() {
     })() +
     '<div class="calwrap"><div class="cal">' + days.map(function (d) {
       var dow = parseYmd(d).getDay();
-      var mine = calTasks().filter(function (t) { return gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
+      var mine = calTasks().filter(function (t) { return !t.cal && gradeHit(taskGrade(t), want) && taskOnDate(t, d); });
       var hol = holidayOf(d);
       return '<div class="cday' + (d === TODAY ? " today" : "") + (dow === 0 || dow === 6 ? " wend" : "") +
         (hol ? " off" : "") + '">' +
@@ -1732,6 +1787,7 @@ function renderCal() {
     '<b>분홍 칸은 쉬는 날</b>이고 손으로 적어 둔다 — 안 적은 해는 머리에 그렇게 뜬다. ' +
     '<b>인쇄</b>를 누르면 이 달만 A4 가로 한 장으로 나간다. ' +
     '<b>＋ 업무 추가</b>(또는 날짜 칸의 ＋)로 달력에 <b>일정</b>을 넣는다 — 글씨 색을 고르고, ' +
+    '<b>담당을 넣으면 그 사람 할 일에도 들어간다</b>(할 일 메뉴와 같은 줄이라 끝내면 달력에 ✓ 가 붙는다). ' +
     '«까지»를 채우면 여러 날에 걸친 막대가 된다. <b>일정은 담당과 상관없이 팀 전체가 같은 것을 본다</b> ' +
     '(할 일은 담당인 사람에게만 보인다). 넣은 일정을 누르면 고치거나 지운다. 넣고 고치는 것은 팀장뿐이다. ' +
     '<b>달력에 뜨는 것은 전부 눌러서 고친다</b> — 할 일은 할 일 메뉴와 같은 줄이고, 시험 막대는 시험 성적의 그 시험, ' +
@@ -1779,6 +1835,8 @@ function renderCal() {
       ev.stopPropagation();                       // 날 칸의 «그 주로 가기» 가 같이 돌면 안 된다
       var t = taskById(b.getAttribute("data-ctask"));
       if (!t || !canEditTask(t)) return;
+      // 달력에 올린 업무는 색·기간·담당을 한 폼에서 고친다 — 넣은 자리와 같은 폼이다.
+      if (t.cal) return calAddOpen(t.from || t.due, "ev", t.id);
       calAddOpen(b.getAttribute("data-cd") || t.due || S.calAnchor, "task", t.id);
     };
   });
@@ -2048,7 +2106,10 @@ function drawCalAdd() {
   if (kind === "test" || kind === "class" || kind === "pick") return drawCalFix(box, a);
   if (kind === "task" && a.id) return drawTaskFix(box, a);
   var d = a.d;
-  var cur = a.id ? (S.events || []).filter(function (x) { return x.id === a.id; })[0] : null;
+  var curEv = a.id ? (S.events || []).filter(function (x) { return x.id === a.id; })[0] || null : null;
+  // 담당 붙은 업무를 고치러 온 때 — 할 일 줄을 일정 모양으로 펴서 같은 폼에 담는다
+  var curTask = (!curEv && a.id) ? (S.tasks.filter(function (x) { return x.id === a.id && x.cal; })[0] || null) : null;
+  var cur = curEv || (curTask ? taskAsEv(curTask) : null);
   // 붙박이 쉬는 날을 처음 누른 때 — 아직 저장된 것이 없으니 그 값으로 폼을 채워 준다.
   var seed = cur || a.seed || null;
   var isHol = !!(seed && (seed.off || seed.over));
@@ -2056,13 +2117,14 @@ function drawCalAdd() {
     return '<button class="mini ' + (k === kind ? "on" : "") + '" data-catab="' + k + '">' + t + '</button>';
   };
   var head = '<div class="row" style="margin-bottom:6px">' +
-    (cur ? '<b>' + (cur.over || cur.off ? "쉬는 날 고치기" : "일정 고치기") + '</b>'
+    (cur ? '<b>' + (cur.over || cur.off ? "쉬는 날 고치기" : curTask ? "업무 고치기" : "일정 고치기") + '</b>'
          : (a.seed ? '<b>쉬는 날 고치기</b>' : tab("ev", "일정") + tab("task", "할 일"))) +
     '<span class="muted" style="font-size:12px">' +
-    (kind !== "ev" ? "내 할 일이다 — 담당·체크가 붙고 업무 달력에는 담당인 사람에게만 보인다"
+    (kind !== "ev" ? "담당에게만 보이는 할 일이다 — 매주 반복도 된다. 모두가 봐야 하면 «일정» 에서 담당을 넣는다"
+       : curTask ? "할 일 메뉴와 같은 줄이다 — 담당 " + (curTask.who || "") + " 의 할 일이기도 하다. 담당을 비우면 할 일에서 빠지고 일정으로만 남는다"
        : (cur && cur.over) ? "나라 달력을 학원 사정에 맞춰 고친 것이다. 지우면 원래 날로 돌아간다"
        : a.seed ? "나라 달력의 쉬는 날이다. 고쳐 두면 이 학원 것이 되고, 나중에 지우면 원래대로 돌아간다"
-       : "모두가 보는 달력 일정이다 — 색을 고를 수 있고 «쉬는 날» 로 만들면 칸이 물든다") +
+       : "모두가 보는 달력 일정이다. <b>담당을 넣으면 그 사람 할 일에도 들어간다.</b> «쉬는 날» 로 만들면 칸이 물든다") +
     '</span></div>';
 
   if (kind === "ev") {
@@ -2073,7 +2135,9 @@ function drawCalAdd() {
       '<select id="ce-grade">' + ["공통"].concat(GRADES).map(function (g) {
         var sel = seed ? ((seed.grade || "공통") === g) : (S.calGrade === g);
         return '<option' + (sel ? " selected" : "") + '>' + g + '</option>'; }).join("") + '</select>' +
-      '<label style="font-size:13px" title="칸을 물들이고 날짜 옆에 이름이 붙는다">' +
+      '<input type="text" id="ce-who" list="who-list" placeholder="담당 (넣으면 할 일에도)" value="' + esc((seed && seed.who) || "") + '"' +
+      (isHol ? " disabled" : "") + ' style="flex:0 0 150px" title="담당을 넣으면 그 사람 할 일에도 들어간다">' +
+      '<label style="font-size:13px" title="칸을 물들이고 날짜 옆에 이름이 붙는다. 쉬는 날은 담당을 안 받는다">' +
       '<input type="checkbox" id="ce-off"' + (seed && seed.off ? " checked" : "") + '> 쉬는 날</label>' +
       '</div><div class="row" style="margin-top:6px">' +
       '<span class="muted" style="font-size:12px">글씨 색</span>' +
@@ -2085,7 +2149,10 @@ function drawCalAdd() {
       '<span class="sp" style="flex:1"></span>' +
       (cur ? '<button class="btn" id="ce-go">고치기</button><button class="mini" id="ce-del">지우기</button>'
            : '<button class="btn" id="ce-go">넣기</button>') +
-      '<button class="mini" id="ce-x">닫기</button></div></div>';
+      '<button class="mini" id="ce-x">닫기</button></div>' +
+      '<datalist id="who-list">' + whoOptions().map(function (w) { return '<option value="' + esc(w) + '">'; }).join("") + '</datalist></div>';
+    // 쉬는 날은 누구의 일도 아니다 — 켜면 담당 칸을 잠근다
+    $("#ce-off").onchange = function () { $("#ce-who").disabled = $("#ce-off").checked; };
     var pick = (seed && seed.color) || (isHol ? "pink" : "gray");
     $$("[data-ccol]", box).forEach(function (b) {
       b.onclick = function () {
@@ -2097,20 +2164,36 @@ function drawCalAdd() {
       var text = $("#ce-text").value.trim(); if (!text) return;
       var from = $("#ce-from").value || d, to = $("#ce-to").value || "";
       if (to && to < from) { var t0 = from; from = to; to = t0; }     // 거꾸로 넣어도 받아 준다
-      var keep = (S.events || []).slice();
-      var one = { text: text, from: from, to: to, color: pick,
+      var plan = calSavePlan({ text: text, from: from, to: to, color: pick,
         grade: $("#ce-grade").value === "공통" ? "" : $("#ce-grade").value,
-        off: !!$("#ce-off").checked };
-      // 붙박이 쉬는 날에서 온 것은 «내가 정한 날» 이라는 표를 달고 다닌다 — 안 그러면 둘 다 뜬다.
-      if ((a.seed && a.seed.over) || (cur && cur.over)) one.over = true;
-      if (cur) Object.assign(cur, one);
-      else S.events = (S.events || []).concat([Object.assign({ id: newId(), created: TODAY }, one)]);
-      try { await saveEvents(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); }
-      catch (e) { S.events = keep; alert("넣지 못했다: " + e.message); keepScrollIn("#sec-cal", renderCal); }
+        off: !!$("#ce-off").checked, who: $("#ce-who").value,
+        // 붙박이 쉬는 날에서 온 것은 «내가 정한 날» 이라는 표를 달고 다닌다 — 안 그러면 둘 다 뜬다.
+        over: !!((a.seed && a.seed.over) || (cur && cur.over)) });
+      // 할 일이던 것을 일정으로 돌리면 끝냄·보고 표시가 같이 사라진다. 모르고 비우지 않게 묻는다.
+      if (plan.as === "ev" && curTask && !confirm("담당을 비우면 할 일에서 빠지고 일정으로만 남는다. 끝냄·보고 표시도 같이 없어진다. 그대로 할까?")) return;
+      var keepE = (S.events || []).slice(), keepT = S.tasks.slice(), keepCur = curTask ? JSON.parse(JSON.stringify(curTask)) : null;
+      var dirty = applyCalSave(plan, curEv, curTask);
+      try {
+        // 할 일부터 쓴다 — 일정→할 일로 옮길 때 일정 쪽 쓰기가 실패해도 할 일은 남아 있어야 잃는 것이 없다
+        if (dirty.tasks) await saveTasks();
+        if (dirty.events) await saveEvents();
+        S.calAdd = null; keepScrollIn("#sec-cal", renderCal); try { renderTasksSafe(); } catch (e2) {}
+      } catch (e) {
+        S.events = keepE; S.tasks = keepT;
+        if (curTask && keepCur) { Object.keys(curTask).forEach(function (k) { delete curTask[k]; }); Object.assign(curTask, keepCur); }
+        alert("넣지 못했다: " + e.message); keepScrollIn("#sec-cal", renderCal);
+      }
     };
     $("#ce-go").onclick = go;
     $("#ce-text").addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-    if ($("#ce-del")) $("#ce-del").onclick = async function () {
+    if ($("#ce-del") && curTask) $("#ce-del").onclick = async function () {
+      if (!confirm("이 업무를 지운다: " + curTask.text + "\n(담당 " + (curTask.who || "") + " 의 할 일에서도 지워진다)")) return;
+      var keepT = S.tasks;
+      S.tasks = S.tasks.filter(function (x) { return x.id !== curTask.id; });
+      try { await saveTasks(); S.calAdd = null; keepScrollIn("#sec-cal", renderCal); try { renderTasksSafe(); } catch (e2) {} }
+      catch (e) { S.tasks = keepT; alert("지우지 못했다: " + e.message); }
+    };
+    else if ($("#ce-del")) $("#ce-del").onclick = async function () {
       if (!confirm(cur.over ? "고친 것을 지우고 나라 달력대로 되돌린다: " + cur.text
                              : "이 일정을 지운다: " + cur.text)) return;
       var keep = (S.events || []).slice();
@@ -2490,6 +2573,9 @@ function markPill(t) {
 // 기준: **담당에 팀장 말고 우리 팀 사람이 하나라도 걸리면 공개.**
 // 담당이 비었거나(아직 안 시킨 것), 팀장 혼자거나, 팀 밖 사람(고우빈·김효상·데스크)이면 팀장만 본다.
 function taskShared(t) {
+  // ⚠ 달력에 올린 업무는 **모두가 보는 운영 달력**의 것이다. 담당이 팀장 한 사람이어도
+  //    팀장 전용 문서(tasksLead)로 가면 선생님 달력에서 조용히 사라진다 (2026-09-11).
+  if (t.cal) return true;
   return taskTids(t).some(function (tid) {
     var x = S.teachers.filter(function (y) { return y.tid === tid; })[0];
     return x && x.role !== "owner";

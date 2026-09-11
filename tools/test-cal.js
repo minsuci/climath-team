@@ -508,6 +508,99 @@ ctx.__t.then(async (r) => {     // 저장을 기다리는 시험이 있어 async
     run(`return todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false })`).indexOf("data-ctask") < 0);
   run(`S.ro = false; S.claims = null; S.tasks = []; S.tests = []; S.classes = [];`);
 
+  { // 앞 절과 이름이 안 겹치게 블록으로 감싼다
+  // ---- 달력에서 담당을 넣으면 할 일에도 들어간다 (2026-09-11) ----
+  // «업무달력에서 추가하면 할 일에도 자동 등록되는 거지? 그러려면 담당도 넣어야 할 듯» — 마왕님.
+  // 담당이 있으면 **할 일 한 줄**로 저장하고 달력은 그 줄을 일정처럼 그린다. 사본은 없다.
+  run(`S.ro = false; S.claims = { role:"owner", tid:"T1", name:"한민수" }; TODAY = "2026-09-04";
+    S.teachers = [ { tid:"T1", name:"한민수", role:"owner" }, { tid:"T2", name:"이현우", role:"teacher" } ];
+    S.tasks = []; S.events = []; S.tests = []; S.classes = [];`);
+
+  // 계획 — 담당이 있으면 할 일, 없으면 일정
+  const p1 = JSON.parse(run(`return JSON.stringify(calSavePlan({ text:"저조자 명단", from:"2026-09-11", to:"", color:"black", grade:"고1", who:"이현우" }))`));
+  ok("담당이 있으면 할 일로 간다", p1.as === "task" && p1.rec.who === "이현우" && p1.rec.cal === true, JSON.stringify(p1));
+  ok("하루짜리는 그 날이 기한", p1.rec.due === "2026-09-11" && p1.rec.from === "", JSON.stringify(p1.rec));
+  ok("색과 학년을 들고 간다", p1.rec.color === "black" && p1.rec.grade === "고1");
+  const p2 = JSON.parse(run(`return JSON.stringify(calSavePlan({ text:"저조자 상담", from:"2026-09-14", to:"2026-09-16", who:"이현우" }))`));
+  ok("여러 날짜리는 끝 날이 기한 (마감)", p2.rec.due === "2026-09-16" && p2.rec.from === "2026-09-14", JSON.stringify(p2.rec));
+  ok("담당이 없으면 일정", run(`return calSavePlan({ text:"1부 시험", from:"2026-09-21", who:"  " }).as`) === "ev");
+  ok("쉬는 날은 담당을 안 받는다 (누구의 일도 아니다)",
+    run(`return calSavePlan({ text:"휴관", from:"2026-09-17", off:true, who:"이현우" }).as`) === "ev");
+  ok("붙박이 쉬는 날을 고친 것도 담당을 안 받는다",
+    run(`return calSavePlan({ text:"추석", from:"2026-09-25", over:true, who:"이현우" }).as`) === "ev");
+
+  // 새로 넣기 — 할 일 목록에 한 줄이 생긴다
+  run(`applyCalSave(calSavePlan({ text:"저조자 명단", from:"2026-09-11", to:"", color:"black", grade:"고1", who:"이현우" }), null, null);`);
+  const t1 = JSON.parse(run(`return JSON.stringify(S.tasks[0] || null)`));
+  ok("할 일에 한 줄이 생긴다", !!t1 && t1.text === "저조자 명단" && t1.who === "이현우", JSON.stringify(t1));
+  ok("열린 할 일로 들어가고 출처가 붙는다", t1 && t1.status === "open" && t1.src === "업무 달력");
+  ok("하루짜리엔 시작 칸이 안 남는다", t1 && !("from" in t1), JSON.stringify(t1));
+  ok("일정 상자에는 안 들어간다 (두 벌이 아니다)", run(`return S.events.length`) === 0);
+
+  // 담당이 팀장 한 사람이어도 선생님 달력에서 사라지면 안 된다
+  ok("달력 업무는 공개분이다 (담당이 팀장뿐이어도)",
+    run(`return taskShared({ text:"x", who:"한민수", cal:true, due:"2026-09-11" })`) === true);
+  ok("달력 업무가 아닌 팀장 할 일은 그대로 팀장 전용", run(`return taskShared({ text:"x", who:"한민수" })`) === false);
+  W.length = 0;
+  run(`S.tasks.push({ id:"L1", text:"간부 준비", who:"한민수", cal:true, due:"2026-09-12", status:"open", color:"red" });`);
+  await run(`return saveTasks()`);
+  const open = W.filter(function (w) { return w.path === "dash/tasks"; })[0], lead = W.filter(function (w) { return w.path === "dash/tasksLead"; })[0];
+  ok("저장하면 공개 문서(dash/tasks)로 간다",
+    !!open && open.data.items.some(function (x) { return x.id === "L1"; }) &&
+    !(lead && lead.data.items.some(function (x) { return x.id === "L1"; })), JSON.stringify(W.map(function (w) { return w.path; })));
+
+  // 달력에 모두에게 — 담당이 아닌 선생님에게도 일정처럼 뜬다
+  run(`S.ro = true; S.claims = { role:"teacher", tid:"T3", name:"이창혁A" };`);
+  ok("담당이 아닌 사람 달력에도 뜬다",
+    run(`return eventsOn("2026-09-11","전체").map(function(e){return e.text;}).join()`) === "저조자 명단");
+  run(`S.ro = false; S.claims = { role:"teacher", tid:"T2", name:"이현우" };`);
+  // ⚠ 담당에게는 할 일이기도 하다. 할 일 칩으로도 세우면 한 칸에 같은 줄이 두 번 뜬다.
+  ok("담당 칸에 두 번 안 뜬다 (할 일 칩으로는 안 선다)", run(`return monthDayTasks("2026-09-11","전체").all.length`) === 0);
+  ok("담당의 «이번 주까지 해야 할 일» 에는 들어간다",
+    run(`return dueThrough("전체", weekDays("2026-09-11")).some(function(x){ return x.t.text === "저조자 명단"; })`) === true);
+  run(`S.claims = { role:"owner", tid:"T1", name:"한민수" };`);
+
+  const chip = run(`return evChipHtml(eventsOn("2026-09-11","전체")[0])`);
+  ok("칩을 누르면 그 할 일 줄로 간다", chip.indexOf('data-ctask="') >= 0 && chip.indexOf("data-cev") < 0, chip);
+  ok("칩에 담당이 적힌다", chip.indexOf("이현우") >= 0);
+  ok("고른 색이 붙는다", chip.indexOf("background:#1f2937") >= 0);
+  run(`S.tasks[0].status = "done";`);
+  const chip2 = run(`return evChipHtml(eventsOn("2026-09-11","전체")[0])`);
+  ok("끝내면 달력에 ✓ 가 붙는다", chip2.indexOf("✓ ") >= 0 && chip2.indexOf("evdone") >= 0, chip2);
+  run(`S.tasks[0].status = "open";`);
+
+  // 여러 날짜리는 막대 — 막대도 할 일 줄로 간다
+  run(`applyCalSave(calSavePlan({ text:"저조자 상담", from:"2026-09-14", to:"2026-09-16", color:"blue", who:"이현우" }), null, null);`);
+  const rg = JSON.parse(run(`return JSON.stringify(evRanges("전체").filter(function(r){ return r.task; }))`));
+  ok("여러 날짜리는 막대가 된다", rg.length === 1 && rg[0].s === "2026-09-14" && rg[0].e === "2026-09-16", JSON.stringify(rg));
+  ok("막대에 담당이 적힌다", rg[0] && rg[0].text.indexOf("이현우") >= 0, rg[0] && rg[0].text);
+  const bh = run(`var lay = weekSegments(mergeRanges(calRanges("전체")), weekDays("2026-09-14"));
+    return lay.segs.filter(function(g){ return g.task; }).map(function(g){ return barHtml(g, 1); }).join("")`);
+  ok("막대를 누르면 할 일 줄로 간다", bh.indexOf("data-ctask=") >= 0 && bh.indexOf("data-cev") < 0, bh.slice(0, 140));
+
+  // 갈래 바꾸기 — 옛 쪽을 치운다
+  run(`S.events = [{ id:"E9", text:"알림톡 등록", from:"2026-09-22", to:"", color:"orange" }];`);
+  const d1 = JSON.parse(run(`var ev = S.events[0];
+    return JSON.stringify(applyCalSave(calSavePlan({ text:"알림톡 등록", from:"2026-09-22", color:"orange", who:"이현우" }), ev, null));`));
+  ok("일정에 담당을 넣으면 할 일이 된다", run(`return S.tasks.some(function(t){ return t.text === "알림톡 등록" && t.cal; })`) === true);
+  ok("…그리고 일정 쪽에서는 빠진다 (한 칸에 둘이 안 뜬다)", run(`return S.events.length`) === 0);
+  ok("둘 다 저장해야 한다고 말한다", d1.tasks === true && d1.events === true, JSON.stringify(d1));
+  const d2 = JSON.parse(run(`var t = S.tasks.filter(function(x){ return x.text === "알림톡 등록"; })[0];
+    return JSON.stringify(applyCalSave(calSavePlan({ text:"알림톡 등록", from:"2026-09-22", color:"orange", who:"" }), null, t));`));
+  ok("담당을 비우면 할 일에서 빠진다", run(`return S.tasks.some(function(t){ return t.text === "알림톡 등록"; })`) === false);
+  ok("…그리고 일정으로 남는다", run(`return S.events.map(function(e){ return e.text; }).join()`) === "알림톡 등록");
+  ok("이때도 둘 다 저장", d2.tasks === true && d2.events === true, JSON.stringify(d2));
+
+  // 고치기 — 여러 날짜 → 하루로 바꾸면 시작 칸이 치워진다
+  run(`var t = S.tasks.filter(function(x){ return x.text === "저조자 상담"; })[0];
+    applyCalSave(calSavePlan({ text:"저조자 상담", from:"2026-09-15", to:"", color:"blue", who:"이현우" }), null, t);`);
+  const t3 = JSON.parse(run(`return JSON.stringify(S.tasks.filter(function(x){ return x.text === "저조자 상담"; })[0])`));
+  ok("하루로 줄이면 시작 칸이 빠지고 기한이 그 날이 된다", !("from" in t3) && t3.due === "2026-09-15", JSON.stringify(t3));
+  ok("고쳐도 같은 줄이다 (끝냄 표시 따위가 안 날아간다)", t3.status === "open" && t3.src === "업무 달력");
+  run(`S.tasks = []; S.events = []; S.claims = null; S.ro = false;`);
+
+  }
+
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
   console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
