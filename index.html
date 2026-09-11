@@ -338,7 +338,6 @@
     text-overflow: ellipsis; white-space: nowrap; background: #eef1f6; color: #374151; }
   .calleg .plc { display: inline-block; margin: 0; }
   .plc.goal { background: #1f2a44; color: #fff; font-weight: 600; }
-  .plc.event { background: #e3ecfa; color: #1d4f91; }
   .plc.consult { background: #e2f4ea; color: #1f7a4d; }
   .plc.tent { background: #fff; color: #6b7280; border: 1px dashed #9ca3af; font-weight: 400; }
   .plc.done { opacity: .5; text-decoration: line-through; }
@@ -1762,13 +1761,22 @@ function rpDrawAll(box, d, sm) {
 //   종류에 «상담» 을 두고, 한 달을 마크다운으로 뽑는 단추를 둔다.
 //
 //   dash/monthPlan { months: { "2026-09": { goal, items: [...], notes: [{ id, title, text }], updated } }, updated }
-//   item { id, kind: "goal"|"event"|"consult", text, desc, from, to, tent, when, who, state }
+//   item { id, kind: "goal"|"consult", text, desc, from, to, tent, when, who, state, task }
+//     kind — 처음엔 끝낼 것(goal)·일정(event)·상담 셋이었는데 마왕님 «끝낼 것과 일정의 차이를 모르겠다, 합쳐» (같은 날).
+//            **업무·상담 둘**이다. 옛 «event» 는 읽을 때 업무로 본다(plKind).
+//     task — «할 일로 보내기» 로 만든 할 일 id. 그 할 일이 끝나면 여기서도 «완료» 로 보인다(plState)
 //     tent — 날짜가 잠정(«추석 특강 — 미정» 을 9/23·24 에 흐리게 올려 두던 것)
 //     when — «중산고 9/15 · 나머지 9/18» 처럼 날짜 하나로 안 되는 언제. 비우면 날짜로 쓴다
 // dash 는 규칙이 이미 «팀 읽기 · 팀장 쓰기» 다 — 새 규칙을 게시할 일이 없다.
-var PL_KIND = { goal: "끝낼 것", event: "일정", consult: "상담" };
+var PL_KIND = { goal: "업무", consult: "상담" };
+function plKind(it) { return it && it.kind === "consult" ? "consult" : "goal"; }
 var PL_STATE = ["예정", "진행", "결정 필요", "완료"];
-var PL_WHO = ["팀 전원", "담임", "고1 담당", "예비고1 담당"];
+// 담당 추천은 할 일과 같은 말(whoOptions)을 쓴다. 할 일로 보냈을 때 누구 일인지를 그 말로 가르기 때문이다.
+// ⚠ «팀 전원» 은 할 일이 모르는 말이다(«전원» 이 앞에 와야 걸린다) — 그대로 보내면 아무에게도 안 걸려
+//   **팀장 전용 할 일로 조용히 빠진다.** 보낼 때 «전원» 으로 바꾼다(plWhoForTask).
+function plWhoForTask(who) {
+  return String(who || "").split(/\s*·\s*/).map(function (w) { return w === "팀 전원" ? "전원" : w; }).join(" · ");
+}
 function plYmOf(d) { return String(d || "").slice(0, 7); }
 function plYmShift(ym, n) { var y = +ym.slice(0, 4), m = +ym.slice(5, 7) - 1 + n; var dt = new Date(y, m, 1); return dt.getFullYear() + "-" + pad2(dt.getMonth() + 1); }
 function plYmText(ym) { return ym.slice(0, 4) + "년 " + (+ym.slice(5, 7)) + "월"; }
@@ -1778,21 +1786,31 @@ function plMonth(ym) {
 }
 function plEnd(it) { return it.to && it.to >= it.from ? it.to : it.from; }
 function plId() { return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
-// 그 날 칸에 놓이는 것. 상담·일정을 위에, 끝낼 것을 아래에 — 끝낼 것은 표에도 있다.
+// 그 날 칸에 놓이는 것. 상담을 위에.
 function plOn(ym, d) {
-  var rank = { consult: 0, event: 1, goal: 2 };
+  var rank = { consult: 0, goal: 1 };
   return plMonth(ym).items.filter(function (it) { return it.from && it.from <= d && d <= plEnd(it); })
-    .sort(function (a, b) { return rank[a.kind] - rank[b.kind] || String(a.text).localeCompare(String(b.text), "ko"); });
+    .sort(function (a, b) { return rank[plKind(a)] - rank[plKind(b)] || String(a.text).localeCompare(String(b.text), "ko"); });
 }
 function plWhen(it) {
   if (it.when) return it.when;
   if (!it.from) return "미정";
   return fmtMD(it.from) + (plEnd(it) !== it.from ? " ~ " + fmtMD(plEnd(it)) : "") + (it.tent ? " (잠정)" : "");
 }
-// 끝낼 것 — 날짜 순, 날짜 없는 것은 뒤. 끝난 것은 맨 뒤.
+// 할 일로 보낸 것이면 그 할 일의 형편. 할 일이 끝나면(끝냄 표시가 담당 전원) 여기도 «완료».
+// 선생님은 팀장 전용 할 일을 못 읽는다 — 못 찾으면 적힌 상태 그대로 둔다.
+function plTask(it) {
+  if (!it.task) return null;
+  var t = taskById(it.task);
+  if (!t) return { gone: true };
+  var tids = taskTids(t), by = taskDoneBy(t);
+  return { t: t, done: t.status === "done" || (tids.length > 0 && by.length === tids.length), n: by.length, of: tids.length };
+}
+function plState(it) { var k = plTask(it); return k && k.done ? "완료" : (it.state || "예정"); }
+// 이 달의 것 전부 — 날짜 순, 날짜 없는 것은 뒤. 끝난 것은 맨 뒤.
 function plGoals(ym) {
-  return plMonth(ym).items.filter(function (it) { return it.kind === "goal"; }).sort(function (a, b) {
-    var da = a.state === "완료" ? 1 : 0, db2 = b.state === "완료" ? 1 : 0;
+  return plMonth(ym).items.slice().sort(function (a, b) {
+    var da = plState(a) === "완료" ? 1 : 0, db2 = plState(b) === "완료" ? 1 : 0;
     if (da !== db2) return da - db2;
     return String(a.from || "9999").localeCompare(String(b.from || "9999"));
   });
@@ -1800,7 +1818,7 @@ function plGoals(ym) {
 // 지난달에 못 끝낸 것 — 이 달에 아직 안 옮긴 것만(글자로 본다).
 function plCarryable(ym) {
   var here = {}; plMonth(ym).items.forEach(function (it) { here[it.text] = true; });
-  return plGoals(plYmShift(ym, -1)).filter(function (it) { return it.state !== "완료" && !here[it.text]; });
+  return plGoals(plYmShift(ym, -1)).filter(function (it) { return plState(it) !== "완료" && !here[it.text]; });
 }
 // 그 달의 쉬는 날을 이어진 덩어리로 — «9/24(목) ~ 9/25(금) 추석» 한 줄로.
 function plHolidays(ym) {
@@ -1821,17 +1839,9 @@ function plMarkdown(ym) {
   L.push("## 이 달에 팀이 끝낼 것");
   if (!gs.length) L.push("- (없음)");
   gs.forEach(function (it) {
-    L.push("- [" + (it.state || "예정") + "] **" + it.text + "** — " + plWhen(it) + (it.who ? " · " + it.who : ""));
+    L.push("- [" + plState(it) + "] " + (plKind(it) === "consult" ? "(상담) " : "") + "**" + it.text + "** — " + plWhen(it) + (it.who ? " · " + it.who : ""));
     if (it.desc) L.push("  - " + it.desc);
   });
-  var ev = m.items.filter(function (it) { return it.kind !== "goal" && it.from; })
-    .sort(function (a, b) { return a.from.localeCompare(b.from); });
-  if (ev.length) {
-    L.push(""); L.push("## 일정 · 상담");
-    ev.forEach(function (it) {
-      L.push("- " + plWhen(it) + " — " + (it.kind === "consult" ? "(상담) " : "") + it.text + (it.who ? " · " + it.who : "") + (it.desc ? " — " + it.desc : ""));
-    });
-  }
   var hs = plHolidays(ym);
   if (hs.length) {
     L.push(""); L.push("## 쉬는 날");
@@ -1853,17 +1863,52 @@ async function plSaveMonth(ym, m) {
   S.plan = { months: months, updated: now };
 }
 function plCleanItem(d) {
-  var it = { id: d.id || plId(), kind: PL_KIND[d.kind] ? d.kind : "event", text: String(d.text || "").trim(),
+  var it = { id: d.id || plId(), kind: plKind(d), text: String(d.text || "").trim(),
     desc: String(d.desc || "").trim(), from: d.from || "", to: "", tent: !!d.tent, when: String(d.when || "").trim(),
-    who: String(d.who || "").trim(), state: "" };
+    who: String(d.who || "").trim(), state: PL_STATE.indexOf(d.state) >= 0 ? d.state : "예정" };
   if (d.to && it.from && d.to > it.from) it.to = d.to;
-  if (it.kind === "goal") it.state = PL_STATE.indexOf(d.state) >= 0 ? d.state : "예정";
+  if (d.task) it.task = d.task;
   return it;
 }
 function plCheckItem(it) {
   if (!it.text) return "무엇을 적어야 한다";
-  if (it.kind !== "goal" && !it.from) return PL_KIND[it.kind] + "은 날짜가 있어야 달력에 놓인다";
   return "";
+}
+
+// ---- 할 일로 보내기 ----
+// 계획의 한 줄을 **사람에게 맡긴다.** 할 일 메뉴에 한 줄이 생기고(담당·기한), 계획 줄은 그 할 일을 가리킨다.
+// ⚠ 글자·날짜를 두 벌로 맞추지 않는다 — 계획은 계획의 말, 할 일은 할 일의 말이다(쪼개 맡길 수도 있다).
+//   이어 주는 것은 **끝났나** 하나. 할 일이 끝나면 계획 줄이 «완료» 로 보인다(plState).
+// 날짜가 잠정이면 날짜 기한을 안 넣는다 — 할 일 메뉴에서 «기한 지남» 으로 빨갛게 뜨면 안 된다.
+// 날짜가 없고 «언제» 글자가 있으면 그 글자가 기한이다(할 일은 «이번 주» 같은 글자 기한을 받는다).
+// 설명(desc)은 안 넘긴다 — 할 일 줄에 적을 칸이 없다. 계획에 남아 있다.
+function plTaskRec(ym, it) {
+  var due = it.from && !it.tent ? plEnd(it) : (it.when || "");
+  var rec = { id: newTaskId(), status: "open", created: TODAY, text: it.text, who: plWhoForTask(it.who),
+    src: (+ym.slice(5, 7)) + "월 월간계획", plan: ym + "/" + it.id };
+  if (due) rec.due = due;
+  return rec;
+}
+async function plSendTask(ym, it) {
+  if (S.ro) throw new Error("팀장만 보낸다");
+  var key = ym + "/" + it.id;
+  // 이미 보낸 것이 있으면(계획 저장만 실패했던 경우) 새로 만들지 않고 다시 잇는다
+  var t = S.tasks.filter(function (x) { return x.plan === key; })[0];
+  if (!t) { t = plTaskRec(ym, it); S.tasks.push(t); await saveTasks(); }
+  var m = plMonth(ym), hit = false;
+  m.items = m.items.map(function (x) { if (x.id !== it.id) return x; hit = true; return Object.assign({}, it, { task: t.id }); });
+  if (!hit) m.items.push(Object.assign({}, it, { task: t.id }));
+  await plSaveMonth(ym, m);
+  return t;
+}
+function plSendUi(ym, it) {
+  var rec = plTaskRec(ym, it);
+  var msg = "할 일 메뉴에 이렇게 넣습니다.\n\n· " + rec.text + "\n· 담당: " + (rec.who || "(없음)") + (taskShared(rec) ? "" : "\n   ⚠ 우리 팀 선생님이 안 걸려서 팀장만 보는 할 일이 된다") +
+    "\n· 기한: " + (rec.due ? fmtMD(rec.due) : "없음" + (it.tent ? " (날짜가 잠정이라)" : "")) +
+    "\n\n할 일이 끝나면 계획에서도 «완료» 로 보입니다.";
+  if (!confirm(msg)) return;
+  plSendTask(ym, it).then(function () { S.plEdit = null; renderPlan(); if (typeof renderTasks === "function") renderTasks(); },
+    function (e) { alert("보내지 못했다: " + e.message); });
 }
 
 // ---- 화면 ----
@@ -1876,7 +1921,7 @@ function renderPlan() {
     '<button class="mini" data-plm="-1" data-keep>‹</button><b style="font-size:14px">' + esc(plYmText(ym)) + '</b>' +
     '<button class="mini" data-plm="1" data-keep>›</button>' +
     (ym !== plYmOf(TODAY) ? '<button class="mini" data-plm="0" data-keep>이번 달</button>' : "") + '</h2>' +
-    '<p class="muted" style="font-size:12px;margin:0 0 8px">팀 단위로 이 달에 끝낼 것. 할 일·학생 시험은 안 얹는다 — 학생별 시험은 내신 참여표, 내 일은 업무 달력에서.</p>';
+    '<p class="muted" style="font-size:12px;margin:0 0 8px">팀 단위로 이 달에 끝낼 것. 할 일·학생 시험은 저절로 안 얹는다 — 학생별 시험은 내신 참여표, 내 일은 업무 달력에서. 사람에게 맡길 것은 «할 일로 보내기».</p>';
   if (S.plan === null) { el.innerHTML = h + '<p class="muted">불러오는 중…</p>'; plWire(el, ym); return; }
 
   // 한 달 그림
@@ -1885,7 +1930,7 @@ function renderPlan() {
 
   // 달력
   var grid = monthGrid(ym);
-  h += '<div class="calleg"><span class="plc goal">끝낼 것</span><span class="plc event">일정</span><span class="plc consult">상담</span>' +
+  h += '<div class="calleg"><span class="plc goal">업무</span><span class="plc consult">상담</span>' +
     '<span class="plc tent">잠정</span><span class="plc offc">쉬는 날</span>' + (lead ? '<span>· 날짜 칸을 누르면 그 날에 넣는다</span>' : "") + '</div>' +
     '<div class="calwrap"><div class="plcal"><div class="plrow">' +
     ["월", "화", "수", "목", "금", "토", "일"].map(function (w, i) { return '<div class="mhead' + (i >= 5 ? " wend" : "") + '">' + w + '</div>'; }).join("") + '</div>';
@@ -1897,7 +1942,7 @@ function renderPlan() {
         (lead ? " pick" : "") + '" data-pld="' + d + '"><div class="pln">' + (+d.slice(8)) +
         (hol ? '<span class="hol">' + esc(hol) + '</span>' : (o && !o.off ? '<span class="norm">' + esc(o.text || "정상수업") + '</span>' : "")) + '</div>' +
         its.map(function (it) {
-          return '<div class="plc ' + it.kind + (it.tent ? " tent" : "") + (it.state === "완료" ? " done" : "") + '"' + (lead ? ' data-pli="' + esc(it.id) + '"' : "") +
+          return '<div class="plc ' + plKind(it) + (it.tent ? " tent" : "") + (plState(it) === "완료" ? " done" : "") + '"' + (lead ? ' data-pli="' + esc(it.id) + '"' : "") +
             ' title="' + esc(it.text + (it.desc ? " — " + it.desc : "") + (it.who ? " · " + it.who : "")) + '">' +
             esc(it.text) + (it.tent ? " — 미정" : "") + '</div>';
         }).join("") + '</div>';
@@ -1908,14 +1953,19 @@ function renderPlan() {
   // 이 달에 팀이 끝낼 것
   var gs = plGoals(ym);
   h += '<h3 class="rp-h">이 달에 팀이 끝낼 것</h3>';
-  h += gs.length ? '<div class="rpwrap"><table class="rp-t pl-t"><thead><tr><th>무엇</th><th style="width:170px">언제</th><th style="width:130px">누가</th><th style="width:90px">상태</th></tr></thead><tbody>' +
+  h += gs.length ? '<div class="rpwrap"><table class="rp-t pl-t"><thead><tr><th>무엇</th><th style="width:170px">언제</th><th style="width:120px">누가</th><th style="width:90px">상태</th><th style="width:140px">할 일</th></tr></thead><tbody>' +
     gs.map(function (it) {
-      return '<tr class="' + (it.state === "완료" ? "rp-dim" : "") + (lead ? " pick" : "") + '"' + (lead ? ' data-pli="' + esc(it.id) + '"' : "") + '>' +
-        '<td><b>' + esc(it.text) + '</b>' + (it.desc ? '<div class="muted" style="font-size:12px">' + esc(it.desc) + '</div>' : "") + '</td>' +
+      var st = plState(it), k = plTask(it);
+      return '<tr class="' + (st === "완료" ? "rp-dim" : "") + (lead ? " pick" : "") + '"' + (lead ? ' data-pli="' + esc(it.id) + '"' : "") + '>' +
+        '<td>' + (plKind(it) === "consult" ? '<span class="plc consult" style="display:inline-block;margin:0 4px 0 0">상담</span>' : "") + '<b>' + esc(it.text) + '</b>' +
+        (it.desc ? '<div class="muted" style="font-size:12px">' + esc(it.desc) + '</div>' : "") + '</td>' +
         '<td>' + esc(plWhen(it)) + '</td><td>' + esc(it.who || "—") + '</td>' +
-        '<td><span class="pill ' + ({ "완료": "green", "진행": "blue", "결정 필요": "orange" }[it.state] || "") + '">' + esc(it.state || "예정") + '</span></td></tr>';
+        '<td><span class="pill ' + ({ "완료": "green", "진행": "blue", "결정 필요": "orange" }[st] || "") + '">' + esc(st) + '</span></td>' +
+        '<td>' + (k && !k.gone ? '<span class="pill blue" title="할 일 메뉴에 있다">할 일' + (k.of > 1 ? " · 끝냄 " + k.n + "/" + k.of : k.done ? " · 끝남" : "") + '</span>'
+          : k && k.gone && lead ? '<span class="muted" style="font-size:12px">할 일이 지워졌다</span> ' : "") +
+          (lead && (!k || k.gone) && st !== "완료" ? '<button class="mini" data-plsend="' + esc(it.id) + '">할 일로 보내기</button>' : "") + '</td></tr>';
     }).join("") + '</tbody></table></div>'
-    : '<p class="muted" style="font-size:13px">' + (lead ? "아직 없다. «＋ 끝낼 것» 으로 넣는다." : "아직 없다.") + '</p>';
+    : '<p class="muted" style="font-size:13px">' + (lead ? "아직 없다. «＋ 업무» 로 넣는다." : "아직 없다.") + '</p>';
 
   // 규칙 · 메모
   if (m.notes.length || lead) {
@@ -1928,7 +1978,7 @@ function renderPlan() {
   // 단추 · 폼
   var carry = lead ? plCarryable(ym) : [];
   h += '<div class="row noprint" style="margin-top:12px">' +
-    (lead ? '<button class="mini" data-pladd="goal">＋ 끝낼 것</button><button class="mini" data-pladd="event">＋ 일정</button>' +
+    (lead ? '<button class="mini" data-pladd="goal">＋ 업무</button>' +
       '<button class="mini" data-pladd="consult">＋ 상담</button><button class="mini" data-pladd="note">＋ 규칙</button>' +
       (carry.length ? '<button class="mini" data-plcarry>지난달에 못 끝낸 것 가져오기 ' + carry.length + '</button>' : "") : "") +
     '<span class="sp"></span><button class="mini" data-plmd data-keep>마크다운 복사</button></div>' +
@@ -1953,13 +2003,13 @@ function plWire(el, ym) {
     b.onclick = function () {
       var k = b.getAttribute("data-pladd");
       if (k === "note") open({ ym: ym, type: "note", d: { id: "", title: "", text: "" } });
-      else open({ ym: ym, type: "item", d: { id: "", kind: k, text: "", desc: "", from: k === "goal" ? "" : "", to: "", tent: false, when: "", who: "", state: "예정" } });
+      else open({ ym: ym, type: "item", d: { id: "", kind: k, text: "", desc: "", from: "", to: "", tent: false, when: "", who: "", state: "예정" } });
     };
   });
   $$("[data-pld]", el).forEach(function (c) {
     c.onclick = function (e) {
       if (e.target.closest && e.target.closest("[data-pli]")) return;
-      open({ ym: ym, type: "item", d: { id: "", kind: "event", text: "", desc: "", from: c.getAttribute("data-pld"), to: "", tent: false, when: "", who: "", state: "예정" } });
+      open({ ym: ym, type: "item", d: { id: "", kind: "goal", text: "", desc: "", from: c.getAttribute("data-pld"), to: "", tent: false, when: "", who: "", state: "예정" } });
     };
   });
   $$("[data-pli]", el).forEach(function (c) {
@@ -1973,6 +2023,14 @@ function plWire(el, ym) {
     c.onclick = function () {
       var n = plMonth(ym).notes.filter(function (x) { return x.id === c.getAttribute("data-pln"); })[0];
       if (n) open({ ym: ym, type: "note", d: Object.assign({}, n) });
+    };
+  });
+  // 표의 «할 일로 보내기» — 줄 누르기(고치기)와 안 섞이게
+  $$("[data-plsend]", el).forEach(function (b) {
+    b.onclick = function (e) {
+      if (e.stopPropagation) e.stopPropagation();
+      var it = plMonth(ym).items.filter(function (x) { return x.id === b.getAttribute("data-plsend"); })[0];
+      if (it) plSendUi(ym, it);
     };
   });
   var cr = $("[data-plcarry]", el);
@@ -2011,12 +2069,14 @@ function plDrawForm(box, ym) {
       '<label><input type="checkbox" data-plf="tent"' + (d.tent ? " checked" : "") + '> 잠정 (날짜 미정)</label></div>' +
       '<div class="row"><input type="text" data-plf="when" value="' + esc(d.when) + '" placeholder="언제를 글자로 (예: 중산고 9/15 · 나머지 9/18) — 비우면 날짜로" style="flex:1"></div>' +
       '<div class="row"><label>누가 <input type="text" data-plf="who" list="pl-who" value="' + esc(d.who) + '" placeholder="담당" style="width:160px"></label>' +
-      '<datalist id="pl-who">' + PL_WHO.concat(S.teachers.map(function (t) { return t.name; })).map(function (n) { return '<option value="' + esc(n) + '">'; }).join("") + '</datalist>' +
-      (d.kind === "goal" ? '<label>상태 <select data-plf="state">' + PL_STATE.map(function (s) {
-        return '<option' + (s === d.state ? " selected" : "") + '>' + s + '</option>'; }).join("") + '</select></label>' : "") + '</div>';
+      '<datalist id="pl-who">' + whoOptions().map(function (n) { return '<option value="' + esc(n) + '">'; }).join("") + '</datalist>' +
+      '<label>상태 <select data-plf="state">' + PL_STATE.map(function (s) {
+        return '<option' + (s === (d.state || "예정") ? " selected" : "") + '>' + s + '</option>'; }).join("") + '</select></label></div>';
   }
   h += '<div class="row"><button class="btn" data-plsave>저장</button>' + (isNew ? "" : '<button class="mini" data-pldel>지우기</button>') +
-    '<button class="mini" data-plx>닫기</button><span class="rp-warn" data-plerr style="margin:0"></span></div></div>';
+    '<button class="mini" data-plx>닫기</button>' +
+    (ed.type === "item" && !isNew && !(plTask(d) && !plTask(d).gone) ? '<span class="sp"></span><button class="mini" data-plsendf>할 일로 보내기</button>' : "") +
+    '<span class="rp-warn" data-plerr style="margin:0"></span></div></div>';
   box.innerHTML = h;
   $$("[data-plk]", box).forEach(function (b) { b.onclick = function () { d.kind = b.getAttribute("data-plk"); renderPlan(); }; });
   $$("[data-plf]", box).forEach(function (i) {
@@ -2040,6 +2100,12 @@ function plDrawForm(box, ym) {
       m.items = d.id ? m.items.map(function (x) { return x.id === d.id ? it : x; }) : m.items.concat([it]);
     }
     plSaveMonth(ym, m).then(done, fail);
+  };
+  var sf = $("[data-plsendf]", box);
+  if (sf) sf.onclick = function () {
+    var it = plCleanItem(d), why = plCheckItem(it);        // 폼에서 고친 것까지 얹어서 보낸다
+    if (why) { err(why); return; }
+    plSendUi(ym, it);
   };
   var del = $("[data-pldel]", box);
   if (del) del.onclick = function () {
