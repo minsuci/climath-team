@@ -143,8 +143,12 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   // ⚠ 푸시를 받고 아무것도 안 띄우면 브라우저가 구독을 끊는다(userVisibleOnly)
   ok("내용을 못 읽어도 무언가는 띄운다", /catch[\s\S]{0,120}d = \{\}/.test(s) && /showNotification/.test(s));
   ok("누르면 열린 창으로 간다", /clients\.matchAll/.test(s) && /openWindow/.test(s));
-  // ⚠ 캐시를 하면 51만 자짜리 옛 판을 물고 있어 고친 것이 안 보인다
-  ok("캐시는 손대지 않는다", !/caches\.|addEventListener\("fetch"/.test(s));
+  // ⚠ 크롬은 판에 따라 «fetch 를 맡는 워커» 가 있어야 홈 화면 추가를 물어본다.
+  //   없으면 안드로이드에서 그 단추가 영영 안 나온다
+  ok("fetch 처리는 둔다 (안드로이드 설치 물음의 조건)", /addEventListener\("fetch"/.test(s));
+  // ⚠ 그런데 **캐시는 절대 안 한다.** 51만 자짜리 옛 판을 물면 고친 것이 안 보인다
+  //   («respondWith» 라는 낱말은 설명에 나온다. 부르는 것만 본다 — 괄호까지 봐야 주석에 안 걸린다)
+  ok("캐시는 손대지 않는다", !/caches\.|respondWith\s*\(/.test(s));
   ok("새 판이 바로 일한다", /skipWaiting/.test(s) && /clients\.claim/.test(s));
 }
 
@@ -174,7 +178,26 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   ok("홈 화면에서 연 것은 안다", mk(IPHONE, true).st === true);
 
   // 화면 글
-  ok("아이폰·탭이면 «홈 화면에 추가» 를 일러 준다", /홈 화면에 추가/.test(src) && /PUSH\.ios && !PUSH\.standalone/.test(src));
+  // ---- 홈 화면에 추가 ----
+  // ⚠ 크롬의 «설치해도 되겠나» 는 앱이 뜨자마자 한 번 오고 다시 안 온다.
+  //   boot() 안에 걸면 늦어 놓치고, 그러면 단추가 영영 안 나온다
+  ok("설치 물음을 화면 그리기 전에 붙잡는다",
+    /addEventListener\("beforeinstallprompt"/.test(src) &&
+    src.indexOf('addEventListener("beforeinstallprompt"') < src.indexOf("async function boot()") ||
+    /window\.addEventListener\("beforeinstallprompt"[\s\S]{0,200}PUSH\.install = e/.test(src));
+  ok("크롬이 제 마음대로 띄우는 것은 막는다", /beforeinstallprompt[\s\S]{0,120}e\.preventDefault\(\)/.test(src));
+  // ⚠ 한 번 쓰면 다시 못 쓴다. 들고 있다가 또 부르면 오류다
+  ok("한 번 쓴 물음은 버린다", /PUSH\.install = null;\s*\/\/ ⚠ 한 번 쓰면/.test(src));
+  ok("추가되면 상태를 다시 본다", /addEventListener\("appinstalled"/.test(src));
+  ok("단추가 있다 (글만 있는 게 아니라)", /id="push-install"/.test(src));
+  // ⚠ 아이폰에는 그 물음이 아예 없다. 애플이 안 연다 — 단계를 적어 주는 수밖에
+  ok("아이폰은 단계를 펼친다", /PUSH\.howto = !PUSH\.howto/.test(src) && /홈 화면에 추가<\/b>를 누른다/.test(src));
+  ok("공유 단추를 그림으로도 보여 준다", /function shareIcon\(\)/.test(src) && /<svg viewBox="0 0 24 24"/.test(src));
+  // ⚠ 이미 앱으로 열었으면 꺼낼 말이 없다
+  ok("홈 화면 앱으로 열었으면 안 뜬다", /if \(PUSH\.standalone\) return "";/.test(src));
+  // ⚠ 설치가 안 되는 브라우저(PC 사파리 등)에 «홈 화면에 추가» 를 내면 눌러도 아무 일이 없다
+  ok("설치할 수 없는 브라우저에는 말을 안 꺼낸다", /if \(!PUSH\.ios && !PUSH\.install\) return "";/.test(src));
+  ok("아이폰·탭이면 켜기 단추를 안 낸다", /if \(PUSH\.ios && !PUSH\.standalone\) return head;/.test(src));
   // ⚠ 허락 창은 누른 그 순간에만 열린다. 부팅에서 부르면 브라우저가 무시하고, 무시당한 뒤에는 다시 못 묻는다
   ok("허락은 «켜기» 를 누를 때만 묻는다",
     /async function pushOn\(\)[\s\S]{0,400}Notification\.requestPermission\(\)/.test(src) &&

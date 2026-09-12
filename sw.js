@@ -12,6 +12,13 @@
 self.addEventListener("install", function () { self.skipWaiting(); });
 self.addEventListener("activate", function (e) { e.waitUntil(self.clients.claim()); });
 
+// ⚠ 아무 것도 안 하는 fetch 처리를 **일부러** 둔다.
+//   크롬은 판에 따라 «fetch 를 맡는 워커가 있어야» 홈 화면 추가를 물어본다(beforeinstallprompt).
+//   없으면 안드로이드에서 «홈 화면에 추가» 단추가 영영 안 나온다.
+//   ⚠ respondWith 를 부르지 않는다 — 그러면 브라우저가 평소대로 가져온다. **여기서 캐시하면 안 된다.**
+//     앱이 51만 자짜리 한 파일이라 옛 판을 물면 고친 것이 안 보인다.
+self.addEventListener("fetch", function () {});
+
 // ⚠ 아이폰·안드로이드 모두 «푸시를 받으면 반드시 알림을 띄워야» 한다(userVisibleOnly).
 //   조용히 넘기면 브라우저가 구독을 끊어 버린다. 그래서 내용을 못 읽어도 무언가는 띄운다.
 self.addEventListener("push", function (e) {
