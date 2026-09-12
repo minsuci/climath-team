@@ -313,8 +313,9 @@
   .cday .ctask { display: flex; gap: 4px; align-items: flex-start; font-size: 12px; margin-bottom: 3px; }
   .cday .ctask input { margin: 2px 0 0; }
   /* 달력 칸의 닫기 표도 ✕ 다 (2026-09-12) — 할 일 화면과 같은 뜻이어야 같은 모양이다 */
+  /* ⚠ 달력 칸은 바탕이 회색이라 연한 테두리는 안 보인다 — 여기서만 한 단계 진하게 */
   .cday .ctask .cbox { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 1px; padding: 0;
-    border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--muted);
+    border: 1px solid #b9c0cc; border-radius: 3px; background: #fff; color: var(--muted);
     font-size: 10px; line-height: 1; display: flex; align-items: center; justify-content: center; }
   .cday .ctask .cbox.on { background: #eef0f4; color: var(--text); border-color: #c8cdd6; }
   .cday .ctask .cbox:disabled { opacity: .45; cursor: default; }
