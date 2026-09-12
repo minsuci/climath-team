@@ -143,8 +143,10 @@ export async function runMathScan() {
     if (!r || r.error) return;
     // ⚠ AI 한도에 걸렸거나 **AI 키가 없는** 것은 학교 탓이 아니다. 글 링크는 남기되,
     //   다음 판에 다시 긁도록 «다 봤다» 로 세지 않는다 — 세면 다시 안 보고 링크만 영영 남는다.
+    // ⚠ 이유를 **서버가 한 말 그대로** 남긴다. 여기서 「AI가 바빴다」로 덮어쓰면
+    //   «잠시 뒤 다시» 와 «하루 한도를 다 썼다» 가 같은 말이 된다. 그 둘은 기다릴 시간이 다르다.
     if (r.again) { if (r.post) add({ school, post: r.post, url: r.url || "",
-                                    note: r.busy ? "AI가 바빴다" : (r.note || "AI를 못 썼다"), retry: true }); return; }
+                                    note: r.note || "AI를 못 썼다", retry: true }); return; }
     // 글은 찾았는데 표로 못 읽었다 — **링크를 남긴다.** 팀장이 열어 붙여넣으면 그 자리에서 읽힌다.
     if (r.post && !(r.rows || []).length) {
       add({ school, post: r.post, url: r.url || "", note: r.note || "" });

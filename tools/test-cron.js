@@ -156,6 +156,11 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     const first = await run({ watch: WATCH([ROW("바쁜고", "고1", 3)]), answer: { 바쁜고: busy } });
     ok("AI 가 바빴으면 링크를 남긴다", first.wrote.links.length === 1);
     ok("«다시 볼 것» 이라고 표시해 둔다", first.wrote.links[0].retry === true);
+    // ⚠ «잠시 뒤 다시» 와 «하루 한도를 다 썼다» 는 기다릴 시간이 다르다. 뭉뚱그리면 안 된다
+    const day = { post: "p", url: "u", rows: [], busy: true, again: true,
+                  note: "AI 하루 한도를 다 썼어요 — 한도가 풀리면 저절로 다시 봅니다" };
+    const pd = await run({ watch: WATCH([ROW("하루고", "고1", 3)]), answer: { 하루고: day } });
+    ok("하루 한도는 그렇게 적는다", /하루 한도/.test(pd.wrote.links[0].note), pd.wrote.links[0].note);
     const again = await run({ watch: WATCH([ROW("바쁜고", "고1", 3)]), prev: first.wrote,
                              answer: { 바쁜고: G("2026-10-01") } });
     ok("다음 날 다시 긁는다 (링크만 영영 남지 않게)", again.asked.length === 1);
