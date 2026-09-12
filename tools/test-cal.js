@@ -506,6 +506,24 @@ ctx.__t.then(async (r) => {     // 저장을 기다리는 시험이 있어 async
   ok("이번 주 목록 줄도 같다",
     run(`return todoRowHtml({ t: taskById("k2"), date:"2026-09-10", late:false })`).indexOf('data-ctask="k2"') >= 0 &&
     run(`return todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false })`).indexOf("data-ctask") < 0);
+  // ---- 닫기 표는 달력에서도 ✕ (2026-09-12) ----
+  ok("선생님에게는 공용 줄의 닫기 칸이 잠긴다",
+    run(`return todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false })`).indexOf('cbox" disabled') >= 0,
+    run(`return todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false })`).slice(0, 140));
+  run(`S.ro = false; S.claims = { role:"owner", tid:"T1", name:"한민수" };`);
+  ok("체크칸이 아니라 ✕ 단추다",
+    run(`var h = todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false }); return h;`).indexOf('class="cbox') >= 0 &&
+    run(`var h = todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false }); return h;`).indexOf("checkbox") < 0);
+  ok("안 끝낸 날은 빈 칸",
+    run(`return todoRowHtml({ t: taskById("k1"), date:"2026-09-10", late:false })`).indexOf("✕") < 0);
+  ok("끝낸 줄에는 ✕",
+    run(`var t = taskById("k1"); var k = t.status; t.status = "done";
+         var h = todoRowHtml({ t: t, date:"2026-09-10", late:false }); t.status = k; return h;`).indexOf("✕") >= 0);
+  ok("⚠ 매주 하는 일은 **그 날만** ✕ 다 (달력은 날짜마다 센다)",
+    run(`var t = taskById("k1"); var k = t.status; delete t.status; t.repeat = { dow:[4] }; t.doneOn = { "2026-09-10": true };
+         var a = todoRowHtml({ t: t, date:"2026-09-10", late:false }).indexOf("✕") >= 0;
+         var b = todoRowHtml({ t: t, date:"2026-09-17", late:false }).indexOf("✕") >= 0;
+         delete t.repeat; delete t.doneOn; t.status = k; return a + "/" + b;`) === "true/false");
   run(`S.ro = false; S.claims = null; S.tasks = []; S.tests = []; S.classes = [];`);
 
   { // 앞 절과 이름이 안 겹치게 블록으로 감싼다

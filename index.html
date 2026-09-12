@@ -312,6 +312,12 @@
   .cday .chip.test { background: #fde8e8; color: #b42318; }
   .cday .ctask { display: flex; gap: 4px; align-items: flex-start; font-size: 12px; margin-bottom: 3px; }
   .cday .ctask input { margin: 2px 0 0; }
+  /* 달력 칸의 닫기 표도 ✕ 다 (2026-09-12) — 할 일 화면과 같은 뜻이어야 같은 모양이다 */
+  .cday .ctask .cbox { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 1px; padding: 0;
+    border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--muted);
+    font-size: 10px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+  .cday .ctask .cbox.on { background: #eef0f4; color: var(--text); border-color: #c8cdd6; }
+  .cday .ctask .cbox:disabled { opacity: .45; cursor: default; }
   .cday .ctask.done span { text-decoration: line-through; color: var(--muted); }
   .cday .ctask i { font-style: normal; font-size: 10px; color: var(--muted); }
   .cday .ctask i.rep { color: #234e9e; }
@@ -2991,7 +2997,10 @@ function renderCal() {
           var done = taskDoneOn(t, d);
           var mk = taskMark(t);
           return '<div class="ctask' + (done ? " done" : "") + '" data-tid="' + esc(t.id) + '" data-td="' + d + '">' +
-            '<input type="checkbox"' + (done ? " checked" : "") + '>' +
+            '<button class="cbox' + (done ? " on" : "") + '"' + (canEditTask(t) ? "" : " disabled") + ' title="' +
+              (canEditTask(t) ? (t.repeat ? (done ? "이 날은 끝냈다. 눌러서 되돌린다" : "이 날 몫을 끝냈다고 표시한다 — 매주 하는 일은 날짜마다 따로 센다")
+                                          : (done ? "닫힌 줄이다. 눌러서 다시 연다" : "이 줄을 닫는다 — 담당 모두에게 완료가 된다"))
+                                : "닫는 것은 팀장이 한다") + '">' + (done ? "✕" : "") + '</button>' +
             '<span' + (canEditTask(t) ? ' data-ctask="' + esc(t.id) + '" data-cd="' + d + '" title="눌러서 고치기"' : "") + '>' +
             (!done && mk.deadline ? '<span class="mc dl">마감</span> ' : "") +
             (!done && mk.star ? "★" : "") + esc(t.text) + (t.repeat ? ' <i class="rep">매주</i>' : "") +
@@ -3093,14 +3102,12 @@ function renderCal() {
       if (e0) calAddOpen(e0.from, "ev", e0.id);
     };
   });
-  $$(".ctask", el).forEach(function (row) {
-    $("input", row).onchange = async function () {
-      await toggleTask(row.getAttribute("data-tid"), row.getAttribute("data-td"));
-      keepScrollIn("#sec-cal", renderCal);
-    };
-  });
-  $$(".todo [data-tid]", el).forEach(function (row) {
-    $("input", row).onchange = async function () {
+  // 달력의 닫기 표도 ✕ 단추다 (2026-09-12). 못 누르는 줄에는 아예 안 건다 —
+  // 걸어 두면 눌렀을 때 조용히 거절만 당하고 화면은 그대로다.
+  $$(".ctask, .todo [data-tid]", el).forEach(function (row) {
+    var box = $(".cbox", row);
+    if (!box || box.disabled) return;
+    box.onclick = async function () {
       await toggleTask(row.getAttribute("data-tid"), row.getAttribute("data-td"));
       keepScrollIn("#sec-cal", renderCal);
     };
@@ -3109,8 +3116,12 @@ function renderCal() {
 }
 function todoRowHtml(x) {
   var t = x.t;
+  var shut = taskDoneOn(t, x.date);
   return '<div class="task" data-tid="' + esc(t.id) + '" data-td="' + esc(x.date) + '">' +
-    '<input type="checkbox">' +
+    '<button class="cbox' + (shut ? " on" : "") + '"' + (canEditTask(t) ? "" : " disabled") + ' title="' +
+      (canEditTask(t) ? (t.repeat ? "이 날 몫을 끝냈다고 표시한다 — 매주 하는 일은 날짜마다 따로 센다"
+                                  : "이 줄을 닫는다 — 담당 모두에게 완료가 된다")
+                      : "닫는 것은 팀장이 한다") + '">' + (shut ? "✕" : "") + '</button>' +
     '<div class="t"' + (canEditTask(t) ? ' data-ctask="' + esc(t.id) + '" data-cd="' + esc(x.date) + '" title="눌러서 고치기"' : "") + '>' + esc(t.text) +
     '<div class="m">' + '<span class="' + (x.late ? "over" : daysFromToday(x.date) <= 1 ? "soon" : "") + '">' +
     esc(fmtMD(x.date)) + ' ' + dday(x.date) + '</span>' +
