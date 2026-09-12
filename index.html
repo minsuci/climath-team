@@ -439,6 +439,7 @@
   table.cgrid .nm { display: inline-block; padding: 1px 6px; border-radius: 4px; }
   table.cgrid .nm i { font-style: normal; opacity: .65; margin-left: 2px; font-size: 11px; }
   table.cgrid .sch { margin-left: 4px; font-size: 10px; color: var(--muted); }
+  table.cgrid .sch.red { color: var(--red); font-weight: 700; }
 
   /* 명단 편집 시트 */
   /* 기본 table 은 width:100% 라 화면이 좁으면 칸을 줄여 글씨를 자른다.
@@ -1051,6 +1052,118 @@ function classTeachers(cid) { return S.teachers.filter(function (t) { return (t.
 function className(cid) { var c = S.classes.filter(function (x) { return x.id === cid; })[0]; return c ? c.name : cid; }
 function rosterStudents(c) { return (c.roster || []).filter(function (r) { return !r.teacher && !isEnded(r); }); }
 function activeClasses() { return S.classes.filter(activeClass); }
+
+// ---- 개별진도반 — 학생마다 오는 요일이 다르다 (2026-09-12) ----
+//
+// 정규반은 **반 요일**(classDays)에 명단 전원이 온다. 개진반은 그런 요일이 아예 없고
+// 명단 **줄마다** days 를 든다. 이 갈래는 수업관리 앱이 이미 쓰던 것이다(참여표·수강료 회차도 같이 본다).
+//
+// ⚠ 요일이 비면 그 학생은 **어느 날 업무보고에도 안 뜬다.** 반에는 들어 있으니 배치표에는 보이고,
+//   그래서 «넣었는데 왜 안 나오지» 를 아무도 못 알아챈다. 실제로 공하빈 학생이 그 상태였다.
+//   빈 요일은 배치표·편집 화면·메뉴 숫자 **세 군데**에서 빨갛게 짚는다.
+function indivDays(r) { return (r && r.days) || []; }
+function dayLabel(days) {
+  return (days || []).slice().sort(function (a, b) { return a - b; })
+    .map(function (d) { return DAY_NAMES[d] || "?"; }).join("");
+}
+// 개진반에 들어 있는데 요일이 빈 줄. 반이 끝났거나 학생이 그만둔 줄은 안 센다.
+function noDayRows() {
+  var out = [];
+  activeClasses().forEach(function (c) {
+    if (!isIndividual(c)) return;
+    rosterStudents(c).forEach(function (r) { if (!indivDays(r).length) out.push({ c: c, r: r }); });
+  });
+  return out;
+}
+// 요일이 빈 줄을 **화면 맨 위에서** 짚는다. 눌러서 바로 그 학생의 요일 자리로 간다.
+// 고치는 단추는 못 만든다 — 무슨 요일에 오는지는 사람만 안다. 데려다 주기만 한다.
+// 한꺼번에 넣을 때의 요일. 개진반을 골랐을 때만 뜬다.
+// 여기서 고른 요일은 **첫 값**일 뿐이다 — 한 반 학생이 다 같은 요일일 리 없으니
+// 넣고 나서 학생별로 고치라고 그 자리에 적어 둔다.
+function bulkDaysHtml() {
+  var cid = S.bulkCls || "";
+  var c = S.classes.filter(function (x) { return x.id === cid; })[0];
+  if (!c || !isIndividual(c)) return "";
+  var days = S.bulkDays || [];
+  return '<div class="row"><span class="muted">등원 요일</span>' +
+    DAY_NAMES.map(function (nm, i) {
+      return '<button class="mini ' + (days.indexOf(i) >= 0 ? "on" : "") + '" data-bd="' + i + '">' + nm + '</button>';
+    }).join("") +
+    '<span class="muted" style="font-size:12px">' +
+    (days.length ? '만드는 사람 모두 <b>' + esc(dayLabel(days)) + '</b> 로 넣는다. 다른 학생은 넣은 뒤 그 줄에서 고친다.'
+                 : '<span class="red">안 고르면 요일이 빈 채로 들어가 업무보고에 안 뜬다</span>') +
+    '</span></div>';
+}
+// ---- 선생님별 개진반 만들기 ----
+// 개진반은 선생님당 하나면 된다. 요일은 반이 아니라 학생이 들기 때문이다.
+// 이미 있는 «개진반 한민수» 문서와 **같은 모양**으로 만든다 — 수업관리 앱이 만든 것을 본떠야
+// 출석부·참여표가 낯설어하지 않는다. 선생님 t1 줄까지 그대로 둔다.
+function indivMakeHtml() {
+  var have = activeClasses().filter(isIndividual);
+  var none = teachersWithoutIndiv();
+  return '<details><summary>개별진도반 ' + have.length + '개' +
+      (none.length ? ' <span class="red">· 없는 선생님 ' + none.length + '명</span>' : "") + '</summary>' +
+    '<p class="muted" style="font-size:12px;margin:6px 0">개진반은 <b>선생님당 하나</b>다. ' +
+      '요일은 반이 아니라 학생이 들기 때문에, 화목 오는 학생과 월수 오는 학생이 한 반에 같이 있어도 된다. ' +
+      '업무보고는 그 날 오는 학생만 골라 낸다.</p>' +
+    (have.length ? '<div class="row">' + have.map(function (c) {
+        var n = rosterStudents(c).length, bad = rosterStudents(c).filter(function (r) { return !indivDays(r).length; }).length;
+        return '<span class="pill">' + esc(c.name) + ' ' + n + '명' + (bad ? ' <span class="red">요일없음 ' + bad + '</span>' : "") + '</span>';
+      }).join("") + '</div>' : "") +
+    (none.length ? '<div class="row">' + none.map(function (t) {
+        return '<button class="mini" data-mkind="' + esc(t.tid) + '">＋ 개진반 ' + esc(t.name) + '</button>';
+      }).join("") + '</div>' +
+      '<p class="muted" style="font-size:12px">누르면 <b>수업관리 앱에 반이 생긴다.</b> 그 선생님 담당 반에도 들어간다.</p>'
+      : '<p class="muted" style="font-size:12px">모든 선생님이 개진반을 갖고 있다.</p>') +
+    '</details>';
+}
+async function makeIndivClass(tid) {
+  var t = S.teachers.filter(function (x) { return x.tid === tid; })[0];
+  if (!t) throw new Error("그런 선생님이 없다");
+  var name = "개진반 " + t.name;
+  if (S.classes.some(function (c) { return c.name === name; })) throw new Error("「" + name + "」이 이미 있다");
+  var doc = { name: name, type: "individual", classDays: [], books: [],
+              roster: [{ id: "t1", name: t.name, teacher: true, days: [] }],
+              time: Date.now(), createdBy: (S.claims && S.claims.tid) || "" };
+  var ref = await db.collection("classes").add(doc);
+  S.classes.push(Object.assign({ id: ref.id }, doc));
+  // 담당 반에 넣지 않으면 그 선생님 업무보고에 이 반이 아예 안 나온다 — 만든 보람이 없다.
+  var ids = (t.classIds || []).concat([ref.id]);
+  await db.collection("teachers").doc(tid).update({ classIds: ids });
+  t.classIds = ids;
+  try { await mirrorTeachers(); } catch (e) {}
+  logStudentChange("반 만듦", "", name, "담당 " + t.name);
+  return name;
+}
+function noDayBox() {
+  var rows = noDayRows();
+  if (!rows.length) return "";
+  return '<div class="banner" style="margin:0 0 10px"><b>개진반인데 등원 요일이 빈 학생 ' + rows.length + '명</b> — ' +
+    '이 학생들은 <b>어느 날 업무보고에도 안 뜬다.</b> 반에는 들어 있어서 티가 안 난다.<br>' +
+    rows.map(function (x) {
+      return '<button class="mini" data-noday="' + esc(x.r.pid || "") + '">' +
+        esc(x.r.name || "(이름 없음)") + ' <span class="muted">' + esc(x.c.name) + '</span></button>';
+    }).join("") + '</div>';
+}
+function bindNoDay(el) {
+  $$("[data-noday]", el).forEach(function (b) {
+    b.onclick = function () {
+      var pid = b.getAttribute("data-noday");
+      if (!pid) { alert("이 줄은 학생 번호가 없다 — 수업관리 앱에서 직접 고쳐야 한다."); return; }
+      S.stView = "edit"; S.stOpen = pid; S.stJump = pid;
+      renderStudents();
+    };
+  });
+}
+// 담당 개진반이 아직 없는 선생님. 반은 한 선생님당 하나면 된다 — 요일은 학생이 든다.
+function teachersWithoutIndiv() {
+  return S.teachers.filter(function (t) {
+    if (t.status === "pending" || t.status === "left") return false;
+    return !activeClasses().some(function (c) {
+      return isIndividual(c) && (t.classIds || []).indexOf(c.id) >= 0;
+    });
+  });
+}
 
 // ---------- 규칙 배너 ----------
 function renderBanner() {
@@ -5014,7 +5127,7 @@ function renderStudents() {
   activeClasses().forEach(function (c) { rosterStudents(c).forEach(function (r) { if (r.pid) (assigned[r.pid] = assigned[r.pid] || []).push(c.name); }); });
   var unassigned = st.filter(function (x) { return !assigned[x.pid]; });
   var noTeacher = st.filter(function (x) { return !x.homeroom; });
-  navBadge("students", unassigned.length + noGrade + noTeacher.length, true);
+  navBadge("students", unassigned.length + noGrade + noTeacher.length + noDayRows().length, true);
 
   var view = S.stView || "grid";
   var f = S.stFilter || "";
@@ -5028,9 +5141,10 @@ function renderStudents() {
     chip("none", "학년 없음", noGrade) +
     '<input type="text" id="st-q" class="mini" placeholder="이름·학교·담임 찾기" value="' + esc(S.stQuery || "") + '" style="min-width:170px">' +
     (unassigned.length ? '<button class="mini warn" data-gf="un">반 미배정 ' + unassigned.length + '</button>' : "") + '</div>' +
-    rosterDiffBox() +
+    rosterDiffBox() + noDayBox() +
     '<div id="st-body">' + studentBodyHtml(view, assigned) + '</div>';
   bindRosterDiff(el);
+  bindNoDay(el);
   $$("[data-gf]", el).forEach(function (b) { b.onclick = function () { S.stFilter = b.getAttribute("data-gf"); keepScroll(renderStudents); }; });
   $$("[data-view]", el).forEach(function (b) { b.onclick = function () { S.stView = b.getAttribute("data-view"); renderStudents(); }; });
   // 찾기 칸은 아래만 다시 그린다 — 상자를 통째로 그리면 입력 포커스가 날아간다
@@ -5108,7 +5222,8 @@ function classGridHtml() {
     return head + classGridTable(g.cols);
   }).join("") +
     '<p class="muted" style="font-size:12px;margin:6px 0 0">이름 옆 숫자는 학년(중3=9 · 고1=10 · 고2=11 · 고3=12). ' +
-    '인원이 <span class="orange">주황</span>이면 5명 이하, <span class="red">빨강</span>이면 0명이다. 파란 머리는 내가 담당인 반.</p>';
+    '인원이 <span class="orange">주황</span>이면 5명 이하, <span class="red">빨강</span>이면 0명이다. 파란 머리는 내가 담당인 반.<br>' +
+    '<b>개진</b> 이라 적힌 반은 개별진도반이라 학생마다 오는 요일이 다르다 — 이름 아래가 학교가 아니라 <b>등원 요일</b>이다.</p>';
 }
 function classGridTable(cols) {
   var maxN = cols.reduce(function (m, x) { return Math.max(m, x.studs.length); }, 0);
@@ -5134,10 +5249,18 @@ function classGridTable(cols) {
                   : [r.name, g, sch, x.t ? "담당 " + x.t : ""].filter(Boolean).join(" · ") + " — 눌러서 고치기") + '">' +
         '<span class="nm ' + (ghost ? "ghost" : gradeCls(g)) + '"' + (r.pid && !ghost ? ' data-open="' + esc(r.pid) + '"' : "") + '>' +
         esc(r.name) + (ghost ? "" : (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "")) + '</span>' +
-        (ghost || !sch ? "" : '<span class="sch">' + esc(sch) + '</span>') + '</td>';
+        (ghost ? "" : gridSub(x, r, sch)) + '</td>';
     }).join("") + '</tr>';
   }
   return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+// 이름 아래 한 줄. 정규반은 학교, 개진반은 **등원 요일**이다 —
+// 개진반에서 «무슨 요일에 오나»는 학교보다 훨씬 자주 찾는 것이고, 비어 있으면 사고다.
+function gridSub(col, r, sch) {
+  if (col.loose || !isIndividual(col.c)) return sch ? '<span class="sch">' + esc(sch) + '</span>' : "";
+  var d = indivDays(r);
+  return d.length ? '<span class="sch">' + esc(dayLabel(d)) + '</span>'
+                  : '<span class="sch red">요일 없음</span>';
 }
 function assignedNames(person, cols) {
   for (var i = 0; i < cols.length; i++) {
@@ -5183,9 +5306,11 @@ function studentEditHtml(assigned) {
     '<details><summary>여러 명 한꺼번에 만들기 — 엑셀에서 붙여넣기</summary>' +
     '<textarea id="st-bulk" rows="6" style="width:100%" placeholder="한 줄에 한 명. 이름 학년 학교\n김서진 고1 중대부고\n설민준\t중3\t봉은중"></textarea>' +
     '<div class="row"><span class="muted">만들면서 반에 넣기</span><select id="st-bulk-cls"><option value="">넣지 않음</option>' +
-    activeClasses().map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>'; }).join("") + '</select>' +
+    activeClasses().map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + (isIndividual(c) ? " (개진)" : "") + '</option>'; }).join("") + '</select>' +
     '<button class="btn o" id="st-bulk-go">만들기</button><span class="muted" id="st-bulk-msg"></span></div>' +
+    '<div id="st-bulk-days">' + bulkDaysHtml() + '</div>' +
     '<p class="muted" style="font-size:12px">학년은 <b>중3·고1·고2·고3</b> 또는 <b>9·10·11·12</b>. 이미 있는 이름은 건너뛴다.</p></details>' +
+    indivMakeHtml() +
     '<details><summary>담임별로 세기</summary>' + homeroomTableHtml(S.students) + '</details>' +
     stLogHtml() +
     '<datalist id="st-schools">' + schoolOpts().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + '</datalist>';
@@ -5245,9 +5370,26 @@ function clsRowHtml(pid) {
   return '<tr class="clsrow" data-for="' + esc(pid) + '"><td></td><td colspan="7">' +
     activeClasses().map(function (c) {
       var on = cls.some(function (y) { return y.id === c.id; });
-      return '<button class="mini ' + (on ? "on" : "") + '" data-cls="' + esc(c.id) + '">' + esc(c.name) + '</button>';
+      return '<button class="mini ' + (on ? "on" : "") + (isIndividual(c) ? " ind" : "") + '" data-cls="' + esc(c.id) + '">' + esc(c.name) + '</button>';
     }).join("") +
-    '<div class="muted" style="font-size:12px;margin-top:4px">누르면 그 반에 넣고 뺀다. 빼도 출결·과제 기록은 남는다.</div></td></tr>';
+    '<div class="muted" style="font-size:12px;margin-top:4px">누르면 그 반에 넣고 뺀다. 빼도 출결·과제 기록은 남는다.</div>' +
+    cls.filter(isIndividual).map(function (c) { return dayPickHtml(c, pid); }).join("") +
+    '</td></tr>';
+}
+// 개진반에 든 학생에게만 뜬다. 정규반에 요일 단추를 달면 «반 요일»과 둘이 되어
+// 어느 쪽이 참인지 알 수 없게 된다 — 정규반은 반이 요일을 들고, 개진반은 학생이 든다.
+function dayPickHtml(c, pid) {
+  var r = (c.roster || []).filter(function (x) { return x.pid === pid; })[0] || {};
+  var days = indivDays(r);
+  return '<div class="daypick" data-dc="' + esc(c.id) + '" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">' +
+    '<b>' + esc(c.name) + '</b> 등원 요일 ' +
+    DAY_NAMES.map(function (nm, i) {
+      return '<button class="mini ' + (days.indexOf(i) >= 0 ? "on" : "") + '" data-dow="' + i + '">' + nm + '</button>';
+    }).join("") +
+    '<span class="muted" style="font-size:12px;margin-left:6px">' +
+    (days.length ? '<b>' + esc(dayLabel(days)) + '</b> 에 온다 — 그 날 담당 선생님 업무보고에 뜬다'
+                 : '<span class="red">요일을 안 고르면 어느 날 업무보고에도 안 뜬다</span>') +
+    '</span></div>';
 }
 function classesOfPid(pid) { return activeClasses().filter(function (c) { return (c.roster || []).some(function (r) { return r.pid === pid; }); }); }
 
@@ -5279,9 +5421,16 @@ function studentBadge() {
     if (!x.homeroom) n++;
     if (GRADES.indexOf(x.grade) < 0) n++;
   });
-  navBadge("students", n, true);
+  navBadge("students", n + noDayRows().length, true);
 }
 function bindClsRow(el, assigned) {
+  // 반 줄만 다시 그린다. 표를 통째로 그리면 스크롤이 튄다 (bindEdit 의 주석과 같은 이유).
+  var redraw = function (pid) {
+    var row = $('#st-rows tr.clsrow[data-for="' + pid + '"]', el);
+    if (!row) return;
+    row.outerHTML = clsRowHtml(pid);
+    bindClsRow(el, assigned);
+  };
   $$("#st-rows [data-cls]", el).forEach(function (b) {
     b.onclick = async function () {
       var pid = b.closest("tr").getAttribute("data-for"), cid = b.getAttribute("data-cls"), person = S.byPid[pid];
@@ -5291,8 +5440,21 @@ function bindClsRow(el, assigned) {
         if (on) await stUnassign(cid, pid); else await stAssign(cid, person);
         b.classList.toggle("on", !on);
         refreshClsCell(el, pid);
+        // 개진반에 넣은 직후에는 요일이 비어 있다 — 고를 자리를 **그 자리에서** 띄운다.
+        // 나중에 알아서 고르겠거니 두면 그 학생은 보고에서 조용히 빠진다.
+        if (b.classList.contains("ind")) redraw(pid);
       } catch (e) { alert("바꾸지 못했다: " + e.message); }
       b.disabled = false;
+    };
+  });
+  $$("#st-rows [data-dow]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var box = b.closest(".daypick"), cid = box.getAttribute("data-dc");
+      var pid = b.closest("tr").getAttribute("data-for"), dow = Number(b.getAttribute("data-dow"));
+      var on = b.classList.contains("on");
+      b.disabled = true;
+      try { await stSetDay(cid, pid, dow, !on); redraw(pid); studentBadge(); }
+      catch (e) { b.disabled = false; alert("요일을 못 바꿨다: " + e.message); }
     };
   });
 }
@@ -5366,6 +5528,38 @@ function bindEdit(el, assigned) {
     }
     catch (err) { nw.disabled = false; alert("만들지 못했다: " + err.message); }
   };
+  // 개진반을 고르면 요일 자리가 뜬다. 상자 전체를 다시 그리면 붙여넣은 글이 날아간다 —
+  // 요일 칸만 갈아 끼운다 (회의록 찾기 칸과 같은 규칙).
+  var bc = $("#st-bulk-cls", el);
+  var drawBulkDays = function () {
+    var box = $("#st-bulk-days", el);
+    if (!box) return;
+    box.innerHTML = bulkDaysHtml();
+    $$("[data-bd]", box).forEach(function (b) {
+      b.onclick = function () {
+        var d = Number(b.getAttribute("data-bd"));
+        var cur = (S.bulkDays || []).filter(function (x) { return x !== d; });
+        if (cur.length === (S.bulkDays || []).length) cur.push(d);
+        cur.sort(function (a, b) { return a - b; });
+        S.bulkDays = cur;
+        drawBulkDays();
+      };
+    });
+  };
+  if (bc) bc.onchange = function () { S.bulkCls = bc.value; drawBulkDays(); };
+  drawBulkDays();
+  $$("[data-mkind]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var tid = b.getAttribute("data-mkind");
+      var t = S.teachers.filter(function (x) { return x.tid === tid; })[0];
+      if (!confirm("「개진반 " + ((t && t.name) || "") + "」 반을 만든다.\n\n" +
+        "수업관리 앱에 반이 생기고, 그 선생님 담당 반에 들어간다.\n" +
+        "학생은 만든 뒤에 넣고, 학생마다 등원 요일을 고르면 된다.")) return;
+      b.disabled = true; b.textContent = "만드는 중...";
+      try { var nm = await makeIndivClass(tid); alert("「" + nm + "」을 만들었다."); keepScroll(renderStudents); }
+      catch (e) { b.disabled = false; alert("만들지 못했다: " + e.message); }
+    };
+  });
   var bg = $("#st-bulk-go", el);
   if (bg) bg.onclick = async function () {
     var txt = $("#st-bulk").value, cid = $("#st-bulk-cls").value, msg = $("#st-bulk-msg");
@@ -5376,7 +5570,7 @@ function bindEdit(el, assigned) {
         var one = parseBulkLine(lines[i]); if (!one) continue;
         if (S.students.some(function (x) { return x.name === one.name; })) { skipped.push(one.name); continue; }
         var person = await stCreate(one);
-        if (cid) await stAssign(cid, person);
+        if (cid) await stAssign(cid, person, S.bulkDays || []);
         made++;
       }
       msg.textContent = made + "명 만들었다" + (skipped.length ? " · 이미 있어 건너뜀: " + skipped.join(", ") : "");
@@ -5493,15 +5687,39 @@ async function stDelete(pid) {
   delete S.byPid[pid];
   if (S.notes[pid]) { delete S.notes[pid]; try { await saveNotes(); } catch (e) {} }
 }
-async function stAssign(cid, person) {
+// days 는 **개진반일 때만** 붙인다. 정규반 줄에 days 를 얹으면 참여표(isClassDay)가
+// 반 요일 대신 그걸 보게 되어 그 학생만 회차가 달라진다 — 수강료까지 틀어진다.
+async function stAssign(cid, person, days) {
   var cls = S.classes.filter(function (x) { return x.id === cid; })[0];
+  var ind = isIndividual(cls);
   var added = await withFreshRoster(cid, function (roster) {
     if (roster.some(function (r) { return r.pid === person.pid; })) return null;
     var id = reuseRosterId({ roster: roster, pastIds: cls && cls.pastIds }, person);
-    return roster.concat([{ id: id,
-      pid: person.pid, name: person.name, school: person.school || "", grade: person.grade || "" }]);
+    var row = { id: id, pid: person.pid, name: person.name, school: person.school || "", grade: person.grade || "" };
+    if (ind) row.days = (days || []).slice().sort(function (a, b) { return a - b; });
+    return roster.concat([row]);
   });
-  if (added) logStudentChange("반에 넣음", person.pid, person.name || "", className(cid));
+  if (added) logStudentChange("반에 넣음", person.pid, person.name || "",
+    className(cid) + (ind && days && days.length ? " · " + dayLabel(days) : ""));
+}
+// 요일 한 개를 켜고 끈다. **days 를 통째로 덮어쓰지 않는다** — 그 사이 수업관리 앱에서
+// 다른 요일을 고쳤을 수 있다. 반 명단을 다시 읽어 그 줄만 손본다(withFreshRoster 와 같은 규칙).
+async function stSetDay(cid, pid, dow, on) {
+  var nm = "";
+  var done = await withFreshRoster(cid, function (roster) {
+    var hit = false;
+    var next = roster.map(function (r) {
+      if (r.pid !== pid) return r;
+      hit = true; nm = r.name || "";
+      var days = indivDays(r).filter(function (d) { return d !== dow; });
+      if (on) days.push(dow);
+      days.sort(function (a, b) { return a - b; });
+      return Object.assign({}, r, { days: days });
+    });
+    return hit ? next : null;
+  });
+  if (!done) throw new Error("반 명단에 그 학생이 없다 — 먼저 반에 넣어 주세요");
+  logStudentChange("등원 요일", pid, nm, className(cid) + " " + (DAY_NAMES[dow] || dow) + (on ? " 넣음" : " 뺌"));
 }
 async function stUnassign(cid, pid) {
   var p = S.byPid[pid], gone = null;
