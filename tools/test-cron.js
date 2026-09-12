@@ -398,14 +398,34 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     }
     {
       const a = app(null, {});
+      a.g("CRON_ASKED = true;");   // 서버에 묻지 않게 막고 답만 갈아 끼운다
       ctxSet(a, "__n", [{ school: "가고", grade: "고1", start: day(3), end: day(5), math: "" }]);
-      ok("[앱] 새벽 찾기가 한 번도 안 돌았으면 화면이 알린다",
-         /안 돌고 있다/.test(a.g("nightlyHtml(__n)")) && /CRON_SECRET/.test(a.g("nightlyHtml(__n)")));
-      a.g("S.mathFound={at:new Date().toISOString(),looked:7,left:0}");
-      ok("[앱] 돌고 있으면 조용한 한 줄",
-         /새벽 찾기/.test(a.g("nightlyHtml(__n)")) && !/안 돌고/.test(a.g("nightlyHtml(__n)")));
+      const say = () => a.g("nightlyHtml(__n)");
+
+      // ⚠ 아직 물어보는 중인데 겁주면 안 된다
+      a.g("S.cron=null");
+      ok("[앱] 아직 모를 때는 아무 말도 안 한다", say() === "");
+
+      // ⚠ 「기록이 없다」를 「안 돈다」로 읽으면 안 된다 — 2026-09-12 에 실제로 그렇게 외쳤다.
+      //   열쇠는 멀쩡히 들어 있었는데 낡은 판단을 지웠더니 «한 번도 안 돌았다» 가 됐다.
+      a.g("S.cron={hasSecret:true,host:'climath-team1.vercel.app'}");
+      ok("[앱] 열쇠가 있고 아직 안 돌았으면 조용히 알려만 준다",
+         /준비됨/.test(say()) && !/안 돌고 있다/.test(say()), say().slice(0, 90));
+      ok("[앱] 언제 처음 도는지 말해 준다", /내일 아침/.test(say()));
+
+      // 열쇠가 없다 — 이건 진짜 문제고 고칠 사람이 있다
+      a.g("S.cron={hasSecret:false,host:'climath-team1.vercel.app'}");
+      ok("[앱] 열쇠가 없으면 어디에 넣을지까지 짚는다",
+         /열쇠가 없다/.test(say()) && /CRON_SECRET/.test(say()) && /climath-team1/.test(say()));
+
+      a.g("S.cron={hasSecret:true}; S.mathFound={at:new Date().toISOString(),looked:7,left:0}");
+      ok("[앱] 돌고 있으면 조용한 한 줄", /새벽 찾기/.test(say()) && !/안 돌고/.test(say()));
+
+      // 열쇠도 있고 돈 적도 있는데 하루 반이 넘었다 — 이때가 진짜 «안 돌고 있다»
       a.g("S.mathFound={at:new Date(Date.now()-4*86400000).toISOString()}");
-      ok("[앱] 며칠째 안 돌면 알린다", /안 돌고 있다/.test(a.g("nightlyHtml(__n)")));
+      ok("[앱] 돌다가 멈추면 그때 알린다", /안 돌고 있다/.test(say()));
+      ok("[앱] 그때는 열쇠 타령을 안 한다 (열쇠는 있으니까)", !/CRON_SECRET/.test(say()), say().slice(0, 90));
+
       ctxSet(a, "__far", [{ school: "가고", grade: "고1", start: day(60), end: day(62), math: "" }]);
       ok("[앱] 때가 안 된 학교뿐이면 아무 말도 안 한다", a.g("nightlyHtml(__far)") === "");
     }

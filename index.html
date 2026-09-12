@@ -691,7 +691,7 @@ var gradeRank = function (g) { var i = GRADES.indexOf(g); return i < 0 ? 99 : i;
 
 // ---------- 상태 ----------
 var S = {
-  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {}, mathFound: null,   // ro = 읽기만 하는 계정(선생님)
+  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {}, mathFound: null, cron: null,   // ro = 읽기만 하는 계정(선생님)
   exams: {},      // cid -> { sid -> doc }
   examsDenied: {},  // cid -> true. 앱 규칙이 그 반 참여표 읽기를 막은 것 — «안 냈다»와 다르다
   exCls: "",      // 참여표 반 거르기. 비면 그 학년 전체
@@ -6426,13 +6426,39 @@ function mathPlan(text, school) {
 //
 // ⚠ **안 도는 것이 조용하면 안 된다.** 버셀에 CRON_SECRET 이 없으면 크론이 401 을 받고 끝나는데,
 //   화면에는 «아무것도 안 올라왔다» 와 똑같이 보인다. 그 둘을 가르는 곳이 여기다.
+// 서버에 «열쇠가 들어 있나» 를 한 번 물어 둔다. 값은 안 받고 있는지만 받는다.
+//
+// ⚠ 이게 없으면 **«기록이 없다» 를 «안 돈다» 로 읽는다.** 2026-09-12 에 실제로 겪었다 —
+//   낡은 판단을 지웠더니 화면이 「한 번도 안 돌았다, CRON_SECRET 을 보라」고 외쳤다.
+//   열쇠는 멀쩡히 들어 있었는데. **아직 안 돈 것과 못 도는 것은 다른 말이다.**
+var CRON_ASKED = false;
+function askCron() {
+  if (CRON_ASKED || S.ro || !S.teamOk) return;
+  CRON_ASKED = true;
+  var tu = teamAuth.currentUser;
+  if (!tu) { CRON_ASKED = false; return; }
+  tu.getIdToken()
+    .then(function (t) {
+      return fetch("/api/cron", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken: t, check: true }) });
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      S.cron = j || {};
+      var b = $("#sec-terms");
+      if (b && !b.hidden) keepScrollIn("#sec-terms", renderTerms);
+    })
+    .catch(function () { S.cron = null; });
+}
 function nightlyHtml(noMath) {
   if (S.ro) return "";
   // 시험이 3주 안에 오는데 수학 날짜가 빈 줄. 이런 줄이 없으면 새벽 찾기는 원래 할 일이 없다.
   var due = noMath.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= -3 && n <= 21; });
   if (!due.length) return "";
+  askCron();
   var f = S.mathFound, t = f && Date.parse(f.at || "");
   var ok = t && Date.now() - t < 36 * 3600 * 1000;
+  var c = S.cron;
   // ⚠ 이 저장소에 버셀 프로젝트가 셋 물려 있다. 두 곳에 CRON_SECRET 을 넣으면 아침마다 두 번 긁는다 —
   //   AI 하루치를 두 배로 태우는데 **화면에서는 티가 안 난다.** 서버가 어느 곳이 돌았는지 적어 주므로 여기서 짚는다.
   if (f && f.dup) {
@@ -6446,10 +6472,22 @@ function nightlyHtml(noMath) {
       ' · 때가 된 학교 ' + due.length + '줄을 매일 아침 혼자 본다.' +
       (f.host ? ' <span style="opacity:.7">(' + esc(f.host) + ')</span>' : "") + '</p>';
   }
-  return '<p class="banner" style="margin:6px 0 0;font-size:12px">🌙 <b>새벽 찾기가 안 돌고 있다</b>' +
-    (t ? ' (마지막 ' + esc(whenAgo(f.at)) + ')' : ' (한 번도 안 돌았다)') +
-    ' — 버셀 → climath-team → Settings → Environment Variables 에 <b>CRON_SECRET</b> 이 있는지 보라. ' +
-    '없으면 크론이 문 앞에서 되돌아간다.</p>';
+  // 아직 물어보는 중이면 아무 말도 안 한다. 모르는 채로 겁주지 않는다.
+  if (!c) return "";
+  // 열쇠가 없다 — 이건 진짜 문제고 고칠 사람이 있다.
+  if (c.hasSecret === false) {
+    return '<p class="banner" style="margin:6px 0 0;font-size:12px">🌙 <b>새벽 찾기 열쇠가 없다</b> — ' +
+      '버셀 → <b>' + esc(c.host || "climath-team1") + '</b> → Settings → Environment Variables 에 ' +
+      '<b>CRON_SECRET</b> 을 넣고 한 번 재배포해야 한다. 없으면 크론이 문 앞에서 되돌아간다.</p>';
+  }
+  // 열쇠는 있는데 아직 돈 적이 없다 — **문제가 아니다.** 내일 아침이 첫 차례다.
+  if (!t) {
+    return '<p class="muted" style="font-size:12px;margin:6px 0 0">🌙 <b>새벽 찾기</b> 준비됨 · ' +
+      '아직 돈 적이 없다. 내일 아침 6시대에 <b>' + due.length + '줄</b>을 처음 본다.</p>';
+  }
+  // 열쇠도 있고 돈 적도 있는데 하루 반이 넘었다 — 이때가 진짜 «안 돌고 있다» 다.
+  return '<p class="banner" style="margin:6px 0 0;font-size:12px">🌙 <b>새벽 찾기가 안 돌고 있다</b> ' +
+    '(마지막 ' + esc(whenAgo(f.at)) + ') — 열쇠는 있다. 버셀에서 크론이 멈추지 않았는지 본다.</p>';
 }
 function renderTerms() {
   var el = $("#sec-terms");
