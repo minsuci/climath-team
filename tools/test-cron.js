@@ -211,6 +211,22 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     ok("찾은 것은 둘 다 남는다", second.wrote.diffs.length === 2);
   }
 
+  {
+    // 6시대에 바빴던 학교를 7시대가 다시 본다. 그런데 또 바빴다 — 줄이 쌓이면 안 된다
+    const busy = { post: "중간고사 시간표", url: "http://b", rows: [], busy: true };
+    const rows = [ROW("바쁜고", "고1", 3)];
+    const p1 = await run({ watch: WATCH(rows), answer: { 바쁜고: busy } });
+    const p2 = await run({ watch: WATCH(rows), prev: p1.wrote, answer: { 바쁜고: busy } });
+    ok("또 바빠도 줄이 쌓이지 않는다", p2.wrote.links.length === 1, "줄 " + p2.wrote.links.length);
+    // ⚠ 같은 학교가 또 바빴던 것은 **새로 안 것이 아니다.** 세면 아침마다 같은 알림이 온다
+    ok("또 바빴던 것으로는 안 알린다", p2.pushed.length === 0);
+    const p3 = await run({ watch: WATCH(rows), prev: p2.wrote, answer: { 바쁜고: G("2026-10-01") } });
+    ok("다시 긁어 날짜가 나오면 그때 알린다", p3.pushed.length === 1);
+    ok("링크는 날짜로 바뀌고 남지 않는다",
+       (p3.wrote.links || []).length === 0 && p3.wrote.diffs.length === 1,
+       "링크 " + (p3.wrote.links || []).length + " · 날짜 " + p3.wrote.diffs.length);
+  }
+
   // ---- 문 ----
   {
     const mk = (env, headers, claims) => {

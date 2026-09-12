@@ -114,6 +114,45 @@ ok("⚠ 선생님이 고른 출결은 앱이 안 덮는다 (지각)", kept.stude
 ok("적어 둔 진도·특이사항이 다시 붙는다", kept.progress === "수열 3단원" && kept.students.filter(function (s) { return s.sid === "s2"; })[0].note === "버스");
 ok("그 사이 명단에 들어온 학생도 뜬다 (저장된 명단을 그대로 안 쓴다)", kept.students.length === 2);
 
+// ---- 이번 주 우리 반 (2026-09-12) — 한 주에 한 번, 세 줄 ----
+// 진도·출결·과제는 매일 낸다. 주간으로만 필요한 것은 저조자·신경 쓰이는 학생·막힌 것 셋.
+// 저조자 기준은 숫자로 안 준다 — 담임 판단이고 없어도 된다. 대신 빈칸과 «없음» 은 가른다.
+const wlast = (cid, d) => run(`return rpWeekLast(S.classes.filter(function(c){return c.id==="${cid}";})[0], "${d}")`);
+ok("화·목 반의 주 끝은 목요일", wlast("c1", "2026-09-15") === "2026-09-17", wlast("c1", "2026-09-15"));
+ok("월수금 반의 주 끝은 금요일", wlast("c2", "2026-09-15") === "2026-09-18", wlast("c2", "2026-09-15"));
+ok("⚠ «금요일에만» 으로 하면 화·목 반은 영영 안 뜬다",
+  run(`return rpWeekEnd(S.classes[0], "2026-09-18")`) === false && run(`return rpWeekEnd(S.classes[0], "2026-09-17")`) === true);
+ok("⚠ 주 끝은 쉬는 날을 빼고 센다 (추석 금 → 수)", wlast("c2", "2026-09-21") === "2026-09-23", wlast("c2", "2026-09-21"));
+ok("주 가운데 아무 날이나 물어도 그 주의 끝이 나온다",
+  wlast("c2", "2026-09-20") === "2026-09-18" && wlast("c2", "2026-09-14") === "2026-09-18");
+ok("기능을 올리기 전 주에는 안 붙는다", run(`return rpWeekEnd(S.classes[1], "2026-09-11")`) === false);
+const wk = (tid, d) => run(`return rpDraft("${tid}","${d}",null).classes.map(function(c){return c.name+":"+(c.week?"있음":"없음");}).join()`);
+ok("주 끝 보고에만 칸이 생긴다 (금)", wk("T2", "2026-09-18") === "고2A:있음,개별진도:있음", wk("T2", "2026-09-18"));
+ok("주 가운데 보고에는 안 생긴다 (수)", wk("T2", "2026-09-16") === "고2A:없음,개별진도:없음", wk("T2", "2026-09-16"));
+ok("적어 둔 세 줄은 다시 붙는다",
+  run(`return rpDraft("T2","2026-09-18",{ classes:[{ cid:"c2", week:{ low:"김하늘", watch:"없음", stuck:"" } }] }).classes[0].week.low`) === "김하늘");
+const wck = JSON.parse(run(`return JSON.stringify(rpCheck(rpDraft("T2","2026-09-18",null)));`));
+ok("비어 있으면 알려만 준다 — 막지 않는다",
+  wck.stop.length === 0 && wck.warn.some(function (w) { return /이번 주 마지막 수업이다/.test(w); }), JSON.stringify(wck.warn));
+ok("«없음» 을 적으면 더 안 묻는다",
+  run(`var r = rpDraft("T2","2026-09-18",null); r.classes.forEach(function(c){ if(c.week) RP_WEEK.forEach(function(f){ c.week[f.k]="없음"; }); });
+       return rpCheck(r).warn.filter(function(w){return /이번 주/.test(w);}).length`) === 0);
+ok("저장할 때 앞뒤 공백을 턴다",
+  run(`var r = rpDraft("T2","2026-09-18",null); r.classes[0].week.low = "  김하늘 과제 밀림  "; return rpClean(r).classes[0].week.low`) === "김하늘 과제 밀림");
+ok("주 끝이 아닌 반은 week 가 null 로 저장된다",
+  run(`return JSON.stringify(rpClean(rpDraft("T2","2026-09-16",null)).classes[0].week)`) === "null");
+run(`__r0 = S.reports; S.reports = { T2: { "2026-09-18": { submitted: 1, name:"이현우", classes: [
+  { cid:"c2", name:"고2A", progress:"수열", students: [], week:{ low:"김하늘 과제 밀림 · 수요일 남긴다", watch:"없음", stuck:"없음" } },
+  { cid:"c3", name:"개별진도", progress:"미적", students: [], week:{ low:"없음", watch:"없음", stuck:"없음" } } ], tasks: [], extra: [], moves: [] } } };`);
+const wdg = run(`return rpDigest("2026-09-18")`);
+ok("원장님 문서에 저조자가 실린다", wdg.indexOf("- **저조자** — 김하늘 과제 밀림 · 수요일 남긴다") >= 0, wdg);
+ok("⚠ «없음» 은 원장님 문서에 안 싣는다 — 여섯 반 × 세 줄이면 읽을 것이 묻힌다",
+  wdg.indexOf("없음") < 0, wdg.split("\n").filter(function (l) { return /없음/.test(l); }).join(" / "));
+ok("팀장 화면에서는 «없음» 도 남는다 (확인했다는 표시다)",
+  run(`return rpWeekHas({ low:"없음", watch:"없음", stuck:"없음" })`) === true &&
+  run(`return rpWeekHas({ low:"", watch:"", stuck:"" })`) === false);
+run(`S.reports = __r0;`);
+
 // ---- 보고에 뜨는 할 일 ----
 run(`S.tasks = [
   { id:"a", text:"지난 일", who:"이현우", due:"2026-09-10", status:"open" },

@@ -1465,6 +1465,11 @@ function rpDigest(d) {
       st.filter(function (s) { return s.note || (s.att && s.att !== "출석"); }).forEach(function (s) {
         L.push("- " + s.name + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") + (s.note || ""));
       });
+      // 이번 주 우리 반 — **«없음» 은 안 싣는다.** 여섯 반 × 세 줄이 «없음» 이면 읽을 것이 묻힌다.
+      RP_WEEK.forEach(function (f) {
+        var v = rpWeekSaid((c.week || {})[f.k]);
+        if (v) L.push("- **" + f.label + "** — " + v);
+      });
     });
     var tk = rep.tasks || [];
     if (tk.length) {
@@ -1683,6 +1688,11 @@ function rpWireMine(box) {
   $$("[data-rpc]", box).forEach(function (i) {
     i.oninput = function () { var k = i.getAttribute("data-rpc").split("|"); rep.classes[+k[0]][k[1]] = i.value; };
   });
+  // 이번 주 우리 반 — 글자 칸이라 다시 그리지 않는다 (치던 칸에서 포커스가 날아간다)
+  $$("[data-rpw]", box).forEach(function (i) {
+    var k = i.getAttribute("data-rpw").split("|"), c = rep.classes[+k[0]];
+    i.oninput = function () { if (c.week) c.week[k[1]] = i.value; };
+  });
   $$("[data-rps]", box).forEach(function (i) {
     var k = i.getAttribute("data-rps").split("|"), s = rep.classes[+k[0]].students[+k[1]];
     if (k[2] === "note") i.oninput = function () { s.note = i.value; };
@@ -1802,7 +1812,12 @@ function rpDrawAll(box, d, sm) {
             (s.att === "결석" ? (s.called ? ' <span class="muted">연락함</span>' : ' <span class="red">연락 안 함</span>') : "") + '</td>' +
             '<td>' + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
             (s.makeup ? ' <span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td></tr>';
-        }).join("") + '</tbody></table></div></div>';
+        }).join("") + '</tbody></table></div>' +
+        // 이번 주 우리 반 — «없음» 도 그대로 둔다. 여기서는 그게 **확인했다는 표시**다.
+        (rpWeekHas(c.week) ? '<div class="rp-sub"><b>이번 주</b>' + RP_WEEK.map(function (f) {
+          var v = String((c.week || {})[f.k] || "").trim();
+          return v ? '<div><span class="pill' + (f.k === "low" && rpWeekSaid(v) ? " orange" : "") + '">' + f.label + '</span> ' + esc(v) + '</div>' : "";
+        }).join("") + '</div>' : "") + '</div>';
     });
     if ((rep.tasks || []).length || (rep.extra || []).length) {
       h += '<div class="rp-sub"><b>업무</b>' + (rep.tasks || []).map(function (t) {

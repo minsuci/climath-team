@@ -98,8 +98,14 @@ export async function runMathScan() {
   rows.forEach((r) => { want[r.school + "__" + r.grade] = 1; live[r.school] = 1; });
   const diffs = (prev.diffs || []).filter((d) => d && want[d.school + "__" + d.grade]);
   const links = (prev.links || []).filter((x) => x && live[x.school]);
-  // ⚠ 아침에 두 번 도니까 **이번에 새로 찾은 것**을 따로 들고 있어야 한다.
+  // ⚠ 아침에 두 번 도니까 **이번에 새로 알게 된 것**을 따로 들고 있어야 한다.
   //   지난 판에서 찾은 학교 이름이 두 번째 알림에 섞이면 «또 찾았나» 로 읽힌다.
+  //   «새로» 의 잣대는 **내용**이다. 같은 학교가 또 바빴던 것은 새로 안 것이 아니다.
+  const keyD = (d) => "d|" + d.school + "|" + d.grade + "|" + (d.dates || []).join(",");
+  const keyL = (x) => "l|" + x.school + "|" + (x.retry ? "busy" : "post");
+  const before = {};
+  (prev.diffs || []).forEach((d) => { before[keyD(d)] = 1; });
+  (prev.links || []).forEach((x) => { before[keyL(x)] = 1; });
   const addedD = [], addedL = [];
 
   // (3) 며칠 안에 이미 찾아 둔 학교는 다시 안 긁는다. 어제와 오늘 사이에 글이 바뀌지 않는다.
@@ -113,11 +119,18 @@ export async function runMathScan() {
   const bySchool = {};
   due.forEach((r) => { if (!seen[r.school]) (bySchool[r.school] = bySchool[r.school] || []).push(r); });
   const names = Object.keys(bySchool);
+  // ⚠ 다시 긁을 학교의 **지난 자취를 먼저 지운다.** 안 그러면 판마다 같은 줄이 쌓인다 —
+  //   6시대에 「AI가 바빴다」로 남은 학교를 7시대가 다시 보면서 한 줄을 더 얹는다(2026-09-12 실측).
+  const redo = {};
+  names.forEach((n) => { redo[n] = 1; });
+  for (let i = links.length - 1; i >= 0; i--) if (redo[links[i].school]) links.splice(i, 1);
+  for (let i = diffs.length - 1; i >= 0; i--) if (redo[diffs[i].school]) diffs.splice(i, 1);
+
   // 하룻밤 AI 몫. 학교마다 따로 주지 않고 **하나를 나눠 쓴다** — 그래야 밤 전체의 값이 정해진다.
   const ai = { n: AI_PER_NIGHT };
   let next = 0, ran = 0;
 
-  const add = (x) => { links.push(x); addedL.push(x); };
+  const add = (x) => { links.push(x); if (!before[keyL(x)]) addedL.push(x); };
   async function one(school) {
     const mine = bySchool[school];
     const span = mine.filter((v) => v.start && v.end)[0];
@@ -149,7 +162,7 @@ export async function runMathScan() {
         by: r.by || "", post: r.post || "", url: r.url || "",
         // 손으로 돌릴 때 저절로 채우는 것과 **같은 조건**이다. 앱이 이 표시만 보고 한꺼번에 넣는다.
         auto: !t.math && dates.length === 1 && r.by === "표" };
-      diffs.push(one2); addedD.push(one2);
+      diffs.push(one2); if (!before[keyD(one2)]) addedD.push(one2);
     }
   }
   const startedAt = Date.now();
