@@ -29,7 +29,7 @@ export function newVapidKeys() {
 }
 
 // 보낼 곳(푸시 회사)에 내가 누구인지 밝히는 쪽지. 열두 시간짜리다.
-function vapidHeader(keys, endpoint, subject) {
+export function vapidHeader(keys, endpoint, subject) {
   const aud = new URL(endpoint).origin;
   const head = b64u(JSON.stringify({ typ: "JWT", alg: "ES256" }));
   const body = b64u(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject }));

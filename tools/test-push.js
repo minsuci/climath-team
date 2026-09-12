@@ -60,6 +60,32 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   ok("VAPID 개인값이 함께 나온다", !!keys.d && !!keys.x && !!keys.y);
   const k2 = vm.runInContext("newVapidKeys", ctx)();
   ok("부를 때마다 새 열쇠다", k2.pub !== keys.pub);
+
+  // ---- 내가 누구인지 밝히는 쪽지(VAPID, RFC 8292) ----
+  // ⚠ 여기가 틀리면 푸시 회사가 401 로 되돌린다. 그런데 그건 실제로 보내 봐야 알기 때문에
+  //   꼴과 서명을 여기서 직접 뜯어 본다.
+  const vh = vm.runInContext("vapidHeader", ctx)(keys,
+    "https://web.push.apple.com/QRSTU/vwxyz?x=1", "https://climath-team1.vercel.app");
+  const m = /^vapid t=([\w-]+\.[\w-]+\.[\w-]+), k=([\w-]+)$/.exec(vh);
+  ok("«vapid t=…, k=…» 꼴이다", !!m, vh.slice(0, 40));
+  ok("k 는 우리 공개키다", m && m[2] === keys.pub);
+  const [h1, p1, s1] = m[1].split(".");
+  const un = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  const jh = JSON.parse(un(h1)), jp = JSON.parse(un(p1));
+  ok("알고리즘은 ES256", jh.alg === "ES256" && jh.typ === "JWT", JSON.stringify(jh));
+  // ⚠ aud 는 «보낼 곳의 출처» 다. 주소 전체를 넣으면 거절당한다 (애플이 특히 깐깐하다)
+  ok("aud 는 주소 전체가 아니라 출처다", jp.aud === "https://web.push.apple.com", jp.aud);
+  ok("sub 는 앱 주소", jp.sub === "https://climath-team1.vercel.app");
+  const life = jp.exp - Math.floor(Date.now() / 1000);
+  ok("열두 시간쯤 산다 (하루를 넘기면 거절당한다)", life > 11 * 3600 && life <= 24 * 3600, String(life));
+  // ⚠ ES256 서명은 **날것 R||S 64바이트**. node 의 기본인 DER(70바이트 안팎)로 보내면 401 이다
+  ok("서명이 날것 64바이트다", un(s1).length === 64, String(un(s1).length));
+  const pubKey = crypto.createPublicKey({ key: { kty: "EC", crv: "P-256", x: keys.x, y: keys.y }, format: "jwk" });
+  ok("공개키로 서명이 풀린다",
+    crypto.verify("sha256", Buffer.from(h1 + "." + p1), { key: pubKey, dsaEncoding: "ieee-p1363" }, un(s1)));
+  // 보낼 곳이 다르면 aud 도 달라야 한다 — 한 번 만든 쪽지를 돌려쓰면 안 된다
+  const vh2 = vm.runInContext("vapidHeader", ctx)(keys, "https://fcm.googleapis.com/wp/abc", "https://x");
+  ok("보낼 곳마다 새로 만든다", JSON.parse(un(/t=([\w-]+\.[\w-]+)\./.exec(vh2)[1].split(".")[1])).aud === "https://fcm.googleapis.com");
 }
 
 // ---- 서버: 손대는 자리 ----
