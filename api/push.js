@@ -11,7 +11,7 @@
 //                            (서비스 계정만 본다). 없으면 여기서 만들어 넣는다 — 사람이 손댈 곳이 없다.
 //   push/{tid}.subs.{키}   : 사람마다 기기 목록. 자기 것만 읽고 쓴다(firestore.rules).
 import crypto from "crypto";
-import { verifyIdToken, getDoc, patchDoc } from "./_google.js";
+import { verifyIdToken, getDoc, patchDoc, listDocs } from "./_google.js";
 import { newVapidKeys, sendOne } from "./_webpush.js";
 
 // 보내는 사람을 밝히는 자리. 푸시 회사(구글·애플)가 문제가 생겼을 때 연락할 곳이다.
@@ -101,7 +101,21 @@ export default async function handler(req, res) {
       res.status(200).json(r); return;
     }
 
-    // (5) 팀장이 팀에게. 새 할 일이 생겼을 때 앱이 부른다.
+    // (5) 누가 어느 기기로 켰나. 팀장만.
+    // ⚠ 있어야 하는 이유 — «그 선생님은 왜 알림을 못 받지» 를 물을 데가 여기밖에 없다.
+    //   기기 종류까지 보여 준다. 팀장이 아이폰만 쓰면 안드로이드가 되는지 영영 확인할 길이 없기 때문이다.
+    // ⚠ 주소(endpoint)는 **안 돌려준다.** 그것만 있으면 남의 폰에 알림을 쏠 수 있다.
+    if (want === "who") {
+      if (role !== "owner") { res.status(403).json({ error: "팀장만 볼 수 있습니다" }); return; }
+      const docs = await listDocs("push");
+      const out = docs.map((d) => ({ tid: d.id,
+        devices: Object.keys(d.subs || {}).map((k) => ({ ua: (d.subs[k] || {}).ua || "", at: (d.subs[k] || {}).at || "" }))
+          .filter((x) => x.ua || x.at) }))
+        .filter((x) => x.devices.length);
+      res.status(200).json({ ok: true, people: out }); return;
+    }
+
+    // (6) 팀장이 팀에게. 새 할 일이 생겼을 때 앱이 부른다.
     if (want === "send") {
       if (role !== "owner") { res.status(403).json({ error: "보내는 것은 팀장만 합니다" }); return; }
       const to = (Array.isArray(body.to) ? body.to : []).map(String).filter(Boolean).slice(0, 30);
@@ -115,7 +129,7 @@ export default async function handler(req, res) {
       res.status(200).json({ ok: true, each: out }); return;
     }
 
-    // (6) 누구든 팀장에게. 보고가 올라왔다·한 줄 보고가 왔다처럼 **팀장이 기다리는 것**만.
+    // (7) 누구든 팀장에게. 보고가 올라왔다·한 줄 보고가 왔다처럼 **팀장이 기다리는 것**만.
     // ⚠ 글은 여기서 만든다. 보내는 쪽이 적은 글을 그대로 띄우면 알림이 아무 말이나 나르는 통로가 된다.
     if (want === "lead") {
       const leads = (Array.isArray(body.leads) ? body.leads : []).map(String).filter(Boolean).slice(0, 5);

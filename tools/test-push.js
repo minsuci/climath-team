@@ -192,6 +192,27 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   ok("한 줄 보고는 새로 생겼을 때만 알린다", /if \(text && !\(cur\.reports \|\| \{\}\)\[id\]\) pingLead\("done"\)/.test(src));
   ok("선생님은 팀에게 못 보낸다", /function pushNewTasks[\s\S]{0,120}if \(S\.ro\) return;/.test(src));
   ok("담당은 taskTids 로 푼다 (이름 맞추기가 아니라)", /taskTids\(t\)\.forEach/.test(src));
+
+  // ---- 누가 어느 기기로 켰나 (팀장만) ----
+  // ⚠ 팀장이 아이폰만 쓰면 «안드로이드도 되나» 를 확인할 길이 여기밖에 없다
+  const ctx = vm.createContext({});
+  vm.runInContext(/function uaLabel\(ua\)[\s\S]*?\n\}/.exec(src)[0], ctx);
+  const lab = (s) => vm.runInContext("uaLabel(" + JSON.stringify(s) + ")", ctx);
+  ok("안드로이드를 알아본다",
+    lab("Mozilla/5.0 (Linux; Android 14; SM-S911N) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36") === "안드로이드");
+  ok("아이폰을 알아본다", lab("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Version/17.5 Mobile Safari/604.1") === "아이폰");
+  // ⚠ 아이패드는 자기를 «맥» 이라고 말한다 — 손가락이 닿는다고 적혀 있으면 아이패드다
+  ok("손가락 닿는 맥은 아이패드로 센다", lab("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/17.5 Mobile Safari/605.1") === "아이패드");
+  ok("진짜 맥은 맥이다", lab("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/17.5 Safari/605.1") === "맥");
+  ok("윈도우도 가른다", lab("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124 Safari/537.36") === "윈도우 PC");
+  ok("빈 것은 «알 수 없음»", lab("") === "알 수 없음");
+  ok("팀장만 목록을 본다", /if \(S\.ro \|\| !PUSH\.who\) return "";/.test(src) && /S\.ro \? "" : '<button class="mini" id="push-who"/.test(src));
+  ok("사람마다 보내 보기 단추가 있다", /data-ptest/.test(src));
+
+  const p = fs.readFileSync(ROOT + "/api/push.js", "utf8");
+  ok("서버도 팀장만 연다", /want === "who"[\s\S]{0,240}role !== "owner"/.test(p));
+  // ⚠ 주소(endpoint)만 있으면 남의 폰에 알림을 쏠 수 있다. 절대 돌려주지 않는다
+  ok("기기 주소는 안 돌려준다", /want === "who"[\s\S]{0,500}devices:/.test(p) && !/endpoint: \(d\.subs/.test(p));
 }
 
 console.log(T.join("\n"));

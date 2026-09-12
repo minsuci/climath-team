@@ -151,6 +151,11 @@ export async function getDoc(path) {
   if (!j) return null;
   return { id: path.split("/").pop(), ...fromFields(j.fields || {}) };
 }
+// 컬렉션 하나를 통째로 읽는다. 문서가 많지 않은 곳에만 쓴다(알림 구독은 사람 수만큼이다).
+export async function listDocs(collection, pageSize) {
+  const j = await fsCall(docBase() + "/" + collection + "?pageSize=" + (pageSize || 100), { method: "GET" });
+  return ((j && j.documents) || []).map((d) => ({ id: d.name.split("/").pop(), ...fromFields(d.fields || {}) }));
+}
 // 문서 쓰기(부분 갱신). maskPaths 를 주면 그 경로만 바꾼다 —
 // ⚠ 지도 안의 한 칸만 고칠 때 꼭 쓴다. 통째로 덮으면 같은 시간에 도는 다른 요청이 넣은 칸이 지워진다
 //   (학교 넷을 나란히 부르므로 실제로 겹친다).
