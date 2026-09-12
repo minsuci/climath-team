@@ -10,9 +10,10 @@
 //   그래서 찾은 것을 팀 DB(dash/mathFound)에 **적어만 두고**, 넣는 것은 앱이 한다.
 //   거꾸로 보면 이게 안전장치다 — 새벽에 아무도 안 볼 때 조용히 들어가는 날짜가 없다.
 //
-// ⚠ **AI 를 안 부른다**(noai). 하루 한도를 새벽에 다 쓰면 낮에 팀장이 눌렀을 때 못 읽는다.
-//   AI 가 읽은 것은 어차피 사람이 골라야 하니 새벽에 읽어 둘 값도 없다.
-//   표를 재서 못 읽으면 «글은 올라왔다» 와 링크를 남긴다. 그것만으로 할 일의 대부분은 끝난다.
+// ⚠ AI 는 **하룻밤 몫만** 쓴다(AI_PER_NIGHT). 하루 한도를 새벽에 다 쓰면 낮에 팀장이 눌렀을 때 못 읽는다.
+//   처음엔 아예 막았는데, 돌려 보니 스무 곳 중 **열둘이 링크만** 남았다 — 표를 재서 읽히는 학교가 소수다.
+//   링크는 열어서 붙여넣어야 하고 날짜는 한 번 누르면 된다. 그 차이가 이 기능의 값이라 몫을 주는 쪽으로 바꿨다.
+//   몫을 다 쓰면 «글은 올라왔다» 와 링크를 남긴다. 그것만으로도 할 일의 대부분은 끝난다.
 //
 // ⚠ **찾은 것이 없으면 알림을 안 보낸다.** 날마다 «없음» 이 오면 사람은 알림을 꺼 버린다.
 //   같은 것을 두 번 알리지도 않는다(sig 비교).
@@ -34,6 +35,9 @@ const CONC = 3;
 // 시험이 이 날수 안에 있는 학교만 본다. 학교가 2주 전에 올리니 3주면 넉넉하다.
 // 넓히면 아직 안 올린 학교를 날마다 헛되이 긁는다.
 const SOON_DAYS = 21;
+// 하룻밤에 AI 를 몇 번까지 부를까. 스무 곳을 봐도 표로 못 읽는 곳이 열둘쯤이라 그만큼이면 넉넉하다.
+// ⚠ 넉넉히 준다고 좋은 게 아니다. 낮에 팀장이 쉰일곱 곳을 돌릴 몫을 남겨 둬야 한다.
+const AI_PER_NIGHT = 15;
 // 이미 찾아 둔 학교는 다시 안 긁는다. 팀장이 «넣기» 를 안 눌렀으면 명단에 그대로 남아 있기 때문이다.
 const KEEP_DAYS = 7;
 
@@ -89,11 +93,16 @@ export async function runMathScan() {
   // (3) 며칠 안에 이미 찾아 둔 학교는 다시 안 긁는다. 어제와 오늘 사이에 글이 바뀌지 않는다.
   const fresh = prev.at && prev.at > new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
   const seen = {};
-  if (fresh) { diffs.forEach((d) => { seen[d.school] = 1; }); links.forEach((x) => { seen[x.school] = 1; }); }
+  if (fresh) {
+    diffs.forEach((d) => { seen[d.school] = 1; });
+    links.forEach((x) => { if (!x.retry) seen[x.school] = 1; });
+  }
 
   const bySchool = {};
   due.forEach((r) => { if (!seen[r.school]) (bySchool[r.school] = bySchool[r.school] || []).push(r); });
   const names = Object.keys(bySchool);
+  // 하룻밤 AI 몫. 학교마다 따로 주지 않고 **하나를 나눠 쓴다** — 그래야 밤 전체의 값이 정해진다.
+  const ai = { n: AI_PER_NIGHT };
   let next = 0, ran = 0;
 
   async function one(school) {
@@ -103,9 +112,12 @@ export async function runMathScan() {
     // 학교마다 예산을 새로 준다. 한 곳이 다 써 버리면 뒤의 학교가 조용히 굶는다.
     try {
       r = await mathDates(school, span.start.replace(/-/g, ""), span.end.replace(/-/g, ""),
-        kind, mine.map((v) => v.grade), { n: BUDGET }, { n: WEB_BUDGET }, true);
+        kind, mine.map((v) => v.grade), { n: BUDGET }, { n: WEB_BUDGET }, ai);
     } catch (e) { return; }
     if (!r || r.error) return;
+    // ⚠ AI 분당 한도(429)에 걸린 것은 **학교 탓이 아니다.** 글 링크는 남기되,
+    //   내일 다시 긁도록 «찾았다» 로 세지 않는다 — 세면 다시 안 보고 링크만 영영 남는다.
+    if (r.busy) { if (r.post) links.push({ school, post: r.post, url: r.url || "", note: "AI가 바빴다", retry: true }); return; }
     // 글은 찾았는데 표로 못 읽었다 — **링크를 남긴다.** 팀장이 열어 붙여넣으면 그 자리에서 읽힌다.
     if (r.post && !(r.rows || []).length) {
       links.push({ school, post: r.post, url: r.url || "", note: r.note || "" });

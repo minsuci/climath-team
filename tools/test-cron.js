@@ -23,9 +23,12 @@ function run(opt) {
     patchDoc: async (p, d) => { wrote[p] = d; },
     verifyIdToken: async () => opt.claims || null,
     BUDGET: 12, WEB_BUDGET: 40,
-    mathDates: async (school, from, to, kind, grades, budget, web, noai) => {
-      asked.push({ school, from, to, kind, grades, noai });
-      return (opt.answer || {})[school] || { school, rows: [] };
+    mathDates: async (school, from, to, kind, grades, budget, web, ai) => {
+      asked.push({ school, from, to, kind, grades, ai, left: ai && ai.n });
+      const r = (opt.answer || {})[school] || { school, rows: [] };
+      // 진짜 mathDates 는 AI 를 부를 때만 몫을 깎는다. 흉내도 그렇게 한다.
+      if (r.by === "AI" || r.busy) { if (ai && ai.n <= 0) return { school, post: r.post, url: r.url, rows: [] }; if (ai) ai.n--; }
+      return r;
     },
     vapidKeys: async () => ({ pub: "p" }),
     sendTo: async (tid, payload) => { pushed.push({ tid, payload }); return { sent: 1 }; },
@@ -64,7 +67,8 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
   {
     const a = await run({ watch: WATCH([ROW("마고", "고1", 3)]) });
     // ⚠ 하루 한도를 새벽에 다 쓰면 낮에 팀장이 눌렀을 때 못 읽는다
-    ok("AI 를 안 부른다 (noai 로 넘긴다)", a.asked[0].noai === true);
+    ok("AI 몫을 정해서 넘긴다 (하루 한도를 새벽에 다 쓰지 않는다)",
+       !!a.asked[0].ai && a.asked[0].ai.n > 0 && a.asked[0].ai.n <= 20, JSON.stringify(a.asked[0].ai));
     ok("회차 이름을 같이 넘긴다", a.asked[0].kind === "중간");
     ok("날짜는 YYYYMMDD 로 넘긴다", /^\d{8}$/.test(a.asked[0].from), a.asked[0].from);
     ok("학년도 같이 넘긴다", a.asked[0].grades.join() === "고1");
@@ -121,6 +125,30 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     const a = await run({ watch: WATCH([ROW("터진고", "고1", 3)]),
                           answer: { 터진고: { error: "학교 홈페이지를 못 열었어요" } } });
     ok("못 열린 학교는 조용히 지나간다", a.pushed.length === 0);
+  }
+
+  // ---- AI 몫 ----
+  {
+    const AI = (d) => ({ by: "AI", post: "p", url: "u", rows: [{ grade: 1, subject: "수학", date: d }] });
+    const rows = [], answer = {};
+    for (let i = 0; i < 20; i++) { rows.push(ROW("학교" + i, "고1", 3)); answer["학교" + i] = AI("2026-10-01"); }
+    const a = await run({ watch: WATCH(rows), answer });
+    const read = (a.wrote.diffs || []).length, link = (a.wrote.links || []).length;
+    // ⚠ 몫이 다하면 «못 찾음» 이 아니라 **링크**로 남아야 한다. 팀장이 열어 붙여넣을 수 있다
+    ok("AI 몫이 다하면 나머지는 링크로 남는다", read > 0 && link > 0 && read + link === 20,
+       "읽음 " + read + " · 링크 " + link);
+    ok("하룻밤에 AI 를 스무 번 넘게 부르지 않는다", read <= 15, "읽음 " + read);
+  }
+  {
+    // 분당 한도에 걸린 것은 학교 탓이 아니다 — 내일 다시 봐야 한다
+    const busy = { post: "중간고사 시간표", url: "http://b", rows: [], busy: true };
+    const first = await run({ watch: WATCH([ROW("바쁜고", "고1", 3)]), answer: { 바쁜고: busy } });
+    ok("AI 가 바빴으면 링크를 남긴다", first.wrote.links.length === 1);
+    ok("«다시 볼 것» 이라고 표시해 둔다", first.wrote.links[0].retry === true);
+    const again = await run({ watch: WATCH([ROW("바쁜고", "고1", 3)]), prev: first.wrote,
+                             answer: { 바쁜고: G("2026-10-01") } });
+    ok("다음 날 다시 긁는다 (링크만 영영 남지 않게)", again.asked.length === 1);
+    ok("다시 긁어 찾으면 날짜가 된다", (again.wrote.diffs || []).length === 1);
   }
 
   // ---- 알림 ----

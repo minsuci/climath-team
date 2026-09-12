@@ -1239,12 +1239,15 @@ function verifyMath(x, text, from, to) {
 
 // 학교 하나에서 수학시험 날짜를 찾아온다.
 //
-// noai=true 면 **AI 를 아예 안 부른다.** 새벽에 저 혼자 도는 길(api/cron.js)이 그렇게 쓴다.
-//   (1) 하루 한도가 있는데 새벽에 다 쓰면 낮에 팀장이 눌렀을 때 못 읽는다.
-//   (2) AI 가 읽은 것은 어차피 사람이 골라야 해서 저절로 채울 수 없다 — 새벽에 읽어 둘 값이 없다.
-//   (3) 표를 재서 읽는 길은 AI 없이 돌고, 그게 저절로 채워도 되는 유일한 길이다.
-//  못 읽으면 «글은 올라왔다» 와 링크를 준다. 그것만으로도 팀장이 할 일의 대부분은 끝난다.
-export async function mathDates(school, from, to, kind, grades, budget, web, noai) {
+// ai 는 **AI 를 몇 번까지 부를지** 담은 그릇({n}) 이다. 안 주면 제한 없다(손으로 돌릴 때).
+// 새벽에 저 혼자 도는 길(api/cron.js)은 하룻밤 몫을 정해 넘긴다 —
+// 하루 한도를 새벽에 다 쓰면 **낮에 팀장이 눌렀을 때 못 읽는다.**
+// 다 쓰면 «글은 올라왔다» 와 링크만 준다. 그것만으로도 할 일의 대부분은 끝난다.
+//
+// ⚠ 처음엔 새벽에 AI 를 아예 막았는데, 돌려 보니 스무 곳 중 **열둘이 링크만** 남았다.
+//   표를 재서 읽히는 학교가 소수라서다. 링크는 열어서 붙여넣어야 하고 날짜는 한 번 누르면 된다 —
+//   그 차이가 이 기능의 값이다. 막는 대신 **몫을 정하는** 쪽으로 바꿨다.
+export async function mathDates(school, from, to, kind, grades, budget, web, ai) {
   const s = await resolveSchool(school, budget);
   if (!s) return { school, error: "나이스에서 학교를 못 찾았어요" };
   if (!s.hmpg) return { school, error: "학교 홈페이지 주소를 몰라요" };
@@ -1264,11 +1267,12 @@ export async function mathDates(school, from, to, kind, grades, budget, web, noa
     // 좌표로 표를 되세울 수 있으면 그게 먼저다. AI 는 학년을 찍지만 이건 재서 안다.
     const grid = gridMath(got.pages, from, to);
     if (grid && grid.length) return { school, post: got.title, url: got.url, via: got.via, by: "표", rows: grid };
-    if (noai) return { school, post: got.title, url: got.url, via: got.via, rows: [],
+    if (ai && ai.n <= 0) return { school, post: got.title, url: got.url, via: got.via, rows: [],
                       note: "표로는 못 읽었어요. 열어서 붙여넣으면 읽어 드립니다" };
-    const ai = await mathFromDoc(got.text, school, from, to, grades);
-    if (ai.error) return { school, post: got.title, url: got.url, rows: [], note: ai.error, busy: !!ai.busy };
-    return { school, post: got.title, url: got.url, via: got.via, by: "AI", rows: ai.rows };
+    if (ai) ai.n--;
+    const got2 = await mathFromDoc(got.text, school, from, to, grades);
+    if (got2.error) return { school, post: got.title, url: got.url, rows: [], note: got2.error, busy: !!got2.busy };
+    return { school, post: got.title, url: got.url, via: got.via, by: "AI", rows: got2.rows };
   }
   return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };
 }
@@ -1295,7 +1299,8 @@ export default async function handler(req, res) {
 
     // 수학시험 날짜만 찾는 길. 학사일정과 달리 **가정통신문 게시판**을 뒤진다.
     if (body.want === "math") {
-      const out = await mathDates(school, from, to, kind, body.grades || [], budget, web, !!body.noai);
+      const out = await mathDates(school, from, to, kind, body.grades || [], budget, web,
+                                  body.noai ? { n: 0 } : null);
       res.status(200).json(out);
       return;
     }
