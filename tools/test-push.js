@@ -180,6 +180,8 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
     /async function pushOn\(\)[\s\S]{0,400}Notification\.requestPermission\(\)/.test(src) &&
     !/pushSync[\s\S]{0,200}requestPermission/.test(src));
   ok("부팅에서는 상태만 본다", /pushSync\(\)\.then\(renderBell/.test(src));
+  // ⚠ register() 가 준 것은 아직 설치 중일 수 있다. 홈 화면에 막 추가하고 바로 켜면 그 상태다
+  ok("워커가 «설 때까지» 기다린 뒤 구독한다", /navigator\.serviceWorker\.ready/.test(src));
   ok("종 상자 안에 알림 줄이 있다", /pushRowHtml\(\) \+ '<\/div>'/.test(src) && /pushRowWire\(\)/.test(src));
   // ⚠ 초안은 선생님 화면에 아직 없다. 알리면 열어도 아무것도 없다
   ok("초안은 안 알린다", /!t\.own && !taskDraft\(t\)/.test(src));

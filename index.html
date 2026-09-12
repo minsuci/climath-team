@@ -3609,8 +3609,13 @@ function isStandalone() {
 async function swReady() {
   if (PUSH.reg) return PUSH.reg;
   if (!("serviceWorker" in navigator)) return null;
-  try { PUSH.reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" }); }
-  catch (e) { return null; }
+  try {
+    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    // ⚠ register() 가 돌려주는 것은 **아직 설치 중일 수 있다.** 그 상태로 subscribe 를 부르면 실패한다.
+    //   홈 화면에 막 추가하고 바로 «켜기» 를 누르는 것이 정확히 그 경우다 — 첫 사용자가 밟는다.
+    //   ready 는 «일할 수 있는 워커» 가 설 때까지 기다린다.
+    PUSH.reg = await navigator.serviceWorker.ready;
+  } catch (e) { return null; }
   return PUSH.reg;
 }
 async function pushApi(want, extra) {
