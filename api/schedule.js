@@ -1035,24 +1035,31 @@ async function timetableFromBoard(menuUrl, from, kind, budget, want) {
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/\s+/g, " ");
   if (looksLikeTimetable(bodyText)) return { ...post, text: bodyText, via: "본문" };
 
+  // 글자가 안 나온 문서의 **쪽 그림**을 모아 둔다. 그림 PDF 는 이 길로만 읽힌다.
+  const shots = [];
+  const keepShots = (pgs) => { if (!shots.length) shots.push(...synapShots(pgs)); };
+
   // 첨부 칸이 비어도 본문에 파일 링크를 거는 학교가 있다(서초중). 같은 길로 읽는다.
   for (const u of bodyFiles(html)) {
     if (budget.n <= 0) break;
     const pgs = await synapPagesOf(u, "body" + Math.abs(hashOf(u)), budget).catch(() => []);
     const t0 = xmlFlat(pgs);
     if (looksLikeTimetable(t0)) return { ...post, text: t0, pages: pgs, via: "본문 파일" };
+    keepShots(pgs);
   }
   const fid = (html.match(/name="atchFileId"[^>]*value="([^"]+)"/) || [])[1];
-  if (!fid) return { ...post, text: "", via: "" };   // 본문 그림이 있으면 mathDates 가 그걸 본다
   const names = post.files;
-  const sns = fileSnsIn(html);
+  const sns = fid ? fileSnsIn(html) : [];
   for (let i = 0; i < sns.length; i++) {
     if (budget.n <= 0) break;
     const pages = await synapPages(origin, fid, sns[i], budget).catch(() => []);
     const t = xmlFlat(pages);
     if (looksLikeTimetable(t)) return { ...post, text: t, pages, via: names[i] || ("첨부" + sns[i]) };
+    keepShots(pages);
   }
-  return { ...post, text: "", via: "" };
+  // 본문에 박힌 그림이 먼저다(그건 학교가 직접 올린 원본이다). 없으면 문서를 그린 쪽 그림.
+  return { ...post, text: "", via: "", imgs: post.imgs.length ? post.imgs : shots,
+           shot: !post.imgs.length && shots.length > 0 };
 }
 // Synap 은 fid 로 변환물을 캐시한다. 주소마다 다른 이름이 필요하다.
 function hashOf(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
@@ -1101,6 +1108,22 @@ async function synapPagesOf(inner, key0, budget) {
     budget.n--;
     out.push(await (await fetch(SYNAP + "/thumbnailxml/" + key + "/" + pg + "?dpi=96", { headers: UA })).text());
   }
+  // ⚠ 배열에 열쇠를 얹어 둔다. 부르는 쪽이 전부 `xmlFlat(pages)` 라 모양을 바꾸면 넷을 다 고쳐야 한다.
+  //   **그림 PDF 는 여기서 글자가 하나도 안 나온다** — 그때 쪽을 그림으로 받아 AI 에게 보여 준다.
+  out.key = key;
+  return out;
+}
+// Synap 이 그려 둔 쪽 그림. 같은 변환물에서 나오므로 다시 변환하지 않는다.
+//
+// ⚠ 2026-09-12 마왕님 — "첨부가 그림 pdf인 경우는 스크린샷 찍어서 그림을 보여주면 되는거 아니냐".
+//   맞다. 그리고 따로 찍을 것도 없었다. Synap 이 이미 쪽마다 793×1121 PNG 를 그려 두고 있다
+//   (`/thumbnail/{key}/{쪽}` — 이름은 «썸네일» 이지만 A4 한 장 통째다).
+function synapShots(pages) {
+  const key = pages && pages.key;
+  if (!key) return [];
+  const n = Math.min(pages.length || 1, 4);
+  const out = [];
+  for (let pg = 0; pg < n; pg++) out.push(SYNAP + "/thumbnail/" + key + "/" + pg);
   return out;
 }
 // 쪽 XML 을 예전과 똑같은 «다 붙은 글자» 로 만든다. 학사일정 쪽이 이 꼴을 그대로 쓴다.
@@ -1303,7 +1326,7 @@ async function mathFromImages(school, urls, from, to, grades, web) {
   for (const u of urls) {
     const im = await fetchImage(u, web).catch(() => null);
     if (im) imgs.push(im);
-    if (imgs.length >= 3) break;
+    if (imgs.length >= 4) break;   // 가정통신문은 네 쪽까지 간다. 시간표가 몇 쪽인지 모른다
   }
   if (!imgs.length) return { error: "그림을 못 받음" };
   const parts = [{ text:
@@ -1392,7 +1415,8 @@ export async function mathDates(school, from, to, kind, grades, budget, web, ai)
       const pic = await mathFromImages(school, got.imgs, from, to, grades, web);
       if (pic.error) return { school, post: got.title, url: link, rows: [], note: pic.error,
                               busy: !!pic.busy, again: !!pic.again };
-      if (pic.rows.length) return { school, post: got.title, url: link, via: "본문 그림",
+      if (pic.rows.length) return { school, post: got.title, url: link,
+                                    via: got.shot ? "첨부를 그림으로" : "본문 그림",
                                     by: "AI그림", rows: pic.rows };
       return { school, post: got.title, url: link, rows: [], note: "그림은 읽었는데 수학 날짜가 없었어요" };
     }

@@ -269,6 +269,24 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   ok("주소가 다르면 이름도 다르다", hashOf("https://a/1.pdf") !== hashOf("https://a/2.pdf"));
 }
 
+// ---- 첨부가 그림 PDF (중대부고, 2026-09-12) ----
+// ⚠ 마왕님 — "첨부가 그림 pdf인 경우는 스크린샷 찍어서 그림을 보여주면 되는거 아니냐".
+//   따로 찍을 것도 없었다. Synap 이 이미 쪽마다 793×1121 PNG 를 그려 두고 있다.
+{
+  const synapShots = g("synapShots");
+  const pgs = ["<xml/>", "<xml/>", "<xml/>", "<xml/>", "<xml/>", "<xml/>"];
+  pgs.key = "abc123";
+  const shots = synapShots(pgs);
+  ok("쪽마다 그림 주소를 만든다", shots.length === 4, shots.length + "장");
+  // ⚠ 넉 장까지만. 가정통신문이 여덟 쪽이어도 다 보내면 몫만 태운다
+  ok("넉 장을 넘기지 않는다", shots.length <= 4);
+  ok("같은 변환물에서 뽑는다 (다시 변환하지 않는다)", shots.every((u) => u.indexOf("abc123") > 0));
+  ok("썸네일 주소다", /\/thumbnail\/abc123\/0$/.test(shots[0]), shots[0]);
+  const none = [];
+  ok("변환이 안 됐으면 빈 배열", synapShots(none).length === 0);
+  ok("열쇠가 없으면 빈 배열", synapShots(["<xml/>"]).length === 0);
+}
+
 function done() {
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
