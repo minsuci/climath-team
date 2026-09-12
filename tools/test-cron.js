@@ -282,6 +282,29 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     ok("CRON_SECRET 이 아예 없으면 아무나 못 연다", (await mk({}, { authorization: "Bearer " })) === 401);
     ok("팀장 토큰이면 손으로도 돌릴 수 있다", (await mk({}, {}, { role: "owner" })) === 200);
     ok("선생님 토큰으로는 못 돌린다", (await mk({}, {}, { role: "teacher" })) === 401);
+
+    // ⚠ 밖에서는 열쇠를 넣었든 안 넣었든 똑같이 401 이라 확인할 길이 없다. 물을 데를 만들었다.
+    const ask = (env, claims) => {
+      const ctx = vm.createContext({ console, crypto, Buffer, Date, Math, JSON, Object, Array, String, Number,
+        Promise, RegExp, setTimeout, process: { env },
+        getDoc: async () => null, patchDoc: async () => {}, verifyIdToken: async () => claims || null,
+        BUDGET: 12, WEB_BUDGET: 40, mathDates: async () => ({ rows: [] }),
+        vapidKeys: async () => ({}), sendTo: async () => ({ sent: 0 }) });
+      vm.runInContext(csrc, ctx);
+      let out = null;
+      const res = { status: () => ({ json: (j) => { out = j; } }) };
+      return vm.runInContext("handler", ctx)({ headers: {}, body: { check: true } }, res).then(() => out);
+    };
+    const owner = { role: "owner" };
+    const a1 = await ask({ CRON_SECRET: "x", GEMINI_API_KEY: "y" }, owner);
+    ok("열쇠가 있으면 있다고 답한다", a1.hasSecret === true && a1.hasAiKey === true);
+    const a2 = await ask({}, owner);
+    ok("없으면 없다고 답한다", a2.hasSecret === false && a2.hasAiKey === false);
+    // ⚠ 값은 절대 안 돌려준다. 한 번 새면 아무나 새벽 찾기를 돌릴 수 있다
+    ok("열쇠 값은 안 돌려준다", JSON.stringify(a1).indexOf("\"x\"") < 0, JSON.stringify(a1));
+    ok("묻기만 하고 긁지는 않는다", a1.ran === undefined);
+    const a3 = await ask({ CRON_SECRET: "x" }, { role: "teacher" });
+    ok("선생님은 물어볼 수도 없다", a3 && a3.error === "혼자 도는 길입니다", JSON.stringify(a3));
   }
 
   // ---------- 앱(index.html) ----------

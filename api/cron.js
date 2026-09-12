@@ -213,13 +213,24 @@ export async function runMathScan() {
 export default async function handler(req, res) {
   try {
     // 버셀 크론이거나, 앱에서 팀장이 «지금 돌려보기» 를 누른 것이거나.
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     let allowed = isCron(req);
     if (!allowed) {
-      const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
       const claims = await verifyIdToken(body.idToken);
       allowed = !!(claims && claims.role === "owner");
     }
     if (!allowed) { res.status(401).json({ error: "혼자 도는 길입니다" }); return; }
+
+    // 「열쇠를 넣었는데 도는 건가?」 를 물을 데가 있어야 한다. 밖에서는 넣었든 안 넣었든 똑같이 401 이라
+    // 확인할 길이 없다. **있는지만** 답한다 — 값은 절대 안 돌려준다.
+    // ⚠ 버셀은 환경변수를 **배포할 때** 실어 준다. 넣고 다시 배포하지 않으면 돌고 있는 판은 모른다.
+    if (body && body.check) {
+      res.status(200).json({ ok: true, hasSecret: !!process.env.CRON_SECRET,
+        hasAiKey: !!process.env.GEMINI_API_KEY,
+        host: process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || "",
+      });
+      return;
+    }
     res.status(200).json(await runMathScan());
   } catch (e) {
     res.status(500).json({ error: e.message || "알 수 없는 오류" });
