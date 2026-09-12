@@ -2464,18 +2464,33 @@ function renderMinutes() {
   }
   navBadge("minutes", S.minutes.length, false);
   var q = (S.minQ || "").trim();
-  var list = S.minutes.filter(function (m) {
-    return !q || (m.title + " " + (m.kind || "") + " " + (m.attend || "") + " " + (m.md || "")).indexOf(q) >= 0;
-  });
-  if (!list.some(function (m) { return m.id === S.minPick; })) S.minPick = list.length ? list[0].id : "";
-  var cur = S.minutes.filter(function (m) { return m.id === S.minPick; })[0];
 
   el.innerHTML = '<h2>회의록 <span class="n">' + S.minutes.length + '건</span><span class="sp"></span>' +
     '<input type="text" id="mn-q" class="mini" placeholder="본문까지 찾기" value="' + esc(q) + '" style="min-width:150px">' +
     '<button class="mini" id="mn-re">다시 읽기</button></h2>' +
     (S.minutes.length ? "" : '<div class="banner">아직 올라온 회의록이 없다. 볼트에 회의록을 쓰면 자동으로 올라온다 ' +
       '(<code>tools/push-minutes.mjs</code>).</div>') +
-    '<div class="chips">' + list.map(function (m) {
+    '<div id="mn-body">' + minutesBodyHtml() + '</div>';
+  bindMinutesBody(el);
+  $("#mn-re").onclick = function () { S.minutes = null; renderMinutes(); loadMinutes().then(renderMinutes); };
+  // ⚠ 찾기 칸은 **아래만** 다시 그린다. 상자를 통째로 그리면 입력칸이 사라졌다 새로 생기는데,
+  //   한글은 그때 조합이 깨져 «ㅎㅏㄴ» 처럼 자모가 떨어져 찍힌다 (2026-09-12 마왕님이 겪으셨다).
+  //   학생 명단 찾기(#st-q)가 처음부터 이 모양이었다. 여기와 개발 현황만 옛 모양으로 남아 있었다.
+  $("#mn-q").oninput = function () {
+    S.minQ = this.value;
+    $("#mn-body").innerHTML = minutesBodyHtml();
+    bindMinutesBody(el);
+  };
+}
+// 찾기 낱말에 따라 달라지는 부분만. 위의 머리줄(찾기 칸 포함)은 건드리지 않는다.
+function minutesBodyHtml() {
+  var q = (S.minQ || "").trim();
+  var list = S.minutes.filter(function (m) {
+    return !q || (m.title + " " + (m.kind || "") + " " + (m.attend || "") + " " + (m.md || "")).indexOf(q) >= 0;
+  });
+  if (!list.some(function (m) { return m.id === S.minPick; })) S.minPick = list.length ? list[0].id : "";
+  var cur = S.minutes.filter(function (m) { return m.id === S.minPick; })[0];
+  return '<div class="chips">' + list.map(function (m) {
       return '<button class="mini ' + (m.id === S.minPick ? "on" : "") + '" data-mn="' + esc(m.id) + '">' +
         (S.ro || m.open ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') +
         esc(fmtMD(m.date)) + ' ' + esc(m.title) + '</button>';
@@ -2510,24 +2525,21 @@ function renderMinutes() {
           (HI_GROUPS.length ? '<span class="muted">— 이름 말고 <b>' + esc(HI_GROUPS.join(" · ")) + '</b> 로 적힌 자리도 함께</span>' : "") +
           '<span class="muted">· 붉은 것은 «할 일·지시» 표나 담당 칸에 적힌 것</span></div>' + body;
       })() + '</div>' : "");
-
-  $$("[data-att]", el).forEach(function (b) {
+}
+// 아래만 다시 그렸을 때도 단추가 살아 있어야 한다.
+function bindMinutesBody(el) {
+  var box = $("#mn-body") || el;
+  var redraw = function () { $("#mn-body").innerHTML = minutesBodyHtml(); bindMinutesBody(el); };
+  $$("[data-att]", box).forEach(function (b) {
     b.onclick = function () {
       var n = b.getAttribute("data-att");
       S.minName = (S.minName === n || !n) ? "" : n;
-      keepScrollIn("#sec-minutes", renderMinutes);
+      keepScrollIn("#sec-minutes", redraw);
     };
   });
-  $$("[data-mn]", el).forEach(function (b) {
-    b.onclick = function () { S.minPick = b.getAttribute("data-mn"); keepScrollIn("#sec-minutes", renderMinutes); };
+  $$("[data-mn]", box).forEach(function (b) {
+    b.onclick = function () { S.minPick = b.getAttribute("data-mn"); keepScrollIn("#sec-minutes", redraw); };
   });
-  $("#mn-q").oninput = function () {
-    S.minQ = this.value;
-    var keep = this.value;
-    renderMinutes();
-    var again = $("#mn-q"); if (again) { again.value = keep; again.focus(); again.setSelectionRange(keep.length, keep.length); }
-  };
-  $("#mn-re").onclick = function () { S.minutes = null; renderMinutes(); loadMinutes().then(renderMinutes); };
 }
 
 // ---------- 학년 업무 달력 ----------
@@ -8470,6 +8482,7 @@ function devCount(commits, since) {
 }
 function devSince() { return S.devDays ? addDays(TODAY, -S.devDays) : ""; }
 
+var DEV_RECENT = [], DEV_ALL = [];
 function renderDev() {
   var el = $("#sec-dev");
   if (!el) return;
@@ -8483,18 +8496,13 @@ function renderDev() {
   var all = [];
   S.dev.forEach(function (r) { all = all.concat(r.commits); });
   var recent = all.filter(function (c) { return !since || c.date >= since; });
+  // 찾기 칸이 아래만 다시 그릴 때 쓴다. 다시 세는 값이 아니라 그대로 둔 값이다.
+  DEV_RECENT = recent; DEV_ALL = all;
   var pending = S.dev.filter(function (r) { return r.pending; }).length;
   navBadge("dev", pending || recent.length, !!pending);
 
   var whos = []; S.dev.forEach(function (r) { if (whos.indexOf(r.cfg.who) < 0) whos.push(r.cfg.who); });
   var q = (S.devQ || "").trim();
-  var list = recent.filter(function (c) {
-    return (!S.devWho || c.who === S.devWho) && (!S.devApp || c.key === S.devApp) && (!S.devKindPick || c.kind === S.devKindPick) &&
-      (!q || c.msg.indexOf(q) >= 0);
-  });
-  var byDate = {}; var dates = [];
-  list.forEach(function (c) { if (!byDate[c.date]) { byDate[c.date] = []; dates.push(c.date); } byDate[c.date].push(c); });
-  dates.sort().reverse();
 
   var chip = function (attr, val, cur, label) {
     return '<button class="mini ' + (cur === val ? "on" : "") + '" data-' + attr + '="' + esc(val) + '">' + label + '</button>';
@@ -8517,13 +8525,25 @@ function renderDev() {
       '<span class="muted">·</span>' +
       chip("ddays", "14", String(S.devDays), "2주") + chip("ddays", "30", String(S.devDays), "한 달") + chip("ddays", "0", String(S.devDays), "받아온 전부") +
     '</div>' +
-    (dates.length ? dates.map(function (d) {
+    '<div id="dv-body">' + devListHtml(recent, all) + '</div>';
+  bindDev(el);
+}
+// 찾기 낱말에 따라 달라지는 부분만. 위의 머리줄(찾기 칸 포함)은 건드리지 않는다.
+function devListHtml(recent, all) {
+  var q = (S.devQ || "").trim();
+  var list = recent.filter(function (c) {
+    return (!S.devWho || c.who === S.devWho) && (!S.devApp || c.key === S.devApp) &&
+      (!S.devKindPick || c.kind === S.devKindPick) && (!q || c.msg.indexOf(q) >= 0);
+  });
+  var byDate = {}, dates = [];
+  list.forEach(function (c) { if (!byDate[c.date]) { byDate[c.date] = []; dates.push(c.date); } byDate[c.date].push(c); });
+  dates.sort().reverse();
+  return (dates.length ? dates.map(function (d) {
       return '<div class="dvday"><b>' + esc(fmtMD(d)) + '</b> <span class="muted">' + byDate[d].length + '건</span></div>' +
         byDate[d].map(devRowHtml).join("");
     }).join("") : '<div class="empty">' + (all.length ? "이 조건에 맞는 커밋이 없다." : "커밋을 못 받아왔다. 위 상자의 이유를 본다.") + '</div>') +
     (S.dev.some(function (r) { return r.more; }) && !S.devDays ?
       '<div class="muted" style="font-size:12px;margin-top:8px">저장소당 최근 200건까지만 받아온다. 그 앞은 저장소에서 본다.</div>' : "");
-  bindDev(el);
 }
 function devCardHtml(r, since) {
   var cfg = r.cfg, n = devCount(r.commits, since);
@@ -8625,10 +8645,12 @@ function bindDev(el) {
     });
   };
   pick("dwho", "devWho"); pick("dapp", "devApp"); pick("dkind", "devKindPick"); pick("ddays", "devDays", Number);
+  // ⚠ 회의록과 같은 이유다 — 통째로 다시 그리면 한글 조합이 깨져 자모가 떨어져 찍힌다.
   $("#dv-q").oninput = function () {
-    S.devQ = this.value; var keep = this.value;
-    renderDev();
-    var again = $("#dv-q"); if (again) { again.value = keep; again.focus(); again.setSelectionRange(keep.length, keep.length); }
+    S.devQ = this.value;
+    var box = $("#dv-body");
+    // 커밋 줄은 그냥 링크라 다시 묶을 것이 없다.
+    if (box) box.innerHTML = devListHtml(DEV_RECENT, DEV_ALL);
   };
   $("#dv-re").onclick = function () { S.dev = null; S.devErr = ""; renderDev(); loadDev(true).then(renderDev).catch(function (e) { S.devErr = e.message; renderDev(); }); };
   $("#dv-edit").onclick = function () { S.devEdit = !S.devEdit; renderDev(); };

@@ -210,6 +210,33 @@ Object.values(RENDER).forEach((f) => {
   ok("종 상자는 글자색을 되돌린다 (머리띠가 흰색을 물려준다)", /\.bellbox\s*\{[^}]*color:\s*var\(--text\)/.test(css));
 }
 
+
+// ---- 찾기 칸이 한글을 깨뜨리지 않는가 (2026-09-12) ----
+//
+// ⚠ 마왕님 — "회의록에 검색 메뉴를 쓰고 싶은데 자음 모음이 다 떨어져서 써져".
+//   글자를 칠 때마다 화면을 통째로 다시 그리면 **입력칸이 사라졌다 새로 생긴다.**
+//   브라우저의 한글 조합 상태는 그 칸에 붙어 있어서, 그때 «한» 이 «ㅎㅏㄴ» 으로 끊긴다.
+//   값을 다시 넣고 포커스를 되돌려도 소용없다 — 조합은 이미 끝난 뒤다.
+//   고치는 법은 **입력칸을 안 건드리는 것**뿐이다. 아래만 다시 그린다.
+{
+  const src = fs.readFileSync(__dirname + "/../index.html", "utf8");
+  // 찾기 칸 셋. 학생 명단은 처음부터 옳았고, 회의록·개발 현황이 옛 모양이었다.
+  [["mn-q", "회의록", "mn-body"], ["dv-q", "개발 현황", "dv-body"], ["st-q", "학생 명단", "st-body"]]
+    .forEach(([id, name, body]) => {
+      const at = src.indexOf('$("#' + id + '").oninput');
+      ok(name + " 찾기 칸이 있다", at > 0);
+      // ⚠ 다음 처리기까지 물면 거기 있는 renderDev() 가 걸려 엉뚱하게 실패한다. 이 처리기 본문만 본다.
+      const end = src.indexOf("};", at);
+      const fn = src.slice(at, end > at ? end : at + 420);
+      // ⚠ 여기서 renderX() 를 부르면 입력칸이 통째로 새로 그려진다. 그게 자모가 떨어지는 이유다
+      ok(name + " — 찾을 때 화면을 통째로 다시 그리지 않는다",
+         !/\brender[A-Z]\w*\(\)/.test(fn), (fn.match(/\brender[A-Z]\w*\(\)/) || [""])[0]);
+      ok(name + " — 아래 상자만 갈아 끼운다", fn.indexOf(body) > 0);
+      // 값을 되돌리고 포커스를 옮기는 것은 **고친 흉내**다. 조합은 이미 깨진 뒤다
+      ok(name + " — 포커스를 되돌리는 임시방편이 없다", fn.indexOf("setSelectionRange") < 0);
+    });
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
