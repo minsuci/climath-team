@@ -251,6 +251,24 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   ok("주소는 그 학교 것이다", u.indexOf("https://gury.sen.ms.kr/") === 0);
 }
 
+// ---- 첨부 칸은 비었는데 본문에 파일 링크 (서초중, 2026-09-12) ----
+// ⚠ 첨부만 보면 「글자를 못 꺼냈어요」가 되는데 사람 눈에는 링크가 뻔히 보인다.
+//   실제로 이어 보니 3,159자가 읽혔다.
+{
+  const bodyFiles = g("bodyFiles");
+  const html = '<div class="content"><p><a class="NamoSE_insertfilePdf_show" ' +
+    'href="https://seocho.sen.ms.kr/crosseditor/binary/files/000171/2026학년도_2학기_중간고사_실시_안내.pdf" ' +
+    'target="_blank">안내.pdf</a></p></div></td>';
+  ok("본문에 링크로 걸린 파일을 꺼낸다", bodyFiles(html).length === 1, JSON.stringify(bodyFiles(html)));
+  ok("본문 칸 바깥 링크는 안 본다",
+     bodyFiles('<div class="content"><p>글</p></div></td><a href="https://x/a.pdf">밖</a>').length === 0);
+  ok("문서가 아닌 링크는 안 본다",
+     bodyFiles('<div class="content"><a href="https://x/y.html">글</a></div></td>').length === 0);
+  // Synap 은 fid 로 변환물을 캐시한다. 주소마다 이름이 달라야 남의 것을 받아오지 않는다
+  const hashOf = g("hashOf");
+  ok("주소가 다르면 이름도 다르다", hashOf("https://a/1.pdf") !== hashOf("https://a/2.pdf"));
+}
+
 function done() {
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;

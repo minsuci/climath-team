@@ -1035,8 +1035,15 @@ async function timetableFromBoard(menuUrl, from, kind, budget, want) {
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/\s+/g, " ");
   if (looksLikeTimetable(bodyText)) return { ...post, text: bodyText, via: "본문" };
 
+  // 첨부 칸이 비어도 본문에 파일 링크를 거는 학교가 있다(서초중). 같은 길로 읽는다.
+  for (const u of bodyFiles(html)) {
+    if (budget.n <= 0) break;
+    const pgs = await synapPagesOf(u, "body" + Math.abs(hashOf(u)), budget).catch(() => []);
+    const t0 = xmlFlat(pgs);
+    if (looksLikeTimetable(t0)) return { ...post, text: t0, pages: pgs, via: "본문 파일" };
+  }
   const fid = (html.match(/name="atchFileId"[^>]*value="([^"]+)"/) || [])[1];
-  if (!fid) return { ...post, text: "", via: "" };   // 첨부가 없다 — 본문 그림이 있으면 mathDates 가 그걸 본다
+  if (!fid) return { ...post, text: "", via: "" };   // 본문 그림이 있으면 mathDates 가 그걸 본다
   const names = post.files;
   const sns = fileSnsIn(html);
   for (let i = 0; i < sns.length; i++) {
@@ -1047,6 +1054,8 @@ async function timetableFromBoard(menuUrl, from, kind, budget, want) {
   }
   return { ...post, text: "", via: "" };
 }
+// Synap 은 fid 로 변환물을 캐시한다. 주소마다 다른 이름이 필요하다.
+function hashOf(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 // 글 하나로 바로 가는 주소.
 //
 // ⚠ 게시판 주소(`/69137/subMenu.do`)에 nttId 를 붙여 봐야 **목록만 열린다** — 서울 CMS 는
@@ -1071,9 +1080,15 @@ function looksLikeTimetable(t) {
 }
 // 첨부 하나를 글자로. boardDocText 안에 있던 것을 꺼내 함께 쓴다.
 async function synapPages(origin, fid, sn, budget) {
-  budget.n--;
   const inner = origin + ":443/dggb/cnvrFileDown.do?atchFileId=" + fid + ":" + sn;
-  const job = SYNAP + "/job?fid=" + fid + "_" + sn + "&filePath=" + encodeURIComponent(inner) +
+  return synapPagesOf(inner, fid + "_" + sn, budget);
+}
+// 첨부가 아니라 **본문에 링크로 걸린 파일**도 같은 길로 읽는다.
+// ⚠ 서초중이 그랬다 — 첨부 칸은 비어 있고 본문에 pdf 링크 하나가 있었다(2026-09-12).
+//   첨부만 보면 「글자를 못 꺼냈어요」가 되는데, 사람 눈에는 링크가 뻔히 보인다.
+async function synapPagesOf(inner, key0, budget) {
+  budget.n--;
+  const job = SYNAP + "/job?fid=" + encodeURIComponent(key0) + "&filePath=" + encodeURIComponent(inner) +
               "&convertType=1&fileType=URL&sync=true";
   const r = await fetch(job, { headers: UA, redirect: "follow" });
   const key = (r.url.match(/key=([0-9a-f]+)/) || [])[1];
@@ -1266,6 +1281,16 @@ function bodyImgs(html) {
     if (out.indexOf(u) < 0) out.push(u);
     if (out.length >= 4) break;
   }
+  return out;
+}
+// 본문에 링크로 걸린 문서(pdf·hwp 따위). 첨부 칸이 비어 있어도 여기 있는 학교가 있다.
+function bodyFiles(html) {
+  const box = /<div class="content">([\s\S]*?)<\/td>/.exec(String(html || ""));
+  const area = box ? box[1] : "";
+  const out = [];
+  const re = /href\s*=\s*["'](https?:\/\/[^"']+\.(?:pdf|hwp|hwpx|docx?|xlsx?|pptx?))["']/gi;
+  let m;
+  while ((m = re.exec(area))) { if (out.indexOf(m[1]) < 0) out.push(m[1]); if (out.length >= 3) break; }
   return out;
 }
 // 그림으로 붙인 시간표에서 수학 보는 날을 읽는다.
