@@ -1024,7 +1024,10 @@ async function timetableFromBoard(menuUrl, from, kind, budget, want) {
     body: new URLSearchParams({ bbsId: hit.bbsId, nttId: hit.nttId, bbsTyCode: "base",
       pageIndex: "1", cmntSe: "N", customRecordCountPerPage: "60" }),
   })).text();
-  const post = { title: hit.title, url: menuUrl, files: fileNamesIn(html) };
+  // ⚠ 링크는 **글 주소**여야 한다. 게시판 주소만 주면 팀장이 목록에서 글을 또 찾아야 한다
+  //   (2026-09-12 마왕님 — "이거 누르면 게시판 나오고, 게시판에서 글 들어가서 보면…").
+  const post = { title: hit.title, url: menuUrl, postUrl: postLink(menuUrl, hit),
+                 files: fileNamesIn(html), imgs: bodyImgs(html) };
 
   // 본문에 표를 그대로 적어 두는 학교도 있다.
   const bodyText = html.replace(/<script[\s\S]*?<\/script>/g, " ").replace(/<style[\s\S]*?<\/style>/g, " ")
@@ -1033,7 +1036,7 @@ async function timetableFromBoard(menuUrl, from, kind, budget, want) {
   if (looksLikeTimetable(bodyText)) return { ...post, text: bodyText, via: "본문" };
 
   const fid = (html.match(/name="atchFileId"[^>]*value="([^"]+)"/) || [])[1];
-  if (!fid) return { ...post, text: "", via: "" };
+  if (!fid) return { ...post, text: "", via: "" };   // 첨부가 없다 — 본문 그림이 있으면 mathDates 가 그걸 본다
   const names = post.files;
   const sns = fileSnsIn(html);
   for (let i = 0; i < sns.length; i++) {
@@ -1043,6 +1046,19 @@ async function timetableFromBoard(menuUrl, from, kind, budget, want) {
     if (looksLikeTimetable(t)) return { ...post, text: t, pages, via: names[i] || ("첨부" + sns[i]) };
   }
   return { ...post, text: "", via: "" };
+}
+// 글 하나로 바로 가는 주소.
+//
+// ⚠ 게시판 주소(`/69137/subMenu.do`)에 nttId 를 붙여 봐야 **목록만 열린다** — 서울 CMS 는
+//   게시판을 나중에 Ajax 로 채우고 주소의 값을 안 본다. 실제로 해 보고 알았다(2026-09-12).
+//   대신 그 Ajax 주소를 GET 으로 부르면 **글 한 편이 그대로 온다.** 꾸밈이 없는 대신 바로 내용이다.
+//   목록으로 보내 놓고 «찾아서 들어가세요» 하는 것보다 낫다.
+function postLink(menuUrl, hit) {
+  try {
+    const o = new URL(menuUrl).origin;
+    return o + "/dggb/module/board/selectBoardDetailAjax.do?bbsId=" + encodeURIComponent(hit.bbsId) +
+           "&nttId=" + encodeURIComponent(hit.nttId) + "&bbsTyCode=base";
+  } catch (e) { return menuUrl; }
 }
 // 시간표처럼 생겼나 — 날짜와 교시와 과목이 같이 있어야 한다.
 // 범위표에는 과목은 있지만 날짜가 없다(세화고가 그랬다). 그걸 시간표로 받으면 엉뚱한 날이 들어간다.
@@ -1229,6 +1245,83 @@ async function mathFromDoc(text, school, from, to, grades) {
   const rows = (v && v.rows) || [];
   return { rows: rows.filter((x) => verifyMath(x, text, from, to)) };
 }
+// 글 본문에 붙어 있는 그림 주소. **첨부가 아니라 본문에 박아 넣는 학교**가 많다.
+//
+// ⚠ 2026-09-12 — 마왕님이 구룡중 링크를 눌러 보시고 물으셨다. "게시판에서 글 들어가서 보면
+//   며칠에 수학시험인지 뻔히 나오는데 왜 네가 찾아서 안해?" 열어 보니 본문이 이랬다:
+//     <div class="content"><img src="…중간고사_안내_가정통신문001.jpg"><img src="…002.jpg"></div>
+//   글자도 첨부도 없다. 가정통신문을 **사진으로 찍어 붙인** 것이다. 그래서 «글자를 못 꺼냈어요» 였다.
+//   사람 눈에는 뻔한데 코드에는 아무것도 없었던 것이라, 「못 읽는 학교」로 세고 있었다.
+function bodyImgs(html) {
+  // 본문 칸 안쪽만 본다. 바깥에는 아이콘·배너가 섞여 있다.
+  const box = /<div class="content">([\s\S]*?)<\/td>/.exec(String(html || ""));
+  const area = box ? box[1] : "";
+  const out = [];
+  const re = /<img[^>]+src\s*=\s*["']([^"']+)["']/gi;
+  let m;
+  while ((m = re.exec(area))) {
+    const u = m[1];
+    if (!/^https?:\/\//i.test(u)) continue;
+    if (/\.(gif|svg)(\?|$)/i.test(u)) continue;        // 이모티콘·구분선이다
+    if (out.indexOf(u) < 0) out.push(u);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+// 그림으로 붙인 시간표에서 수학 보는 날을 읽는다.
+// ⚠ 여기서 읽은 것은 **절대 저절로 안 들어간다.** by 가 "표" 일 때만 자동이고 이건 "AI그림" 이다.
+//   글자가 없으니 verifyMath 로 «원문에 그 날짜가 있나» 를 못 본다 — 사람이 봐야 한다.
+async function mathFromImages(school, urls, from, to, grades, web) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { error: "AI 키 없음", again: true };
+  const imgs = [];
+  for (const u of urls) {
+    const im = await fetchImage(u, web).catch(() => null);
+    if (im) imgs.push(im);
+    if (imgs.length >= 3) break;
+  }
+  if (!imgs.length) return { error: "그림을 못 받음" };
+  const parts = [{ text:
+    school + " 가 낸 지필평가 안내문 그림이다. 시험 시간표 표가 들어 있다.\n" +
+    "기간은 " + from.slice(0, 4) + "-" + from.slice(4, 6) + "-" + from.slice(6, 8) + " ~ " +
+    to.slice(0, 4) + "-" + to.slice(4, 6) + "-" + to.slice(6, 8) + " 다.\n\n" +
+    "학년마다 **수학 계열 과목**을 보는 날을 찾아라. 수학 계열은 공통수학·대수·미적분·확률과 통계·기하·" +
+    "심화수학·인공지능수학·수학Ⅰ·수학Ⅱ 같은 것이다. 국어·영어·과학·사회는 아니다.\n" +
+    "표는 보통 세로가 날짜·교시고 가로가 학년이다. **어느 열에 있었는지로 학년을 정하라.**\n" +
+    "한 학년에 수학 과목이 여럿이면 과목마다 한 줄씩 낸다.\n\n" +
+    "형식: {\"rows\":[{\"grade\":1,\"subject\":\"공통수학2\",\"date\":\"YYYY-MM-DD\"}, …]}\n" +
+    "grade 는 1·2·3 중 하나(학교 학년). 그림에 없으면 만들지 말고 {\"rows\":[]}" }];
+  imgs.forEach((im) => parts.push({ inline_data: { mime_type: im.mime, data: im.data } }));
+  const body = {
+    system_instruction: { parts: [{ text:
+      "너는 한국 중·고등학교 시험 시간표 그림에서 수학 시험일만 읽어내는 도구다. " +
+      "JSON 하나만 출력한다. 설명·코드블록 금지. 그림에 없는 날짜는 절대 만들지 마라." }] },
+    contents: [{ role: "user", parts }],
+    generationConfig: { temperature: 0, maxOutputTokens: 900, responseMimeType: "application/json",
+                        thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const call = () => fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let r = await call();
+  if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 6000)); r = await call(); }
+  if (r.status === 429) return { error: "AI가 지금 바빠요 — 잠시 뒤 다시 돌리면 됩니다", busy: true, again: true };
+  if (!r.ok) return { error: "AI 호출 실패 " + r.status };
+  const j = await r.json().catch(() => null);
+  const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
+  const raw = out.map((x) => x.text || "").join("").trim();
+  if (!raw) return { error: "AI가 빈 답" };
+  let v = null;
+  const bare = raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
+  try { v = JSON.parse(bare); } catch (e) { return { error: "AI 답을 못 읽음" }; }
+  // 글자가 없어 원문 대조는 못 한다. **날짜가 진짜 날이고 기간 안인지**는 본다.
+  const rows = ((v && v.rows) || []).filter((x) => {
+    const d = String((x && x.date) || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !realDate(d)) return false;
+    const y = d.replace(/-/g, "");
+    return y >= from && y <= to;
+  });
+  return { rows };
+}
 // AI 가 지어낸 날짜를 거른다. 원문에 그 «월/일» 이 정말 있고, 기간 안이어야 한다.
 function verifyMath(x, text, from, to) {
   const d = String((x && x.date) || "");
@@ -1265,18 +1358,31 @@ export async function mathDates(school, from, to, kind, grades, budget, web, ai)
     let got = null;
     try { got = await timetableFromBoard(url, from, kind, web, want); } catch (e) { continue; }
     if (!got) continue;
-    if (!got.text) return { school, post: got.title, url: got.url, rows: [],
+    const link = got.postUrl || got.url;
+    // 글자가 없으면 **본문에 박힌 그림**을 본다. 가정통신문을 사진으로 찍어 올리는 학교가 많다.
+    if (!got.text && (got.imgs || []).length) {
+      if (ai && ai.n <= 0) return { school, post: got.title, url: link, rows: [], again: true,
+                                    note: "그림으로 붙인 시간표다. AI 몫이 남으면 다음 판에 읽는다" };
+      if (ai) ai.n--;
+      const pic = await mathFromImages(school, got.imgs, from, to, grades, web);
+      if (pic.error) return { school, post: got.title, url: link, rows: [], note: pic.error,
+                              busy: !!pic.busy, again: !!pic.again };
+      if (pic.rows.length) return { school, post: got.title, url: link, via: "본문 그림",
+                                    by: "AI그림", rows: pic.rows };
+      return { school, post: got.title, url: link, rows: [], note: "그림은 읽었는데 수학 날짜가 없었어요" };
+    }
+    if (!got.text) return { school, post: got.title, url: link, rows: [],
                             note: "시간표 글은 찾았는데 글자를 못 꺼냈어요. 눌러서 보고 붙여넣어 주세요" };
     // 좌표로 표를 되세울 수 있으면 그게 먼저다. AI 는 학년을 찍지만 이건 재서 안다.
     const grid = gridMath(got.pages, from, to);
-    if (grid && grid.length) return { school, post: got.title, url: got.url, via: got.via, by: "표", rows: grid };
-    if (ai && ai.n <= 0) return { school, post: got.title, url: got.url, via: got.via, rows: [],
-                      note: "표로는 못 읽었어요. 열어서 붙여넣으면 읽어 드립니다" };
+    if (grid && grid.length) return { school, post: got.title, url: link, via: got.via, by: "표", rows: grid };
+    if (ai && ai.n <= 0) return { school, post: got.title, url: link, via: got.via, rows: [], again: true,
+                      note: "표로는 못 읽었어요. AI 몫이 남으면 다음 판에 읽는다" };
     if (ai) ai.n--;
     const got2 = await mathFromDoc(got.text, school, from, to, grades);
-    if (got2.error) return { school, post: got.title, url: got.url, rows: [], note: got2.error,
+    if (got2.error) return { school, post: got.title, url: link, rows: [], note: got2.error,
                              busy: !!got2.busy, again: !!(got2.busy || got2.again) };
-    return { school, post: got.title, url: got.url, via: got.via, by: "AI", rows: got2.rows };
+    return { school, post: got.title, url: link, via: got.via, by: "AI", rows: got2.rows };
   }
   return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };
 }

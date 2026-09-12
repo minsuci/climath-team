@@ -228,6 +228,29 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   });
 }
 
+// ---- 본문에 그림으로 붙인 가정통신문 (2026-09-12) ----
+// ⚠ 마왕님 — "게시판에서 글 들어가서 보면 며칠에 수학시험인지 뻔히 나오는데 왜 네가 찾아서 안해?"
+//   구룡중을 열어 보니 본문이 <img> 두 장뿐이었다. 글자도 첨부도 없다. 아래는 실제로 받아 온 모양 그대로다.
+{
+  const bodyImgs = g("bodyImgs"), postLink = g("postLink");
+  const html = '<tr><th>내용</th><td colspan="3"><div class="content"><p>' +
+    '<img src="https://gury.sen.ms.kr/crosseditor/binary/images/008174/2026-158호_중간고사001.jpg" alt="" />' +
+    '<img src="https://gury.sen.ms.kr/crosseditor/binary/images/008174/2026-158호_중간고사002.jpg" alt="" />' +
+    '</p></div></td></tr><img src="https://gury.sen.ms.kr/images/logo.gif">';
+  const got = bodyImgs(html);
+  ok("본문에 박힌 그림을 꺼낸다", got.length === 2, got.length + "장");
+  // ⚠ 본문 칸 바깥의 아이콘·배너까지 AI 에게 보내면 몫만 태운다
+  ok("본문 칸 바깥 그림은 안 가져온다", !got.join().includes("logo"));
+  ok("gif 는 안 본다 (이모티콘·구분선이다)", !got.some((u) => /\.gif/.test(u)));
+  ok("그림이 없는 글에서는 빈 배열", bodyImgs('<div class="content"><p>글자만 있다</p></div></td>').length === 0);
+
+  // ⚠ 게시판 주소에 nttId 를 붙여 봐야 목록만 열린다(실제로 해 봤다). Ajax 주소를 GET 으로 불러야 글이 온다
+  const u = postLink("https://gury.sen.ms.kr/69137/subMenu.do", { bbsId: "BBS_0001", nttId: "27425732" });
+  ok("글 주소는 게시판이 아니라 글 하나를 연다", /selectBoardDetailAjax\.do/.test(u), u);
+  ok("글 주소에 nttId 가 들어간다", /nttId=27425732/.test(u));
+  ok("주소는 그 학교 것이다", u.indexOf("https://gury.sen.ms.kr/") === 0);
+}
+
 function done() {
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
