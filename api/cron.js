@@ -141,9 +141,10 @@ export async function runMathScan() {
         kind, mine.map((v) => v.grade), { n: BUDGET }, { n: WEB_BUDGET }, ai);
     } catch (e) { return; }
     if (!r || r.error) return;
-    // ⚠ AI 분당 한도(429)에 걸린 것은 **학교 탓이 아니다.** 글 링크는 남기되,
-    //   내일 다시 긁도록 «찾았다» 로 세지 않는다 — 세면 다시 안 보고 링크만 영영 남는다.
-    if (r.busy) { if (r.post) add({ school, post: r.post, url: r.url || "", note: "AI가 바빴다", retry: true }); return; }
+    // ⚠ AI 한도에 걸렸거나 **AI 키가 없는** 것은 학교 탓이 아니다. 글 링크는 남기되,
+    //   다음 판에 다시 긁도록 «다 봤다» 로 세지 않는다 — 세면 다시 안 보고 링크만 영영 남는다.
+    if (r.again) { if (r.post) add({ school, post: r.post, url: r.url || "",
+                                    note: r.busy ? "AI가 바빴다" : (r.note || "AI를 못 썼다"), retry: true }); return; }
     // 글은 찾았는데 표로 못 읽었다 — **링크를 남긴다.** 팀장이 열어 붙여넣으면 그 자리에서 읽힌다.
     if (r.post && !(r.rows || []).length) {
       add({ school, post: r.post, url: r.url || "", note: r.note || "" });

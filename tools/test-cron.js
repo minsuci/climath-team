@@ -152,7 +152,7 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
   }
   {
     // 분당 한도에 걸린 것은 학교 탓이 아니다 — 내일 다시 봐야 한다
-    const busy = { post: "중간고사 시간표", url: "http://b", rows: [], busy: true };
+    const busy = { post: "중간고사 시간표", url: "http://b", rows: [], busy: true, again: true };
     const first = await run({ watch: WATCH([ROW("바쁜고", "고1", 3)]), answer: { 바쁜고: busy } });
     ok("AI 가 바빴으면 링크를 남긴다", first.wrote.links.length === 1);
     ok("«다시 볼 것» 이라고 표시해 둔다", first.wrote.links[0].retry === true);
@@ -213,7 +213,7 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
 
   {
     // 6시대에 바빴던 학교를 7시대가 다시 본다. 그런데 또 바빴다 — 줄이 쌓이면 안 된다
-    const busy = { post: "중간고사 시간표", url: "http://b", rows: [], busy: true };
+    const busy = { post: "중간고사 시간표", url: "http://b", rows: [], busy: true, again: true };
     const rows = [ROW("바쁜고", "고1", 3)];
     const p1 = await run({ watch: WATCH(rows), answer: { 바쁜고: busy } });
     const p2 = await run({ watch: WATCH(rows), prev: p1.wrote, answer: { 바쁜고: busy } });
@@ -225,6 +225,18 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     ok("링크는 날짜로 바뀌고 남지 않는다",
        (p3.wrote.links || []).length === 0 && p3.wrote.diffs.length === 1,
        "링크 " + (p3.wrote.links || []).length + " · 날짜 " + p3.wrote.diffs.length);
+  }
+
+  {
+    // ⚠ 키가 없는 것은 학교 탓이 아니라 **설정 탓**이다. 「다 읽었는데 없더라」로 굳으면
+    //   그 학교를 며칠 동안 다시 안 본다 (2026-09-12 실제로 당했다)
+    const nokey = { post: "중간고사 시간표", url: "http://k", rows: [], note: "AI 키 없음", again: true };
+    const rows = [ROW("키없고", "고1", 3)];
+    const p1 = await run({ watch: WATCH(rows), answer: { 키없고: nokey } });
+    ok("AI 키가 없어도 «다시 볼 것» 으로 남는다", p1.wrote.links[0].retry === true);
+    ok("이유를 그대로 적어 준다", /키 없음/.test(p1.wrote.links[0].note), p1.wrote.links[0].note);
+    const p2 = await run({ watch: WATCH(rows), prev: p1.wrote, answer: { 키없고: G("2026-10-01") } });
+    ok("키를 넣으면 다음 판에 다시 긁는다", p2.asked.length === 1 && p2.wrote.diffs.length === 1);
   }
 
   // ---- 어느 프로젝트가 돌렸나 ----

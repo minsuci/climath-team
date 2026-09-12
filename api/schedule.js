@@ -1182,7 +1182,10 @@ function gridMath(pages, from, to) {
 // ⚠ 그래도 **날짜는 지어내지 못하게** 한다. 원문에 없는 날은 버린다(verifyMath).
 async function mathFromDoc(text, school, from, to, grades) {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return { error: "AI 키 없음" };
+  // ⚠ 키가 없는 것은 **학교 탓이 아니라 설정 탓**이다. 「다 읽었는데 없더라」로 굳으면 안 된다 —
+  //   새벽 찾기가 그 학교를 며칠 동안 다시 안 본다. 나중에 다시 보라는 표를 같이 준다.
+  //   (2026-09-12 실제로 당했다. 키 없는 쌍둥이 프로젝트에서 한 번 돌렸더니 일곱 곳이 그렇게 굳었다)
+  if (!key) return { error: "AI 키 없음", again: true };
   const GS = grades && grades.length ? grades : ["고1", "고2", "고3"];
   const body = {
     system_instruction: { parts: [{ text:
@@ -1271,7 +1274,8 @@ export async function mathDates(school, from, to, kind, grades, budget, web, ai)
                       note: "표로는 못 읽었어요. 열어서 붙여넣으면 읽어 드립니다" };
     if (ai) ai.n--;
     const got2 = await mathFromDoc(got.text, school, from, to, grades);
-    if (got2.error) return { school, post: got.title, url: got.url, rows: [], note: got2.error, busy: !!got2.busy };
+    if (got2.error) return { school, post: got.title, url: got.url, rows: [], note: got2.error,
+                             busy: !!got2.busy, again: !!(got2.busy || got2.again) };
     return { school, post: got.title, url: got.url, via: got.via, by: "AI", rows: got2.rows };
   }
   return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };
