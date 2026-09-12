@@ -106,7 +106,7 @@ ctx.__run.then((r) => {
   ok("대신 지금 값과 함께 묻는다", diff("덮을뻔한학교").mine === "2026-10-02" && diff("덮을뻔한학교").dates[0] === "2026-10-07");
 
   // ---- 못 찾은 것들을 갈라서 말한다 ----
-  ok("글만 찾았으면 링크를 준다", r.links.length === 1 && r.links[0].school === "글만학교" && r.links[0].url === "http://f",
+  ok("글만 찾았으면 링크를 준다", r.links.some((x) => x.school === "글만학교" && x.url === "http://f"),
     JSON.stringify(r.links));
   ok("우리 학년이 없으면 채우지 않는다", !at("남의학년학교").math && !diff("남의학년학교"));
   ok("시간표 글이 아직 없는 학교를 따로 말한다", /시간표 글이 아직 없음: .*아무것도학교/.test(r.msg), r.msg);
@@ -115,15 +115,19 @@ ctx.__run.then((r) => {
   // ⚠ AI 한도에 걸린 것을 학교 이름으로 늘어놓으면 못 찾은 학교처럼 보인다. 세어서 한 줄로
   ok("AI 가 바쁜 것은 세어서 한 줄로 말한다", /AI가 바빠 못 읽음 2곳/.test(r.msg), r.msg);
   ok("AI 가 바쁜 학교는 «못 찾음» 에 안 넣는다", !/못 찾음: .*바쁜학교/.test(r.msg), r.msg);
-  ok("AI 가 바쁜 학교는 링크 목록에도 안 넣는다", !r.links.some((x) => /바쁜/.test(x.school)));
+  // ⚠ 기다리기 싫으면 열어서 붙여넣을 수 있어야 한다. 바쁘다고 아무것도 안 주면 안 된다
+  ok("AI 가 바빠도 글 링크는 남긴다", r.links.filter((x) => /바쁜/.test(x.school)).length === 2,
+    JSON.stringify(r.links.map((x) => x.school)));
   ok("한 곳이 터져도 나머지는 끝까지 간다", /못 찾음: .*터지는학교/.test(r.msg) && at("표학교").math, r.msg);
   ok("끝나면 무슨 일이 있었는지 한 줄로", /채움 1칸/.test(r.msg) && /이미 맞음 1/.test(r.msg) && /눈으로 고를 것 3건/.test(r.msg), r.msg);
 
   // ---- 나란히 돈다 ----
   // ⚠ 이것이 이번 작업의 요점이다. 한 줄로 세우면 쉰일곱 학교가 스무 분이다
   ok("학교마다 한 번씩 부른다", ctx.CALLS.length === 11, String(ctx.CALLS.length));
-  ok("넷씩 나란히 — 처음 넷이 거의 같이 나간다",
-    ctx.CALLS[3].at - ctx.CALLS[0].at < 15, String(ctx.CALLS[3].at - ctx.CALLS[0].at) + "ms");
+  // ⚠ 수학 쪽은 셋씩이다 — AI 분당 한도 때문에 일부러 하나 줄였다
+  ok("셋씩 나란히 — 처음 셋이 거의 같이 나간다",
+    ctx.CALLS[2].at - ctx.CALLS[0].at < 15, String(ctx.CALLS[2].at - ctx.CALLS[0].at) + "ms");
+  ok("넷째는 하나가 끝난 뒤에 나간다", ctx.CALLS[3].at - ctx.CALLS[0].at >= 15, String(ctx.CALLS[3].at - ctx.CALLS[0].at) + "ms");
   ok("한 줄로 세운 것보다 빠르다 (11곳 × 20ms)", r.ms < 11 * 20, r.ms + "ms");
   ok("그 학교의 시험 기간을 그대로 넘긴다",
     ctx.CALLS[0].from === "2026-10-01" && ctx.CALLS[0].to === "2026-10-08", JSON.stringify(ctx.CALLS[0]));
