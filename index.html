@@ -3782,7 +3782,8 @@ function installRowHtml() {
     : "";
   return '<div class="bi pushrow"><b>팀체크를 홈 화면에 추가</b>' +
     '<div class="muted" style="font-size:12px;line-height:1.5">' + why + '</div>' +
-    '<div style="margin-top:6px"><button class="btn o mini" id="push-install">' +
+    // 펼친 뒤의 «접기» 까지 주황이면 시선을 계속 끈다. 할 일이 남은 단추만 주황이다.
+    '<div style="margin-top:6px"><button class="' + (PUSH.howto ? "mini" : "btn o mini") + '" id="push-install">' +
       (PUSH.ios ? (PUSH.howto ? "접기" : "어떻게 하나요") : "홈 화면에 추가") + '</button></div>' +
     steps + '</div>';
 }
