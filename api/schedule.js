@@ -169,11 +169,18 @@ async function resolveSchool(short, budget) {
     }
   }
   if (!hit) return null;
+  // 나이스가 준 홈페이지 주소를 쓸 수 있는 꼴로 만든다.
+  //
+  // ⚠ 2026-09-12 실측 — 나이스는 주소를 **제멋대로 준다.**
+  //   «www.paichai.hs.kr» 처럼 http 가 없거나(배재고·영동고·중동고),
+  //   «https://joongdong.sen.ms.kr/ » 처럼 끝에 공백이 붙어 온다(중동중).
+  //   그대로 쓰면 fetch 가 터지고 화면에는 «학교 홈페이지를 못 열었어요» 만 남는다 —
+  //   학교가 잘못한 것도, 홈페이지가 죽은 것도 아닌데 넉 곳을 그렇게 잃고 있었다.
   const found = { code: hit.SD_SCHUL_CODE, office: hit.ATPT_OFCDC_SC_CODE,
                   official: hit.SCHUL_NM, officeName: hit.ATPT_OFCDC_SC_NM,
                   kind: hit.SCHUL_KND_SC_NM || guessKind(short),
                   dupes: dupes, v: RESOLVE_V,
-                  hmpg: hit.HMPG_ADRES || "" };
+                  hmpg: homeUrl(hit.HMPG_ADRES) };
   memo = { ...(memo || {}), [short]: found };
   // ⚠ 지도를 통째로 쓰면 안 된다. 여러 학교를 나란히 부르면 인스턴스마다
   //    제 손에 든 옛 지도를 덮어써서 남이 방금 넣은 학교가 사라진다.
@@ -193,7 +200,7 @@ async function calendarUrl(short, s, web) {
   web.n--;
   let url = "";
   try {
-    const base = s.hmpg.replace(/^http:/, "https:").replace(/\/+$/, "") + "/";
+    const base = homeUrl(s.hmpg);
     url = (await findScheduleMenus(base))[0] || "";
   } catch (e) { url = ""; }
   const next = { ...s, calUrl: url };
@@ -402,6 +409,29 @@ async function examPlan(office, code, from, budget) {
 // 그건 형식이 학교마다 달라서 일반화가 안 된다 — 그런 학교는 손으로 넣어야 한다.
 const UA = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36" };
 
+// 나이스가 준 홈페이지 주소 → 부를 수 있는 주소. 위 resolveSchool 의 경고를 보라.
+// ⚠ 이미 캐시에 들어간 주소도 있으니 **쓰는 자리마다** 한 번 더 거른다. 캐시를 비우지 않아도 낫는다.
+function homeUrl(h) {
+  const s = String(h || "").trim();
+  if (!s) return "";
+  const withScheme = /^https?:\/\//i.test(s) ? s : "https://" + s;
+  return withScheme.replace(/^http:/i, "https:").replace(/\/+$/, "") + "/";
+}
+
+// 껍데기 쪽이 자바스크립트로 진짜 쪽에 넘기는 학교가 있다 (경기도교육청 CMS —
+// hyosung-h.goesn.kr → /hyosung-h/main.do). 그대로 두면 971바이트짜리 빈 쪽만 보고 «게시판 없음» 이 된다.
+async function followJump(url, html, web) {
+  if (!html || html.length > 6000) return { url, html };
+  const to = (html.match(/location\s*\.\s*(?:href|replace)\s*=?\s*\(?\s*["']([^"']+)["']/) || [])[1];
+  if (!to || web.n <= 0) return { url, html };
+  const next = new URL(to, url).href;
+  web.n--;
+  try {
+    const r = await fetch(next, { headers: UA, redirect: "follow" });
+    return { url: next, html: await r.text() };
+  } catch (e) { return { url, html }; }
+}
+
 function monthsBetween(from, to) {
   const out = [];
   let y = Number(from.slice(0, 4)), m = Number(from.slice(4, 6));
@@ -437,7 +467,7 @@ async function findScheduleMenus(base) {
 let lastMenus = [];
 async function homepageExams(hmpg, from, to, kind, budget, grades) {
   if (!hmpg) return null;
-  const base = hmpg.replace(/^http:/, "https:").replace(/\/+$/, "") + "/";
+  const base = homeUrl(hmpg);
   let menus;
   budget.n--;
   try { menus = await findScheduleMenus(base); } catch (e) { return null; }
@@ -871,6 +901,56 @@ function findNoticeMenus(html, base) {
 }
 // 시험 시간표 글의 제목. «범위표» 만 있는 글도 받는다 — 시간표가 같이 붙는 학교가 있다.
 const TIME_TITLE = /(중간|기말|지필|정기)\s*(고사|평가)[\s\S]{0,20}(시간표|시험\s*시간|일정|안내)|시험\s*시간표|고사\s*시간표/;
+
+// 고사 이야기는 하는데 **시간표가 아닌** 글. 이게 걸리면 엉뚱한 글을 열고 «못 꺼냈다» 로 끝난다.
+// ⚠ 2026-09-12 실측 — 서일중은 «중간고사 성적 이의신청기간 안내», 청담중은 «정기고사 학생
+//   유의사항 및 부정행위 예방 안내» 를 시간표로 집었다. 둘 다 TIME_TITLE 을 통과한다.
+// ⚠ «유의사항» 은 빼지 않는다 — «중간고사 일정 및 시험범위, 유의사항 안내» 처럼 진짜 시간표 글에도 붙는다.
+const BAD_TITLE = /성적|이의\s*신청|부정행위|재시험|정정|환불|응시\s*원서|수능|모의\s*평가|감독|채점|답안|문항\s*오류|결과\s*안내/;
+
+// 제목이 말하는 학년. 안 적혀 있으면 null (= 모든 학년).
+//
+// ⚠ 이것이 2026-09-12 **가장 큰 구멍**이었다. 학교는 학년마다 글을 따로 올린다 —
+//   덕수고는 «1학년/2학년/3학년 2학기 중간고사 시간표» 셋, 선덕고도 셋.
+//   그런데 코드는 먼저 걸리는 것을 집었고, 목록은 새 글이 위라 **늘 3학년**이 걸렸다.
+//   우리가 필요한 것은 고1 인데 3학년 시간표를 열고 있었다.
+// ⚠ «2026학년도» 에 걸리면 안 된다. 앞 글자가 1·2·3 이 아니라 안 걸리지만 «학년도» 도 따로 막는다.
+function titleGrades(title) {
+  const t = String(title || "");
+  if (/전\s*학년|전체\s*학년|모든\s*학년/.test(t)) return null;
+  const out = {};
+  const re = /((?:[1-3]\s*[,·․、/~\-]\s*)*[1-3])\s*학년(?!도)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const nums = (m[1].match(/[1-3]/g) || []).map(Number);
+    // «1~3학년» 은 사이를 다 뜻한다. «1,2학년» 은 둘만이다.
+    if (/[~\-]/.test(m[1]) && nums.length === 2) { for (let g = nums[0]; g <= nums[1]; g++) out[g] = 1; }
+    else nums.forEach((n) => { out[n] = 1; });
+  }
+  const gs = Object.keys(out).map(Number);
+  return gs.length ? gs : null;
+}
+// «고1»·«중3» 같은 글자에서 학년 숫자만. 우리가 찾는 학년이다.
+function gradeNums(grades) {
+  const out = [];
+  (grades || []).forEach((g) => { const n = Number(String(g).replace(/\D/g, "")); if (n >= 1 && n <= 3 && out.indexOf(n) < 0) out.push(n); });
+  return out;
+}
+// 이 글을 얼마나 열어 보고 싶은가. 음수면 안 연다.
+function scorePost(title, want, kind, from) {
+  if (!TIME_TITLE.test(title)) return -1;
+  if (BAD_TITLE.test(title)) return -1;
+  if (!titleFitsTerm(title, from)) return -1;
+  const g = titleGrades(title);
+  // ⚠ **다른 학년이라고 적힌 글은 안 연다.** 열어 봐야 우리 학년 날짜가 없다.
+  if (want.length && g && !g.some((x) => want.indexOf(x) >= 0)) return -1;
+  let s = 0;
+  if (want.length && g) s += 4;                                  // 내 학년을 콕 집었다
+  else if (!g) s += 2;                                           // 학년을 안 적었다 = 다 해당
+  if (/시간표|시험\s*시간/.test(title)) s += 3;                   // 날짜가 실제로 들어 있을 글
+  if (kind && new RegExp(kind).test(title)) s += 1;
+  return s;
+}
 // 그 회차의 글인가. 2학기 것을 찾는데 1학기 글이 걸리면 지난 날짜가 들어간다.
 function titleFitsTerm(title, from) {
   const mm = Number(from.slice(4, 6));
@@ -887,7 +967,7 @@ function titleFitsTerm(title, from) {
 }
 
 // 게시판 하나에서 시간표 글을 찾아 글자를 꺼낸다. 본문·첨부를 다 본다.
-async function timetableFromBoard(menuUrl, from, kind, budget) {
+async function timetableFromBoard(menuUrl, from, kind, budget, want) {
   const origin = new URL(menuUrl).origin;
   budget.n--;
   const first = await fetch(menuUrl, { headers: UA });
@@ -909,11 +989,14 @@ async function timetableFromBoard(menuUrl, from, kind, budget) {
   let m;
   while ((m = re.exec(list))) posts.push({ bbsId: m[1], nttId: m[2],
     title: m[3].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() });
-  // 시간표라고 말하는 글이 먼저, 없으면 «고사 안내» 라도.
-  const cands = posts.filter((x) => TIME_TITLE.test(x.title) && titleFitsTerm(x.title, from));
-  const hit = cands.find((x) => /시간표|시험\s*시간/.test(x.title))
-           || cands.find((x) => !kind || new RegExp(kind).test(x.title))
-           || cands[0];
+  // **내 학년의** 시간표 글을 고른다. 점수가 같으면 목록에서 위에 있는 것 — 새 글이 위다.
+  // ⚠ 예전에는 «먼저 걸리는 것» 을 집었다. 학교는 학년마다 글을 따로 올리고 3학년이 맨 위라,
+  //   고1 을 찾으면서 늘 3학년 시간표를 열고 있었다 (덕수고·선덕고, 2026-09-12).
+  let hit = null, best = 0;
+  for (const x of posts) {
+    const s = scorePost(x.title, want, kind, from);
+    if (s > best) { best = s; hit = x; }
+  }
   if (!hit) return null;
 
   budget.n--;
@@ -1130,17 +1213,20 @@ async function mathDates(school, from, to, kind, grades, budget, web) {
   const s = await resolveSchool(school, budget);
   if (!s) return { school, error: "나이스에서 학교를 못 찾았어요" };
   if (!s.hmpg) return { school, error: "학교 홈페이지 주소를 몰라요" };
-  const base = s.hmpg.replace(/^http:/, "https:").replace(/\/+$/, "") + "/";
+  const want = gradeNums(grades);
+  let base = homeUrl(s.hmpg);
   let html = "";
   web.n--;
   try { html = await (await fetch(base, { headers: UA, redirect: "follow" })).text(); }
-  catch (e) { return { school, error: "학교 홈페이지를 못 열었어요" }; }
+  catch (e) { return { school, error: "학교 홈페이지를 못 열었어요 (" + base + ")" }; }
+  // 껍데기 쪽이면 진짜 쪽으로 한 번 더 간다 (경기도교육청 CMS).
+  ({ url: base, html } = await followJump(base, html, web));
   const menus = findNoticeMenus(html, base);
   if (!menus.length) return { school, error: "게시판을 못 찾았어요 (학교 홈페이지 모양이 다르다)" };
   for (const url of menus) {
     if (web.n <= 0) break;
     let got = null;
-    try { got = await timetableFromBoard(url, from, kind, web); } catch (e) { continue; }
+    try { got = await timetableFromBoard(url, from, kind, web, want); } catch (e) { continue; }
     if (!got) continue;
     if (!got.text) return { school, post: got.title, url: got.url, rows: [],
                             note: "시간표 글은 찾았는데 글자를 못 꺼냈어요. 눌러서 보고 붙여넣어 주세요" };
