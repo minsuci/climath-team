@@ -31,13 +31,23 @@ export const maxDuration = 60;
 // 60초 안에 끝내야 한다(버셀 Hobby). 45초에서 손을 떼고 나머지는 내일 본다 —
 // 시간에 쫓겨 잘리면 그 학교는 «못 찾음» 으로 남는데, 사실은 안 본 것이다.
 const DEADLINE_MS = 45000;
+// ⚠ 그래서 **아침에 두 번 돈다**(vercel.json 의 crons 둘). 6시대에 못 본 학교를 7시대가 잇는다.
+//   한 번만 돌면 45초에 못 들어간 학교가 **하루를 통째로 기다린다** — 시험이 사흘 앞이면 그게 치명적이다.
+//   두 번째 판은 이미 찾아 둔 학교를 건너뛰므로(seen) 남은 곳만 본다.
+//   Hobby 는 크론을 프로젝트당 둘까지, 각각 하루 한 번 허용한다. 시간대를 갈라 둬야 겹치지 않는다.
 const CONC = 3;
 // 시험이 이 날수 안에 있는 학교만 본다. 학교가 2주 전에 올리니 3주면 넉넉하다.
 // 넓히면 아직 안 올린 학교를 날마다 헛되이 긁는다.
 const SOON_DAYS = 21;
-// 하룻밤에 AI 를 몇 번까지 부를까. 스무 곳을 봐도 표로 못 읽는 곳이 열둘쯤이라 그만큼이면 넉넉하다.
-// ⚠ 넉넉히 준다고 좋은 게 아니다. 낮에 팀장이 쉰일곱 곳을 돌릴 몫을 남겨 둬야 한다.
-const AI_PER_NIGHT = 15;
+// 하룻밤에 AI 를 몇 번까지 부를까.
+//
+// 처음엔 «낮에 팀장이 쓸 몫을 남기자» 며 15 로 아꼈다. 마왕님이 정리해 주셨다 —
+// "새벽에 토큰 써도돼 어차피 나는 오후에 주로써". 새벽과 오후는 서로 안 겹친다.
+// 그래서 **때가 된 학교를 다 읽고도 남을 만큼** 준다. 아껴서 못 읽으면 링크만 남고,
+// 링크는 사람이 열어 붙여넣어야 한다 — 그게 이 기능을 없애는 길이다.
+//
+// ⚠ 그래도 상한은 둔다. 볼 목록이 부풀거나 되풀이가 생겼을 때 하루치를 통째로 태우지 않으려는 못이다.
+const AI_PER_NIGHT = 40;
 // 이미 찾아 둔 학교는 다시 안 긁는다. 팀장이 «넣기» 를 안 눌렀으면 명단에 그대로 남아 있기 때문이다.
 const KEEP_DAYS = 7;
 
@@ -88,7 +98,9 @@ export async function runMathScan() {
   rows.forEach((r) => { want[r.school + "__" + r.grade] = 1; live[r.school] = 1; });
   const diffs = (prev.diffs || []).filter((d) => d && want[d.school + "__" + d.grade]);
   const links = (prev.links || []).filter((x) => x && live[x.school]);
-  const fresh0 = diffs.length + links.length;       // 이번에 새로 생긴 것만 알리려고 센다
+  // ⚠ 아침에 두 번 도니까 **이번에 새로 찾은 것**을 따로 들고 있어야 한다.
+  //   지난 판에서 찾은 학교 이름이 두 번째 알림에 섞이면 «또 찾았나» 로 읽힌다.
+  const addedD = [], addedL = [];
 
   // (3) 며칠 안에 이미 찾아 둔 학교는 다시 안 긁는다. 어제와 오늘 사이에 글이 바뀌지 않는다.
   const fresh = prev.at && prev.at > new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
@@ -105,6 +117,7 @@ export async function runMathScan() {
   const ai = { n: AI_PER_NIGHT };
   let next = 0, ran = 0;
 
+  const add = (x) => { links.push(x); addedL.push(x); };
   async function one(school) {
     const mine = bySchool[school];
     const span = mine.filter((v) => v.start && v.end)[0];
@@ -117,10 +130,10 @@ export async function runMathScan() {
     if (!r || r.error) return;
     // ⚠ AI 분당 한도(429)에 걸린 것은 **학교 탓이 아니다.** 글 링크는 남기되,
     //   내일 다시 긁도록 «찾았다» 로 세지 않는다 — 세면 다시 안 보고 링크만 영영 남는다.
-    if (r.busy) { if (r.post) links.push({ school, post: r.post, url: r.url || "", note: "AI가 바빴다", retry: true }); return; }
+    if (r.busy) { if (r.post) add({ school, post: r.post, url: r.url || "", note: "AI가 바빴다", retry: true }); return; }
     // 글은 찾았는데 표로 못 읽었다 — **링크를 남긴다.** 팀장이 열어 붙여넣으면 그 자리에서 읽힌다.
     if (r.post && !(r.rows || []).length) {
-      links.push({ school, post: r.post, url: r.url || "", note: r.note || "" });
+      add({ school, post: r.post, url: r.url || "", note: r.note || "" });
       return;
     }
     if (!(r.rows || []).length) return;              // 아직 안 올렸다. 조용히 지나간다
@@ -131,11 +144,12 @@ export async function runMathScan() {
       hit.forEach((x) => { if (dates.indexOf(x.date) < 0) dates.push(x.date); });
       if (!dates.length) continue;
       if (t.math && dates.length === 1 && t.math === dates[0]) continue;
-      diffs.push({ kind: "math", school: t.school, grade: t.grade, mine: t.math || "",
+      const one2 = { kind: "math", school: t.school, grade: t.grade, mine: t.math || "",
         dates, why: hit.map((x) => x.subject).filter(Boolean).join(" · "),
         by: r.by || "", post: r.post || "", url: r.url || "",
         // 손으로 돌릴 때 저절로 채우는 것과 **같은 조건**이다. 앱이 이 표시만 보고 한꺼번에 넣는다.
-        auto: !t.math && dates.length === 1 && r.by === "표" });
+        auto: !t.math && dates.length === 1 && r.by === "표" };
+      diffs.push(one2); addedD.push(one2);
     }
   }
   const startedAt = Date.now();
@@ -154,13 +168,13 @@ export async function runMathScan() {
   const out = { at: now, term, diffs: diffs.slice(0, 60), links: links.slice(0, 60),
                 looked: ran, left, due: due.length, note: "" };
   const sig = sigOf([out.diffs, out.links]);
-  const found = diffs.length + links.length - fresh0;
+  const found = addedD.length + addedL.length;
 
   // (4) 알린다 — **새로 생긴 것이 있을 때만.** 같은 것을 두 번 알리지 않는다.
   let sent = 0;
   if (found > 0 && lead && sig !== prev.sig) {
-    const who = diffs.slice(0, 3).map((d) => d.school);
-    links.slice(0, 3).forEach((x) => { if (who.indexOf(x.school) < 0) who.push(x.school); });
+    const who = [];
+    addedD.concat(addedL).forEach((x) => { if (who.indexOf(x.school) < 0) who.push(x.school); });
     const body = who.slice(0, 3).join(" · ") + (found > 3 ? " 등 " + found + "건" : "") + " — 눌러서 넣으세요";
     try {
       const r = await sendTo(lead, { title: "수학시험 날짜가 올라왔다", body: body.slice(0, 160),
@@ -171,7 +185,7 @@ export async function runMathScan() {
   out.sig = sig;
   out.sent = sent;
   await patchDoc("dash/mathFound", out, Object.keys(out));
-  return { ok: true, ran, left, found, sent, due: due.length, schools: names.length };
+  return { ok: true, ran, left, found, sent, due: due.length, schools: names.length, aiLeft: ai.n };
 }
 
 export default async function handler(req, res) {

@@ -67,8 +67,10 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
   {
     const a = await run({ watch: WATCH([ROW("마고", "고1", 3)]) });
     // ⚠ 하루 한도를 새벽에 다 쓰면 낮에 팀장이 눌렀을 때 못 읽는다
-    ok("AI 몫을 정해서 넘긴다 (하루 한도를 새벽에 다 쓰지 않는다)",
-       !!a.asked[0].ai && a.asked[0].ai.n > 0 && a.asked[0].ai.n <= 20, JSON.stringify(a.asked[0].ai));
+    // 마왕님: "새벽에 토큰 써도돼 어차피 나는 오후에 주로써" — 때가 된 학교를 다 읽고도 남을 만큼 준다
+    ok("AI 몫을 넉넉히 넘긴다 (때가 된 학교를 다 읽고도 남게)",
+       !!a.asked[0].ai && a.asked[0].ai.n >= 30, JSON.stringify(a.asked[0].ai));
+    ok("그래도 상한은 있다 (되풀이가 하루치를 태우지 않게)", a.asked[0].ai.n <= 60);
     ok("회차 이름을 같이 넘긴다", a.asked[0].kind === "중간");
     ok("날짜는 YYYYMMDD 로 넘긴다", /^\d{8}$/.test(a.asked[0].from), a.asked[0].from);
     ok("학년도 같이 넘긴다", a.asked[0].grades.join() === "고1");
@@ -134,10 +136,19 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
     for (let i = 0; i < 20; i++) { rows.push(ROW("학교" + i, "고1", 3)); answer["학교" + i] = AI("2026-10-01"); }
     const a = await run({ watch: WATCH(rows), answer });
     const read = (a.wrote.diffs || []).length, link = (a.wrote.links || []).length;
-    // ⚠ 몫이 다하면 «못 찾음» 이 아니라 **링크**로 남아야 한다. 팀장이 열어 붙여넣을 수 있다
-    ok("AI 몫이 다하면 나머지는 링크로 남는다", read > 0 && link > 0 && read + link === 20,
-       "읽음 " + read + " · 링크 " + link);
-    ok("하룻밤에 AI 를 스무 번 넘게 부르지 않는다", read <= 15, "읽음 " + read);
+    // 때가 된 학교가 스무 곳쯤인 것이 실제 숫자다(2026-09-12 실측). 이만큼은 몫이 남아 다 읽어야 한다
+    ok("스무 곳이면 AI 몫이 남아 전부 읽는다", read === 20 && link === 0, "읽음 " + read + " · 링크 " + link);
+  }
+  {
+    // 몫을 다 쓰는 상황도 본다 — 링크로 남아야지 «못 찾음» 이 되면 안 된다
+    const AI = () => ({ by: "AI", post: "p", url: "u", rows: [{ grade: 1, subject: "수학", date: "2026-10-01" }] });
+    const rows = [], answer = {};
+    for (let i = 0; i < 50; i++) { rows.push(ROW("학교" + i, "고1", 3)); answer["학교" + i] = AI(); }
+    const a = await run({ watch: WATCH(rows), answer });
+    const read = (a.wrote.diffs || []).length, link = (a.wrote.links || []).length;
+    ok("몫이 다하면 나머지는 링크로 남는다", read > 0 && link > 0, "읽음 " + read + " · 링크 " + link);
+    // ⚠ 몫이 다한 것은 «못 찾음» 이 아니다. 팀장이 열어 붙여넣을 수 있게 링크로 남는다
+    ok("몫이 다해도 한 곳도 안 잃는다", read + link === 50, "읽음 " + read + " · 링크 " + link);
   }
   {
     // 분당 한도에 걸린 것은 학교 탓이 아니다 — 내일 다시 봐야 한다
@@ -183,6 +194,21 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
   {
     const a = await run({ watch: WATCH([ROW("표고", "고1", 3)], ""), answer: { 표고: G("2026-10-01") } });
     ok("받을 사람이 없으면 안 보낸다 (적어는 둔다)", a.pushed.length === 0 && a.wrote.diffs.length === 1);
+  }
+
+  // ---- 아침에 두 번 돈다 ----
+  {
+    const rows = [ROW("먼저고", "고1", 3), ROW("나중고", "고1", 3)];
+    const first = await run({ watch: WATCH(rows), answer: { 먼저고: G("2026-10-01") } });
+    ok("첫 판은 찾은 학교만 알린다", /먼저고/.test(first.pushed[0].payload.body));
+    const second = await run({ watch: WATCH(rows), prev: first.wrote, answer: { 나중고: G("2026-10-02") } });
+    ok("둘째 판은 첫 판에서 본 학교를 안 긁는다", second.asked.length === 1 && second.asked[0].school === "나중고");
+    ok("둘째 판도 알린다 (새로 찾았으므로)", second.pushed.length === 1);
+    // ⚠ 지난 판 학교 이름이 섞이면 «또 찾았나» 로 읽힌다
+    ok("둘째 알림에 첫 판 학교가 안 섞인다",
+       /나중고/.test(second.pushed[0].payload.body) && !/먼저고/.test(second.pushed[0].payload.body),
+       second.pushed[0].payload.body);
+    ok("찾은 것은 둘 다 남는다", second.wrote.diffs.length === 2);
   }
 
   // ---- 문 ----

@@ -378,6 +378,10 @@
   .rp-cls .row { margin-bottom: 6px; }
   .rp-two label { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 220px; font-size: 13px; }
   .rp-two input { flex: 1; }
+  .rp-week { border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 8px; }
+  .rp-week label { display: flex; gap: 6px; align-items: center; font-size: 13px; margin-top: 5px; }
+  .rp-week label b { min-width: 108px; font-weight: 600; }
+  .rp-week input { flex: 1; }
   .rpwrap { overflow-x: auto; }
   table.rp-t { min-width: 680px; font-size: 13px; }
   table.rp-t th { font-size: 12px; color: var(--muted); font-weight: 600; text-align: left; }
@@ -1139,6 +1143,28 @@ function rpRepeatOn(tid, d) {
 // 보고해야 하는 날 = 수업이 있는 날 **또는 매주 하는 일이 걸린 날**.
 // 그 밖의 날에 적는 것은 막지 않지만 «안 냈다» 로 세지는 않는다.
 function rpExpected(tid, d) { return d >= RP_START && (rpClassesOn(tid, d).length > 0 || rpRepeatOn(tid, d)); }
+// ---- 이번 주 우리 반 (2026-09-12) — 한 주에 한 번만 묻는 세 줄 ----
+// 진도·출결·과제는 매일 이미 낸다. 주간으로만 필요한 것은 저조자 · 신경 쓰이는 학생 · 막힌 것 셋이다.
+// ⚠ **«금요일에만» 으로 못 박으면 화·목 반은 영영 안 뜬다.** 반마다 요일이 달라 «주의 끝»도 반마다 다르다.
+//   그래서 그 반이 **그 주(월~일)에 마지막으로 만나는 날** 보고에 붙인다 — 월금 반은 금, 화목 반은 목.
+// ⚠ 쉬는 날은 빼고 센다. 금요일이 추석이면 목요일이 그 주의 끝이다.
+// ⚠ 저조자 기준은 숫자로 안 준다 (2026-09-12 결정) — 고등은 개별 자유도가 있어 담임 판단이고, **없어도 된다.**
+//   대신 빈칸과 «없음» 은 가른다. 비워 두면 안 쓴 것인지 없는 것인지 모른다.
+var RP_WEEK = [
+  { k: "low",   label: "저조자",          ph: "담임이 보기에 걸리는 학생 · 어떻게 할지 한 줄" },
+  { k: "watch", label: "신경 쓰이는 학생", ph: "결석 늘어남 · 과제 멈춤 · 부모 연락" },
+  { k: "stuck", label: "막힌 것",          ph: "강의실 · 시간 · 조교 · 교재" },
+];
+function rpWeekLast(c, d) {
+  var mon = addDays(d, -((parseYmd(d).getDay() + 6) % 7)), last = "";
+  for (var i = 0; i < 7; i++) { var x = addDays(mon, i); if (!holidayOf(x) && rpMeets(c, x)) last = x; }
+  return last;
+}
+function rpWeekEnd(c, d) { return d >= RP_START && rpWeekLast(c, d) === d; }
+function rpWeekHas(w) { return !!w && RP_WEEK.some(function (f) { return String(w[f.k] || "").trim(); }); }
+// 원장님 문서에서는 «없음» 을 안 싣는다 — 여섯 반 × 세 줄이 «없음» 이면 읽을 것이 묻힌다.
+// 팀장 화면에는 그대로 둔다. 거기서는 **확인했다는 표시**가 «없음» 이다.
+function rpWeekSaid(v) { var s = String(v || "").trim(); return s && s !== "없음" && s !== "없슴" ? s : ""; }
 function rpDeadline(d) { var x = parseYmd(addDays(d, 1)); x.setHours(RP_DUE_HOUR, 0, 0, 0); return x.getTime(); }
 function rpGot(tid, d) { var m = (S.reports || {})[tid]; return !!(m && m[d] && m[d].submitted); }
 // 8시가 지났는데 안 낸 날 (최근 14일). 이게 알림이다 — 팀장 화면에는 사람마다, 본인 화면에는 자기 것.
@@ -1176,7 +1202,10 @@ function rpDraft(tid, d, prev) {
   prev = prev || {};
   var classes = rpClassesOn(tid, d).map(function (c) {
     var pc = (prev.classes || []).filter(function (x) { return x.cid === c.id; })[0] || {};
-    return { cid: c.id, name: c.name, progress: pc.progress || "", homework: pc.homework || "",
+    // 이번 주 우리 반 — 그 반의 그 주 마지막 수업일에만. 저장된 것이 있으면 이어 쓴다.
+    var wk = null;
+    if (rpWeekEnd(c, d)) { wk = {}; RP_WEEK.forEach(function (f) { wk[f.k] = (pc.week && pc.week[f.k]) || ""; }); }
+    return { cid: c.id, name: c.name, progress: pc.progress || "", homework: pc.homework || "", week: wk,
       attRead: false,
       students: rpStudentsOn(c, d).map(function (r) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
@@ -1299,6 +1328,12 @@ function rpCheck(rep) {
     var nc = c.students.filter(function (s) { return s.att === "결석" && !s.called; }).length;
     if (nc) warn.push(c.name + " — 결석인데 연락 안 한 학생 " + nc + "명");
     if (!String(c.progress || "").trim()) warn.push(c.name + " — 진도가 비었다");
+    // 이번 주 우리 반 — **막지는 않는다.** 없으면 «없음» 이라고 적어 달라고만 한다.
+    if (c.week) {
+      var blank = RP_WEEK.filter(function (f) { return !String(c.week[f.k] || "").trim(); });
+      if (blank.length) warn.push(c.name + " — 이번 주 마지막 수업이다. " +
+        blank.map(function (f) { return "«" + f.label + "»"; }).join(" · ") + " 이(가) 비었다 (없으면 «없음»)");
+    }
   });
   // 명단 변동은 학생을 골랐으면 끝까지 — «어디로» 가 빈 반 이동은 팀장이 받아도 할 수 있는 게 없다.
   // 학생도 안 고른 줄은 막지 않고 버린다(rpClean).
@@ -1312,7 +1347,10 @@ function rpCheck(rep) {
 function rpClean(rep) {
   return { tid: rep.tid, name: rep.name, date: rep.date,
     classes: rep.classes.map(function (c) {
+      var wk = null;
+      if (c.week) { wk = {}; RP_WEEK.forEach(function (f) { wk[f.k] = String(c.week[f.k] || "").trim(); }); }
       return { cid: c.cid, name: c.name, progress: String(c.progress || "").trim(), homework: String(c.homework || "").trim(),
+        week: wk,
         students: c.students.map(function (s) {
           return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
                    note: String(s.note || "").trim(), consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
@@ -1571,7 +1609,14 @@ function rpDrawMine(box, d) {
             (s.makeup ? '<span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td>' +
           '<td><input type="text" data-rps="' + k + '|note" value="' + esc(s.note) + '" placeholder="' +
             (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '></td></tr>';
-      }).join("") + '</tbody></table></div></div>';
+      }).join("") + '</tbody></table></div>' +
+      // 이번 주 우리 반 — 그 반의 그 주 마지막 수업일에만 뜬다 (월금 반은 금, 화목 반은 목)
+      (c.week ? '<div class="rp-week"><b>이번 주 ' + esc(c.name) + '</b> ' +
+        '<span class="muted" style="font-size:12px">— 이번 주 마지막 수업이다. 세 줄만 적는다. <b>없으면 «없음»</b></span>' +
+        RP_WEEK.map(function (f) {
+          return '<label><b>' + f.label + '</b><input type="text" data-rpw="' + ci + '|' + f.k + '" value="' +
+            esc(c.week[f.k]) + '" placeholder="' + f.ph + '"' + RPK + '></label>';
+        }).join("") + '</div>' : "") + '</div>';
   });
 
   // 명단 변동 — 반 이동 · 퇴원
