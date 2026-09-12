@@ -6022,7 +6022,7 @@ async function runMathPull(term, targets) {
   PULL_JOB.running = true; PULL_JOB.done = 0; PULL_JOB.total = names.length;
   PULL_JOB.now = ""; PULL_JOB.msg = ""; PULL_JOB.diffs = []; PULL_JOB.links = []; PULL_JOB.stop = false;
   jobEmit();
-  var filled = 0, same = 0;
+  var filled = 0, same = 0, busy = 0;
   var noSpan = [], noPost = [], noDate = [], failed = [];
   var inflight = [], next = 0;
   var showNow = function () { PULL_JOB.now = inflight.join(", "); };
@@ -6036,6 +6036,9 @@ async function runMathPull(term, targets) {
     try { r = await fetchMathDates(school, span.start, span.end, mine.map(function (v) { return v.grade; })); }
     catch (e) { failed.push(school + " — " + e.message); return; }
     if (r.error) { failed.push(school + " — " + r.error); return; }
+    // ⚠ AI 분당 한도에 걸린 것은 **학교 탓이 아니다.** 스무 곳을 이름으로 늘어놓으면
+    //   못 찾은 학교처럼 보인다. 몇 곳인지만 세어 «잠시 뒤 다시» 라고 한 줄로 말한다.
+    if (r.busy) { busy++; return; }
     // 글은 찾았는데 글자를 못 꺼낸 것 — **링크는 준다.** 팀장이 열어 붙여넣으면 된다.
     if (r.post && !(r.rows || []).length) {
       PULL_JOB.links.push({ school: school, post: r.post, url: r.url || "", note: r.note || "" });
@@ -6078,6 +6081,7 @@ async function runMathPull(term, targets) {
   if (filled) parts.push("채움 " + filled + "칸");
   if (same) parts.push("이미 맞음 " + same);
   if (PULL_JOB.diffs.length) parts.push("눈으로 고를 것 " + PULL_JOB.diffs.length + "건");
+  if (busy) parts.push("AI가 바빠 못 읽음 " + busy + "곳 — 잠시 뒤 다시 돌리면 된다");
   if (noDate.length) parts.push("글은 찾았는데 날짜를 못 꺼냄: " + noDate.join(", "));
   if (noPost.length) parts.push("시간표 글이 아직 없음: " + noPost.join(", "));
   if (noSpan.length) parts.push("시험 기간이 비어 있음(먼저 채워야 한다): " + noSpan.join(", "));

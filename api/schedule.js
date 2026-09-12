@@ -1202,8 +1202,18 @@ async function mathFromDoc(text, school, from, to, grades) {
     generationConfig: { temperature: 0, maxOutputTokens: 900, responseMimeType: "application/json",
                         thinkingConfig: { thinkingBudget: 0 } },
   };
-  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
+  // ⚠ 429 는 «분당 한도» 다. 학교를 넷씩 나란히 부르면 쉰일곱 곳에서 실제로 걸린다
+  //   (2026-09-12 실측 — 아홉 곳 찾던 것이 다섯 곳으로 줄었고, 원인이 전부 429 였다).
+  //   한 번은 쉬었다 다시 묻는다. 그래도 안 되면 **«못 찾았다» 가 아니라 «바쁘다» 라고 말한다** —
+  //   둘을 뭉뚱그리면 잠시 뒤 다시 돌리면 될 것을 학교 탓으로 돌리게 된다.
+  const call = () => fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let r = await call();
+  if (r.status === 429) {
+    await new Promise((ok) => setTimeout(ok, 6000));
+    r = await call();
+  }
+  if (r.status === 429) return { error: "AI가 지금 바빠요 — 잠시 뒤 다시 돌리면 됩니다", busy: true };
   if (!r.ok) return { error: "AI 호출 실패 " + r.status };
   const j = await r.json().catch(() => null);
   const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
@@ -1249,7 +1259,7 @@ async function mathDates(school, from, to, kind, grades, budget, web) {
     const grid = gridMath(got.pages, from, to);
     if (grid && grid.length) return { school, post: got.title, url: got.url, via: got.via, by: "표", rows: grid };
     const ai = await mathFromDoc(got.text, school, from, to, grades);
-    if (ai.error) return { school, post: got.title, url: got.url, rows: [], note: ai.error };
+    if (ai.error) return { school, post: got.title, url: got.url, rows: [], note: ai.error, busy: !!ai.busy };
     return { school, post: got.title, url: got.url, via: got.via, by: "AI", rows: ai.rows };
   }
   return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };

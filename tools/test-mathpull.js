@@ -45,6 +45,9 @@ const ANSWER = {
   글만학교:   { post: "2학기 중간고사 안내 가정통신문", url: "http://f", rows: [], note: "글자를 못 꺼냈어요" },
   아무것도학교: { rows: [], note: "시험 시간표 글을 못 찾았어요" },
   터지는학교: "throw",
+  // AI 분당 한도 — 학교 탓이 아니다. 잠시 뒤 다시 돌리면 된다
+  바쁜학교: { post: "중간고사 안내", url: "http://h", rows: [], busy: true, note: "AI가 지금 바빠요" },
+  바쁜학교2: { post: "중간고사 안내", url: "http://i", rows: [], busy: true, note: "AI가 지금 바빠요" },
   // 우리 학년(고1)이 아닌 줄만 온 경우 — 열긴 열었는데 쓸 것이 없다
   남의학년학교: { by: "표", post: "3학년 시간표", url: "http://g", rows: [{ grade: 3, subject: "기하", date: "2026-10-05" }] },
 };
@@ -71,6 +74,8 @@ const TARGETS = [
   { school: "아무것도학교", grade: "고1", start: "2026-10-01", end: "2026-10-08", math: "" },
   { school: "터지는학교", grade: "고1", start: "2026-10-01", end: "2026-10-08", math: "" },
   { school: "남의학년학교", grade: "고1", start: "2026-10-01", end: "2026-10-08", math: "" },
+  { school: "바쁜학교", grade: "고1", start: "2026-10-01", end: "2026-10-08", math: "" },
+  { school: "바쁜학교2", grade: "고1", start: "2026-10-01", end: "2026-10-08", math: "" },
   { school: "기간없는학교", grade: "고1", start: "", end: "", math: "" },
 ];
 vm.runInContext(`globalThis.__run = (async function(){
@@ -107,15 +112,19 @@ ctx.__run.then((r) => {
   ok("시간표 글이 아직 없는 학교를 따로 말한다", /시간표 글이 아직 없음: .*아무것도학교/.test(r.msg), r.msg);
   ok("시험 기간이 비면 먼저 채우라고 말한다", /시험 기간이 비어 있음.*기간없는학교/.test(r.msg), r.msg);
   ok("기간이 없으면 서버를 아예 안 부른다", !ctx.CALLS.some((c) => c.school === "기간없는학교"));
+  // ⚠ AI 한도에 걸린 것을 학교 이름으로 늘어놓으면 못 찾은 학교처럼 보인다. 세어서 한 줄로
+  ok("AI 가 바쁜 것은 세어서 한 줄로 말한다", /AI가 바빠 못 읽음 2곳/.test(r.msg), r.msg);
+  ok("AI 가 바쁜 학교는 «못 찾음» 에 안 넣는다", !/못 찾음: .*바쁜학교/.test(r.msg), r.msg);
+  ok("AI 가 바쁜 학교는 링크 목록에도 안 넣는다", !r.links.some((x) => /바쁜/.test(x.school)));
   ok("한 곳이 터져도 나머지는 끝까지 간다", /못 찾음: .*터지는학교/.test(r.msg) && at("표학교").math, r.msg);
   ok("끝나면 무슨 일이 있었는지 한 줄로", /채움 1칸/.test(r.msg) && /이미 맞음 1/.test(r.msg) && /눈으로 고를 것 3건/.test(r.msg), r.msg);
 
   // ---- 나란히 돈다 ----
   // ⚠ 이것이 이번 작업의 요점이다. 한 줄로 세우면 쉰일곱 학교가 스무 분이다
-  ok("학교마다 한 번씩 부른다", ctx.CALLS.length === 9, String(ctx.CALLS.length));
+  ok("학교마다 한 번씩 부른다", ctx.CALLS.length === 11, String(ctx.CALLS.length));
   ok("넷씩 나란히 — 처음 넷이 거의 같이 나간다",
     ctx.CALLS[3].at - ctx.CALLS[0].at < 15, String(ctx.CALLS[3].at - ctx.CALLS[0].at) + "ms");
-  ok("한 줄로 세운 것보다 빠르다 (9곳 × 20ms)", r.ms < 9 * 20, r.ms + "ms");
+  ok("한 줄로 세운 것보다 빠르다 (11곳 × 20ms)", r.ms < 11 * 20, r.ms + "ms");
   ok("그 학교의 시험 기간을 그대로 넘긴다",
     ctx.CALLS[0].from === "2026-10-01" && ctx.CALLS[0].to === "2026-10-08", JSON.stringify(ctx.CALLS[0]));
   ok("그 학교의 학년만 넘긴다", ctx.CALLS[0].grades.join(",") === "고1");
@@ -124,7 +133,7 @@ ctx.__run.then((r) => {
   ok("다 돌면 «도는 중» 이 꺼진다", r.running === false);
   // 서버를 안 부른 학교(시험 기간이 빈 곳)도 **센다.** 진행 막대가 열 곳 중 아홉에서 멈추면
   // 멈춘 것처럼 보인다 — 건너뛴 것도 «본 것» 이다.
-  ok("본 학교를 다 센다 (건너뛴 곳까지)", r.total === 10 && r.done === 10, r.done + "/" + r.total);
+  ok("본 학교를 다 센다 (건너뛴 곳까지)", r.total === 12 && r.done === 12, r.done + "/" + r.total);
 
   console.log(T.join("\n"));
   const bad = T.filter((x) => x.startsWith("FAIL")).length;
