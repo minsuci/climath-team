@@ -344,11 +344,21 @@ ok("이름이 닮은 팀 밖 사람에게 속지 않는다", !shared("g"), "이�
   ok("남이 적은 줄도 못 고친다", canEdit("o1") === false);
   const row = (id) => run("return taskRow(S.tasks.filter(function(t){return t.id==='" + id + "'})[0])");
   // ⚠ data-keep 이 없으면 applyReadOnly 가 체크칸을 잠근다 — 적어 놓고 못 끄는 목록이 된다
-  ok("내 줄의 체크칸은 안 잠긴다", row("m2").indexOf("checkbox\" data-keep") >= 0, row("m2").slice(0, 90));
+  ok("내 줄의 닫기 칸은 안 잠긴다", row("m2").indexOf('cbox" data-keep') >= 0, row("m2").slice(0, 120));
   ok("내 줄에는 지우기가 있다", row("m2").indexOf('class="x"') >= 0);
   ok("못 고치는 줄에는 지우기가 없다", row("s1").indexOf('class="x"') < 0);
-  // 「내 완료」 단추에는 data-keep 이 붙는 게 맞다 — 체크칸에만 없어야 한다
-  ok("못 고치는 줄의 체크칸은 잠긴다(표가 없다)", row("s1").indexOf('checkbox" data-keep') < 0, row("s1").slice(0, 90));
+  // 「내 완료」 단추에는 data-keep 이 붙는 게 맞다 — 닫기 칸에만 없어야 한다
+  ok("못 고치는 줄의 닫기 칸은 못 누른다", row("s1").indexOf('cbox" disabled') >= 0, row("s1").slice(0, 120));
+  // ---- 닫기 칸은 ✕, 내 완료는 ✓ (2026-09-12) ----
+  ok("체크칸이 아니라 ✕ 단추다", row("m2").indexOf("checkbox") < 0 && row("m2").indexOf('class="cbox') >= 0);
+  ok("닫히기 전에는 빈 칸이다", row("m2").indexOf("✕") < 0, row("m2").slice(0, 120));
+  ok("닫으면 ✕ 가 찍힌다",
+    run(`var t = S.tasks.filter(function(x){return x.id==="m2";})[0]; var k = t.status; t.status = "done";
+         var h = taskRow(t); t.status = k; return h;`).indexOf("✕") >= 0);
+  ok("지우기는 ✕ 가 아니다 — 한 줄에 ✕ 가 둘이면 도로 헷갈린다", row("m2").indexOf(">×<") < 0);
+  ok("⚠ 매주 하는 일은 닫기 칸을 못 누른다 (날짜마다 달력에서 체크한다)",
+    run(`var t = S.tasks.filter(function(x){return x.id==="m2";})[0]; t.repeat = { dow:[0,3] };
+         var h = taskRow(t); delete t.repeat; return h;`).indexOf('cbox" disabled') >= 0);
   ok("그래도 «내 완료» 단추는 남는다", row("s1").indexOf("data-mk=") >= 0);
   ok("내가 적은 줄에는 «내 완료» 가 없다 (체크칸으로 끝낸다)",
     run("return myMarkBtn(S.tasks[0])") === "", run("return myMarkBtn(S.tasks[0])"));

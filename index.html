@@ -507,6 +507,13 @@
     border-bottom: 1px solid var(--line); }
   .task:last-child { border-bottom: 0; }
   .task input[type=checkbox] { margin-top: 3px; }
+  /* 줄을 닫는 칸 — 사람별 «내 완료»(✓) 와 한 줄에 같이 서 있어서 체크칸이면 헷갈린다.
+     그래서 **✕ 로 그린다** (2026-09-12 마왕님). ✓ 는 «내가 했다», ✕ 는 «이 줄은 닫혔다». */
+  .task .cbox { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 2px; padding: 0;
+    border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--muted);
+    font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+  .task .cbox.on { background: #eef0f4; color: var(--text); border-color: #c8cdd6; }
+  .task .cbox:disabled { opacity: .45; cursor: default; }
   .task .t { flex: 1; min-width: 0; }
   .task .t.done { text-decoration: line-through; color: var(--muted); }
   .tsep { font-size: 12px; color: var(--muted); margin: 12px 0 4px; padding-top: 6px; border-top: 1px dashed var(--line); }
@@ -673,7 +680,7 @@ var gradeRank = function (g) { var i = GRADES.indexOf(g); return i < 0 ? 99 : i;
 
 // ---------- 상태 ----------
 var S = {
-  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {},   // ro = 읽기만 하는 계정(선생님)
+  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {}, mathFound: null,   // ro = 읽기만 하는 계정(선생님)
   exams: {},      // cid -> { sid -> doc }
   examsDenied: {},  // cid -> true. 앱 규칙이 그 반 참여표 읽기를 막은 것 — «안 냈다»와 다르다
   exCls: "",      // 참여표 반 거르기. 비면 그 학년 전체
@@ -1005,10 +1012,14 @@ async function loadCore() {
     dashDoc("config").get().then(function (d) { S.config = d.exists ? Object.assign({ sources: {} }, d.data()) : { sources: {} }; })
       .catch(function () {}),
     dashDoc("rosterDiff").get().then(function (d) { S.diffDoc = d.exists ? d.data() : null; }).catch(function () {}),
+    // 새벽에 저 혼자 찾아 둔 수학시험 날짜(api/cron.js 가 적는다). 아래 adoptMathFound() 를 볼 것.
+    dashDoc("mathFound").get().then(function (d) { S.mathFound = d.exists ? d.data() : null; }).catch(function () { S.mathFound = null; }),
   ];
   await Promise.all(jobs);
   S.tasks = S.tasks.concat(S.tasksLead || []);   // 팀장에게는 한 목록으로 보인다
   S.tasks = S.tasks.concat(ownTasks());          // 각자 적은 것도 같은 목록에 섞인다
+  adoptMathFound();                              // 새벽에 찾아 둔 것을 손으로 돌린 것과 같은 자리에 놓는다
+  saveMathWatch();                               // 내일 새벽에 볼 학교를 적어 둔다 (팀장일 때만)
 }
 // 자기 할 일 문서들을 한 목록으로 편다.
 // ⚠ **담당은 문서 주인에서 다시 만든다.** 문서 안에 적힌 who 를 믿지 않는다 —
@@ -4310,9 +4321,10 @@ function renderTasks() {
     var t = S.tasks.filter(function (x) { return x.id === id; })[0];
     // 손댈 수 없는 줄에는 아예 안 건다. 걸어 두면 눌렀을 때 조용히 거절만 당하고 화면은 그대로다.
     if (!canEditTask(t)) return;
-    var box = $("input[type=checkbox]", row);
-    if (box) box.onchange = async function (e) {
-      t.status = e.target.checked ? "done" : "open"; t.done = e.target.checked ? TODAY : "";
+    var box = $(".cbox", row);
+    if (box && !box.disabled) box.onclick = async function () {
+      var shut = t.status !== "done";
+      t.status = shut ? "done" : "open"; t.done = shut ? TODAY : "";
       await saveTaskOf(t); renderTasks();
     };
     var rp = $(".rp", row);
@@ -4340,7 +4352,17 @@ function taskRow(t) {
   var stCls = { open: "", doing: "blue", hold: "yellow", done: "green" }[t.status || "open"];
   // 자기가 적은 줄은 읽기 계정도 손댄다 — data-keep 이 없으면 감추기가 체크칸을 잠근다.
   var mine = canEditTask(t);
-  return '<div class="task" data-id="' + esc(t.id) + '"><input type="checkbox"' + (mine ? " data-keep" : "") + (t.status === "done" ? " checked" : "") + '>' +
+  var shut = t.status === "done", rep = !!t.repeat;
+  // ⚠ 매주 하는 일은 이 칸으로 안 닫는다 — 반복은 status 가 아니라 날짜마다(doneOn) 본다.
+  //   눌리게 두면 목록에서는 닫힌 것처럼 보이는데 업무보고에는 그대로 떠서 둘이 어긋난다.
+  var shutOk = mine && !rep;
+  return '<div class="task" data-id="' + esc(t.id) + '">' +
+    '<button class="cbox' + (shut ? " on" : "") + '"' + (shutOk ? " data-keep" : " disabled") + ' title="' +
+    (rep ? "매주 하는 일은 여기서 안 닫는다 — 업무 달력에서 날짜마다 체크한다"
+         : !mine ? "줄을 닫는 것은 팀장이 한다. 내가 한 것은 오른쪽 «내 완료»"
+         : shut ? "닫힌 줄이다. 눌러서 다시 연다"
+         : "이 줄을 닫는다 — 담당 모두에게 완료가 된다. 내가 한 것만 표시하려면 오른쪽 «내 완료»") + '">' +
+    (shut ? "✕" : "") + '</button>' +
     '<div class="t' + (t.status === "done" ? " done" : "") + '">' +
     (S.ro || taskShared(t) || taskDraft(t) ? "" : '<span title="선생님에게는 안 보인다">🔒 </span>') + esc(t.text) +
     '<div class="m">' +
@@ -4358,7 +4380,7 @@ function taskRow(t) {
     (t.src ? ' <span class="muted">· ' + esc(t.src) + '</span>' : "") + '</div>' +
     reportBox(t) + reportsSeen(t) + '</div>' + myMarkBtn(t) +
     (!S.ro && taskDraft(t) ? '<button class="mini" data-pub="' + esc(t.id) + '" title="선생님에게 보낸다">보내기</button>' : "") +
-    (mine ? '<button class="x" data-keep title="지우기">×</button>' : "") + '</div>';
+    (mine ? '<button class="x" data-keep title="이 줄을 지운다 (닫는 것과 다르다)">🗑</button>' : "") + '</div>';
 }
 // ---------- 회의록에서 할 일 끌어오기 (2026-09-07) ----------
 //
@@ -6136,6 +6158,72 @@ function termRows() {
 }
 
 
+// ---------- 새벽에 저 혼자 찾아 둔 것 (2026-09-13) ----------
+//
+// 마왕님 말씀 — "매일 아침6시마다 올라왔는지 돌려보고 잡힌건 나한테 알림으로 보고하는건 어때?"
+//
+// 학교는 시험 **2주쯤 전에** 시간표를 올리는데 그 날이 학교마다 다르다. 사람이 «생각나서» 누르면
+// 늦거나 헛돈다. 시험이 언제인지는 앱이 이미 아니까, 때가 된 학교만 새벽에 보면 된다.
+// `api/cron.js` 가 하루 한 번 돌아 `dash/mathFound` 에 적고, 새로 찾은 것이 있을 때만 알림을 보낸다.
+//
+// ⚠ **서버는 저장을 못 한다.** 학교 일정(appConfig/schoolTerms)은 *수업관리 앱* DB 에 있고
+//   이 서버는 팀 DB 열쇠만 들고 있다. 그래서 찾은 것을 여기로 가져와
+//   **손으로 돌렸을 때와 똑같은 자리**(PULL_JOB)에 놓는다 — 화면과 «넣기» 를 두 벌로 만들지 않는다.
+//   거꾸로 보면 이게 안전장치다. 아무도 안 보는 새벽에 조용히 들어가는 날짜가 없다.
+
+// 몇 시간 전인지. «2026-09-13T21:03:11Z» 은 사람이 읽을 값이 아니다.
+function whenAgo(iso) {
+  var t = Date.parse(iso || ""); if (!t) return "";
+  var m = Math.floor((Date.now() - t) / 60000);
+  if (m < 60) return m + "분 전";
+  if (m < 60 * 24) return Math.floor(m / 60) + "시간 전";
+  return Math.floor(m / 1440) + "일 전";
+}
+
+function adoptMathFound() {
+  var f = S.mathFound;
+  if (!f || S.ro || PULL_JOB.running) return;   // 손으로 돌리는 중이면 그 결과를 덮지 않는다
+  var cur = {};
+  termRows().forEach(function (v) { cur[v.school + "__" + v.grade] = v; });
+  // ⚠ 새벽에 적힌 «지금 값»은 낡았다. 그 뒤에 팀장이 손으로 넣었을 수 있다.
+  //   지금 값으로 다시 맞추고, 이미 채워진 줄은 아예 뺀다 — 다 한 일을 또 하라고 내밀면 안 된다.
+  var diffs = (f.diffs || []).filter(function (d) {
+    var v = cur[d.school + "__" + d.grade];
+    if (!v) return false;                                  // 이 회차에 더는 없는 학교·학년
+    if (v.math && (d.dates || []).length === 1 && v.math === d.dates[0]) return false;
+    d.mine = v.math || "";
+    if (d.mine) d.auto = false;                            // 이미 적힌 것은 절대 저절로 안 덮는다
+    return true;
+  });
+  var links = (f.links || []).filter(function (x) {
+    return Object.keys(cur).some(function (k) { return cur[k].school === x.school && !cur[k].math; });
+  });
+  if (!diffs.length && !links.length) return;
+  PULL_JOB.diffs = diffs; PULL_JOB.links = links;
+  PULL_JOB.msg = "새벽에 찾아 둔 것 · " + whenAgo(f.at);
+  jobEmit();
+}
+
+// 내일 새벽에 볼 학교를 적어 둔다.
+// ⚠ 서버는 학생도 학교 일정도 못 읽는다(수업관리 앱 DB). **이 목록을 넘겨주지 않으면 새벽 찾기는 볼 것이 없다.**
+//   그래서 학교 일정 화면을 안 열어도 되도록 로그인할 때마다 적는다. 안 바뀌었으면 안 쓴다.
+var MATH_WATCH_SIG = "";
+async function saveMathWatch() {
+  if (S.ro || !S.teamOk || !S.term) return;
+  var rows = termRows()
+    .filter(function (v) { return !v.math && v.start && v.end; })
+    .map(function (v) { return { school: v.school, grade: v.grade, start: v.start, end: v.end, math: "" }; })
+    .slice(0, 80);
+  var doc = { by: myTid(), term: S.term, kind: /기말|졸업/.test(S.term) ? "기말" : "중간",
+              rows: rows, at: new Date().toISOString() };
+  var sig = doc.by + "|" + doc.term + "|" + rows.map(function (r) {
+    return r.school + r.grade + r.start + r.end;
+  }).join(",");
+  if (sig === MATH_WATCH_SIG) return;
+  MATH_WATCH_SIG = sig;
+  try { await dashDoc("mathWatch").set(doc); } catch (e) {}
+}
+
 // ---------- 수학시험 날짜 넣기 (2026-09-08) ----------
 //
 // 마왕님 말씀 — "학교일정에서 수학시험 날짜가 아직 등록이 안됐어. 요즘 슬슬 학교 홈페이지 가정통신문이나
@@ -6250,6 +6338,27 @@ function mathPlan(text, school) {
     return out;
   });
 }
+// 새벽 찾기가 도는지 한 줄로 밝힌다.
+//
+// ⚠ **안 도는 것이 조용하면 안 된다.** 버셀에 CRON_SECRET 이 없으면 크론이 401 을 받고 끝나는데,
+//   화면에는 «아무것도 안 올라왔다» 와 똑같이 보인다. 그 둘을 가르는 곳이 여기다.
+function nightlyHtml(noMath) {
+  if (S.ro) return "";
+  // 시험이 3주 안에 오는데 수학 날짜가 빈 줄. 이런 줄이 없으면 새벽 찾기는 원래 할 일이 없다.
+  var due = noMath.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= -3 && n <= 21; });
+  if (!due.length) return "";
+  var f = S.mathFound, t = f && Date.parse(f.at || "");
+  var ok = t && Date.now() - t < 36 * 3600 * 1000;
+  if (ok) {
+    return '<p class="muted" style="font-size:12px;margin:6px 0 0">🌙 <b>새벽 찾기</b> ' + esc(whenAgo(f.at)) +
+      ' · 본 학교 ' + (f.looked || 0) + '곳' + (f.left ? ' · 남은 ' + f.left + '곳은 내일' : "") +
+      ' · 때가 된 학교 ' + due.length + '줄을 매일 아침 혼자 본다.</p>';
+  }
+  return '<p class="banner" style="margin:6px 0 0;font-size:12px">🌙 <b>새벽 찾기가 안 돌고 있다</b>' +
+    (t ? ' (마지막 ' + esc(whenAgo(f.at)) + ')' : ' (한 번도 안 돌았다)') +
+    ' — 버셀 → climath-team → Settings → Environment Variables 에 <b>CRON_SECRET</b> 이 있는지 보라. ' +
+    '없으면 크론이 문 앞에서 되돌아간다.</p>';
+}
 function renderTerms() {
   var el = $("#sec-terms");
   if (!S.term) {
@@ -6271,6 +6380,7 @@ function renderTerms() {
     '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>기간 비어 있음</span></div>' +
     '<div class="' + (noMath.length ? "bad" : "good") + '"><b>' + noMath.length + '</b><span>수학시험 없음</span></div>' +
     '<div><b>' + rows.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= 0 && n <= 14; }).length + '</b><span>2주 안 시작</span></div></div>' +
+    nightlyHtml(noMath) +
     '<div id="tm-pullbox"></div><div id="tm-mathbox"></div>' + jobBoxHtml(job) +
     '<div class="tbl tall"><table class="sheet-t tm"><thead><tr>' +
     '<th style="width:110px">학교</th><th style="width:60px">학년</th><th style="width:46px">학생</th>' +
@@ -6313,6 +6423,7 @@ function renderTerms() {
   };
   if (S.pullOpen) drawPullBox();
   if (S.mathOpen) drawMathBox();
+  saveMathWatch();   // 기간을 채우면 내일 새벽에 볼 학교도 달라진다
   if (!S.jobUnsub) S.jobUnsub = jobSub(function () { var b = $("#sec-terms"); if (b && !$("#sec-terms").hidden) renderTermsJobOnly(); });
 }
 function renderTermsJobOnly() {
@@ -6325,6 +6436,7 @@ function jobBoxHtml(job) {
   if (!job.running && !job.msg && !job.diffs.length && !links.length) return '<div id="tm-jobbox"></div>';
   // 수학 날짜 줄과 시험 기간 줄이 한 상자에 섞일 수 있다. 줄마다 제 모양으로 그린다.
   var mathN = job.diffs.filter(function (d) { return d.kind === "math"; }).length;
+  var autoN = job.diffs.filter(function (d) { return d.auto && !d.mine && (d.dates || []).length === 1; }).length;
   return '<div id="tm-jobbox" class="banner" style="margin:0 0 10px">' +
     (job.running ? '<div><b>찾는 중 ' + job.done + '/' + job.total + '</b>' + (job.now ? ' <span class="muted">' + esc(job.now) + '</span>' : "") +
       ' <button class="mini" id="tm-stop">멈추기</button></div>' : "") +
@@ -6332,6 +6444,9 @@ function jobBoxHtml(job) {
     (job.diffs.length ? '<div style="margin-top:6px"><b>' +
       (mathN === job.diffs.length ? "눈으로 고를 것" : "이미 적어둔 것과 다르다") +
       '</b> — 저절로 넣지 않았다. 맞는 쪽을 고른다.' +
+      // 새벽에 찾아 온 것은 아무도 안 눌렀으니 저절로 채운 칸이 없다. 손으로 돌릴 때 저절로
+      // 채우는 것과 **같은 조건**(표를 재서 읽었고·날이 하나·빈 칸)인 줄만 한 번에 넣는다.
+      (autoN ? ' <button class="mini" id="tm-autoall">표에서 잰 ' + autoN + '칸 한꺼번에 넣기</button>' : "") +
       job.diffs.map(function (d, i) {
         if (d.kind === "math") {
           return '<div style="font-size:13px;margin-top:4px">' + esc(d.school + " " + d.grade) + ' · ' +
@@ -6358,6 +6473,20 @@ function jobBoxHtml(job) {
 function bindJobBox() {
   var st = $("#tm-stop");
   if (st) st.onclick = function () { PULL_JOB.stop = true; jobEmit(); };
+  var aa = $("#tm-autoall");
+  if (aa) aa.onclick = async function () {
+    aa.disabled = true;
+    var take = PULL_JOB.diffs.filter(function (d) { return d.auto && !d.mine && (d.dates || []).length === 1; });
+    var ok = 0, bad = [];
+    for (var i = 0; i < take.length; i++) {
+      var d = take[i];
+      try { await saveSchoolTerm(S.term, d.school, d.grade, { math: d.dates[0] }); ok++; }
+      catch (e) { bad.push(d.school + " " + d.grade); }
+    }
+    PULL_JOB.diffs = PULL_JOB.diffs.filter(function (x) { return take.indexOf(x) < 0 || bad.indexOf(x.school + " " + x.grade) >= 0; });
+    PULL_JOB.msg = "넣음 " + ok + "칸" + (bad.length ? " · 못 넣음 " + bad.join(", ") : "");
+    jobEmit(); keepScrollIn("#sec-terms", renderTerms);
+  };
   $$("#tm-jobbox [data-mtake]").forEach(function (b) {
     b.onclick = async function () {
       var p = b.getAttribute("data-mtake").split(":");

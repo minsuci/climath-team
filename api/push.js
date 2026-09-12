@@ -20,7 +20,8 @@ const SUBJECT = "https://climath-team1.vercel.app";
 const subKey = (endpoint) => crypto.createHash("sha256").update(String(endpoint)).digest("hex").slice(0, 24);
 
 let _keys = null;
-async function vapidKeys() {
+// ⚠ 새벽에 저 혼자 도는 길(api/cron.js)도 이 둘을 쓴다. 두 벌로 만들면 한쪽만 고치는 날이 온다.
+export async function vapidKeys() {
   if (_keys) return _keys;
   const d = await getDoc("secrets/vapid");
   if (d && d.pub && d.d) { _keys = { pub: d.pub, d: d.d, x: d.x, y: d.y }; return _keys; }
@@ -41,7 +42,7 @@ async function subsOf(tid) {
 }
 
 // 한 사람에게 보낸다. 죽은 구독은 그 자리에서 지운다 — 안 그러면 매번 실패를 되풀이한다.
-async function sendTo(tid, payload, keys) {
+export async function sendTo(tid, payload, keys) {
   const list = await subsOf(tid);
   if (!list.length) return { tid, sent: 0, none: true };
   let sent = 0; const dead = []; const errs = [];
