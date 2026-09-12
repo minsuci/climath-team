@@ -54,6 +54,9 @@ const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : 
   ok("http 는 https 로", h("http://yd.sen.hs.kr") === "https://yd.sen.hs.kr/");
   ok("빗금은 하나만", h("https://a.kr///") === "https://a.kr/");
   ok("빈 것은 빈 것", h("") === "" && h(null) === "");
+  // ⚠ 학교 홈페이지는 인증서가 없는 곳이 드물지 않다. https 만 고집하면 살아 있는 곳을 버린다
+  ok("https 가 안 되면 http 로 다시 간다", /tries = \[https, https\.replace\(\/\^https:\/, "http:"\)\]/.test(
+    require("fs").readFileSync(__dirname + "/../api/schedule.js", "utf8")));
 }
 
 // ---- 학년을 읽는다 ----

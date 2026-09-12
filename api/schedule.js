@@ -418,6 +418,25 @@ function homeUrl(h) {
   return withScheme.replace(/^http:/i, "https:").replace(/\/+$/, "") + "/";
 }
 
+// 학교 홈페이지를 연다. https 를 먼저 보되 **안 되면 http 로 다시 간다.**
+// ⚠ 학교 홈페이지는 인증서가 없거나 만료된 곳이 드물지 않다(중산고, 2026-09-12).
+//   https 만 고집하면 멀쩡히 살아 있는 홈페이지를 «못 열었어요» 로 버린다.
+async function openHome(hmpg, web) {
+  const https = homeUrl(hmpg);
+  if (!https) return null;
+  const tries = [https, https.replace(/^https:/, "http:")];
+  for (const url of tries) {
+    if (web.n <= 0) break;
+    web.n--;
+    try {
+      const r = await fetch(url, { headers: UA, redirect: "follow" });
+      if (!r.ok) continue;
+      return await followJump(url, await r.text(), web);
+    } catch (e) { /* 다음 것으로 */ }
+  }
+  return null;
+}
+
 // 껍데기 쪽이 자바스크립트로 진짜 쪽에 넘기는 학교가 있다 (경기도교육청 CMS —
 // hyosung-h.goesn.kr → /hyosung-h/main.do). 그대로 두면 971바이트짜리 빈 쪽만 보고 «게시판 없음» 이 된다.
 async function followJump(url, html, web) {
@@ -1214,13 +1233,9 @@ async function mathDates(school, from, to, kind, grades, budget, web) {
   if (!s) return { school, error: "나이스에서 학교를 못 찾았어요" };
   if (!s.hmpg) return { school, error: "학교 홈페이지 주소를 몰라요" };
   const want = gradeNums(grades);
-  let base = homeUrl(s.hmpg);
-  let html = "";
-  web.n--;
-  try { html = await (await fetch(base, { headers: UA, redirect: "follow" })).text(); }
-  catch (e) { return { school, error: "학교 홈페이지를 못 열었어요 (" + base + ")" }; }
-  // 껍데기 쪽이면 진짜 쪽으로 한 번 더 간다 (경기도교육청 CMS).
-  ({ url: base, html } = await followJump(base, html, web));
+  const home = await openHome(s.hmpg, web);
+  if (!home) return { school, error: "학교 홈페이지를 못 열었어요 (" + homeUrl(s.hmpg) + ")" };
+  const base = home.url, html = home.html;
   const menus = findNoticeMenus(html, base);
   if (!menus.length) return { school, error: "게시판을 못 찾았어요 (학교 홈페이지 모양이 다르다)" };
   for (const url of menus) {
