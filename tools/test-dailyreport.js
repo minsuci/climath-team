@@ -57,6 +57,24 @@ ok("쉬는 날은 수업이 없다 (추석 9/25 금)", cls("T2", "2026-09-25") =
 ok("반이 없는 선생님은 보고할 날이 없다", run(`return rpExpected("T3", "2026-09-14")`) === false);
 ok("기능을 올리기 전 날은 «안 냈다» 로 안 센다", run(`return rpExpected("T2", "2026-09-11")`) === false);
 
+// ---- 매주 하는 일이 걸린 날도 보고하는 날 (2026-09-12) ----
+// 교재 업로드는 수업 없는 일·수에 한다. 줄만 떠서는 아무도 안 쫓는다.
+run(`__tk = S.tasks; S.tasks = [ { id:"up", text:"교재 업로드", who:"전원", repeat:{ dow:[0,3] }, doneOn:{} },
+                                 { id:"hol", text:"금요일 것", who:"전원", repeat:{ dow:[5] }, doneOn:{} } ];`);
+// 한민수(T1)는 화·목 반 하나뿐이라 수·일에 수업이 없다
+ok("수업 없는 수요일도 보고하는 날 (9/16 수)", run(`return rpExpected("T1", "2026-09-16")`) === true);
+ok("일요일도 (9/20 일)", run(`return rpExpected("T1", "2026-09-20")`) === true);
+ok("걸리지 않은 요일은 그대로 (9/19 토)", run(`return rpExpected("T1", "2026-09-19")`) === false);
+ok("그 날 체크해 둔 것은 안 센다", run(`S.tasks[0].doneOn["2026-09-16"] = true; var x = rpExpected("T1","2026-09-16"); delete S.tasks[0].doneOn["2026-09-16"]; return x;`) === false);
+ok("⚠ 쉬는 날은 세지 않는다 (추석 9/25 금 · 금요일 반복)", run(`return rpExpected("T1", "2026-09-25")`) === false);
+ok("반이 없는 선생님에게도 «전원» 은 걸린다", run(`return rpExpected("T3", "2026-09-16")`) === true);
+ok("남 이름으로 걸린 반복은 안 센다",
+  run(`S.tasks[0].who = "이현우"; var x = rpExpected("T3","2026-09-16"); S.tasks[0].who = "전원"; return x;`) === false);
+const upTasks = (tid, d) => run(`return rpTasksFor("${tid}", "${d}").map(function(t){return t.text;}).join(",")`);
+ok("보고의 업무 칸에 그 줄이 뜬다 (수)", upTasks("T1", "2026-09-16") === "교재 업로드", upTasks("T1", "2026-09-16"));
+ok("걸리지 않은 날에는 안 뜬다 (화)", upTasks("T1", "2026-09-15") === "", upTasks("T1", "2026-09-15"));
+run(`S.tasks = __tk;`);
+
 // ---- 8시 알림 ----
 const at = (s) => "new Date(" + JSON.stringify(s) + ")";
 ok("기한은 다음 날 아침 8시", run(`return new Date(rpDeadline("2026-09-14")).toString()`).indexOf("Sep 15 2026 08:00") >= 0);

@@ -1104,8 +1104,23 @@ function rpClassesOn(tid, d) {
   if (!t || holidayOf(d)) return [];
   return S.classes.filter(function (c) { return (t.classIds || []).indexOf(c.id) >= 0 && rpMeets(c, d); });
 }
-// 보고해야 하는 날 = 수업이 있는 날. 수업이 없는 날에 적는 것은 막지 않지만 «안 냈다» 로 세지는 않는다.
-function rpExpected(tid, d) { return d >= RP_START && rpClassesOn(tid, d).length > 0; }
+// 그 날 걸린 **매주 하는 일**이 있나 (2026-09-12).
+// 교재 업로드처럼 수업 없는 날(일·수)에 하는 일이 있다. 보고에 줄은 떠도 그 날이 «보고하는 날»이
+// 아니면 아무도 안 쫓는다 — 그래서 반복 할 일이 걸린 날도 보고하는 날로 센다.
+// ⚠ 그 날 이미 체크한 것은 안 센다. 체크하면 줄이 사라지는데 날만 남으면 빈 보고를 내라는 말이 된다.
+// ⚠ 쉬는 날은 세지 않는다 — 수업과 같은 규칙이다.
+function rpRepeatOn(tid, d) {
+  if (holidayOf(d)) return false;
+  var name = teacherName(tid), dow = parseYmd(d).getDay();
+  return (S.tasks || []).some(function (t) {
+    if (!t.repeat || !t.repeat.dow || t.repeat.dow.indexOf(dow) < 0) return false;
+    if (t.doneOn && t.doneOn[d]) return false;
+    return taskIsFor(t, name);
+  });
+}
+// 보고해야 하는 날 = 수업이 있는 날 **또는 매주 하는 일이 걸린 날**.
+// 그 밖의 날에 적는 것은 막지 않지만 «안 냈다» 로 세지는 않는다.
+function rpExpected(tid, d) { return d >= RP_START && (rpClassesOn(tid, d).length > 0 || rpRepeatOn(tid, d)); }
 function rpDeadline(d) { var x = parseYmd(addDays(d, 1)); x.setHours(RP_DUE_HOUR, 0, 0, 0); return x.getTime(); }
 function rpGot(tid, d) { var m = (S.reports || {})[tid]; return !!(m && m[d] && m[d].submitted); }
 // 8시가 지났는데 안 낸 날 (최근 14일). 이게 알림이다 — 팀장 화면에는 사람마다, 본인 화면에는 자기 것.
@@ -1512,7 +1527,8 @@ function rpDrawMine(box, d) {
   h += '<h3 class="rp-h">수업</h3>';
   if (!rep.classes.length) h += '<p class="muted" style="font-size:13px">' +
     (holidayOf(d) ? "쉬는 날이다 (" + esc(holidayOf(d)) + ")." : "이 날은 들어간 수업이 없다.") +
-    ' 업무만 적어도 된다. 안 내도 «안 냈다» 로 세지 않는다.</p>';
+    (rpExpected(me, d) ? ' 아래 <b>업무</b>에 이 날 하는 일이 있어 <b>내는 날</b>이다.'
+                       : ' 업무만 적어도 된다. 안 내도 «안 냈다» 로 세지 않는다.') + '</p>';
   rep.classes.forEach(function (c, ci) {
     var come = c.students.filter(function (s) { return s.auto === "출석"; }).length;
     h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b>' +
