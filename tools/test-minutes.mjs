@@ -281,6 +281,34 @@ ok("안 닫힌 태그가 없다", (RH.match(/<p>/g) || []).length === (RH.match(
   (RH.match(/<p>/g) || []).length + " / " + (RH.match(/<\/p>/g) || []).length);
 ok("날 태그가 새지 않았다", RH.indexOf("<script") < 0);
 
+
+// ---- 찾기가 여전히 제대로 거르는가 (2026-09-12) ----
+//
+// 한글이 깨지는 것을 고치며 renderMinutes 를 머리줄과 아래 상자로 갈랐다.
+// **가르면서 거르기가 망가지지 않았는지**를 본다 — 조합만 살리고 찾기가 죽으면 더 나쁘다.
+{
+  const set = (k, v) => { ctx.__v = v; vm.runInContext("S." + k + " = __v;", ctx); };
+  const body = () => vm.runInContext("minutesBodyHtml()", ctx);
+  set("minutes", [
+    { id: "a", date: "2026-09-03", title: "고등부 팀회의", kind: "팀", attend: "한민수", md: "직보 날짜를 정했다", open: true },
+    { id: "b", date: "2026-08-31", title: "간부 전체회의", kind: "간부", attend: "원장", md: "설명회 준비", open: false },
+  ]);
+  set("minPick", "a"); set("minName", ""); set("ro", false); set("minQ", "");
+  ok("[찾기] 안 적으면 다 보인다", (body().match(/data-mn=/g) || []).length === 2);
+  set("minQ", "간부");
+  ok("[찾기] 종류로 걸린다", (body().match(/data-mn="b"/g) || []).length === 1 &&
+     body().indexOf('data-mn="a"') < 0);
+  set("minQ", "설명회");
+  // ⚠ 제목만이 아니라 **본문까지** 찾는다. 칸 이름이 「본문까지 찾기」다
+  ok("[찾기] 본문으로도 걸린다", body().indexOf('data-mn="b"') > 0);
+  set("minQ", "없는낱말");
+  ok("[찾기] 없으면 없다고 적는다", body().indexOf("찾는 것이 없다") > 0);
+  set("minQ", "팀회의");
+  // ⚠ 고른 회의록이 걸러져 사라지면 남은 것으로 옮겨 가야 한다. 안 그러면 본문이 빈다
+  ok("[찾기] 고른 것이 걸러지면 남은 것으로 옮겨 간다",
+     vm.runInContext("(minutesBodyHtml(), S.minPick)", ctx) === "a");
+}
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
