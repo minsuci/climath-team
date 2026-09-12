@@ -1267,10 +1267,13 @@ async function mathFromDoc(text, school, from, to, grades) {
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   let r = await call();
   if (r.status === 429) {
+    // ⚠ 하루 한도면 육 초 쉬는 것이 헛수고다. 학교마다 육 초씩 태우면 예순 곳이면 육 분이다.
+    const q = await quota429(r.clone());
+    if (q.perDay) return q;
     await new Promise((ok) => setTimeout(ok, 6000));
     r = await call();
   }
-  if (r.status === 429) return { error: "AI가 지금 바빠요 — 잠시 뒤 다시 돌리면 됩니다", busy: true };
+  if (r.status === 429) return await quota429(r);
   if (!r.ok) return { error: "AI 호출 실패 " + r.status };
   const j = await r.json().catch(() => null);
   const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
@@ -1351,8 +1354,13 @@ async function mathFromImages(school, urls, from, to, grades, web) {
   const call = () => fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   let r = await call();
-  if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 6000)); r = await call(); }
-  if (r.status === 429) return { error: "AI가 지금 바빠요 — 잠시 뒤 다시 돌리면 됩니다", busy: true, again: true };
+  if (r.status === 429) {
+    const q = await quota429(r.clone());
+    if (q.perDay) return q;
+    await new Promise((ok) => setTimeout(ok, 6000));
+    r = await call();
+  }
+  if (r.status === 429) return await quota429(r);
   if (!r.ok) return { error: "AI 호출 실패 " + r.status };
   const j = await r.json().catch(() => null);
   const out = ((((j || {}).candidates || [])[0] || {}).content || {}).parts || [];
@@ -1369,6 +1377,28 @@ async function mathFromImages(school, urls, from, to, grades, web) {
     return y >= from && y <= to;
   });
   return { rows };
+}
+// 429 를 «분당» 과 «하루» 로 가른다.
+//
+// ⚠ 2026-09-12 — 「AI가 지금 바빠요, 잠시 뒤 다시 돌리면 됩니다」라고만 말하고 있었다.
+//   **하루 한도면 그건 거짓말이다.** 잠시 뒤 다시 돌려도 내일까지 안 된다.
+//   구글은 429 본문에 어느 한도인지(quotaId)와 얼마나 기다리라는지(retryDelay)를 같이 준다.
+//   그걸 읽어 사실대로 말한다 — 기다릴 일인지 포기할 일인지는 사람이 정할 몫이다.
+async function quota429(r) {
+  let j = null;
+  try { j = await r.json(); } catch (e) {}
+  const det = (((j || {}).error || {}).details) || [];
+  const vio = (det.filter((d) => (d.violations || []).length)[0] || {}).violations || [];
+  const id = String((vio[0] || {}).quotaId || (vio[0] || {}).quotaMetric || "");
+  const delay = String((det.filter((d) => d.retryDelay)[0] || {}).retryDelay || "");
+  const perDay = /PerDay|Daily/i.test(id);
+  return {
+    error: perDay ? "AI 하루 한도를 다 썼어요 — 한도가 풀리면 저절로 다시 봅니다"
+                  : "AI가 지금 바빠요 — 잠시 뒤 다시 돌리면 됩니다",
+    busy: true, again: true, perDay,
+    // 사람이 뒤져볼 수 있게 원문 표시는 남긴다. 화면에는 안 쓴다.
+    quota: id.slice(0, 80), retry: delay.slice(0, 20),
+  };
 }
 // AI 가 지어낸 날짜를 거른다. 원문에 그 «월/일» 이 정말 있고, 기간 안이어야 한다.
 function verifyMath(x, text, from, to) {
@@ -1414,7 +1444,7 @@ export async function mathDates(school, from, to, kind, grades, budget, web, ai)
       if (ai) ai.n--;
       const pic = await mathFromImages(school, got.imgs, from, to, grades, web);
       if (pic.error) return { school, post: got.title, url: link, rows: [], note: pic.error,
-                              busy: !!pic.busy, again: !!pic.again };
+                              busy: !!pic.busy, again: !!pic.again, quota: pic.quota, retry: pic.retry };
       if (pic.rows.length) return { school, post: got.title, url: link,
                                     via: got.shot ? "첨부를 그림으로" : "본문 그림",
                                     by: "AI그림", rows: pic.rows };
@@ -1430,7 +1460,8 @@ export async function mathDates(school, from, to, kind, grades, budget, web, ai)
     if (ai) ai.n--;
     const got2 = await mathFromDoc(got.text, school, from, to, grades);
     if (got2.error) return { school, post: got.title, url: link, rows: [], note: got2.error,
-                             busy: !!got2.busy, again: !!(got2.busy || got2.again) };
+                             busy: !!got2.busy, again: !!(got2.busy || got2.again),
+                             quota: got2.quota, retry: got2.retry };
     return { school, post: got.title, url: link, via: got.via, by: "AI", rows: got2.rows };
   }
   return { school, rows: [], note: "시험 시간표 글을 못 찾았어요" };
