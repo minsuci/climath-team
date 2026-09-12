@@ -227,6 +227,21 @@ const G = (d) => ({ by: "표", post: "1학년 중간고사 시간표", url: "htt
        "링크 " + (p3.wrote.links || []).length + " · 날짜 " + p3.wrote.diffs.length);
   }
 
+  // ---- 어느 프로젝트가 돌렸나 ----
+  // ⚠ 이 저장소에 버셀 프로젝트가 셋 물려 있다(2026-09-12에 알았다). 두 곳에 열쇠를 넣으면 두 번 긁는다
+  {
+    const rows = [ROW("가고", "고1", 3)];
+    const A = { CRON_SECRET: "x", VERCEL_PROJECT_PRODUCTION_URL: "climath-team1.vercel.app" };
+    const B = { CRON_SECRET: "x", VERCEL_PROJECT_PRODUCTION_URL: "climath-team-zu5m.vercel.app" };
+    const p1 = await run({ watch: WATCH(rows), env: A, answer: { 가고: G("2026-10-01") } });
+    ok("어느 곳이 돌렸는지 적어 둔다", p1.wrote.host === "climath-team1.vercel.app", p1.wrote.host);
+    ok("한 곳만 돌면 조용하다", p1.wrote.dup === false);
+    const p2 = await run({ watch: WATCH([ROW("나고", "고1", 3)]), prev: p1.wrote, env: B });
+    ok("다른 곳이 돌면 표시가 붙는다", p2.wrote.dup === true);
+    const p3 = await run({ watch: WATCH([ROW("다고", "고1", 3)]), prev: p1.wrote, env: A });
+    ok("같은 곳이 다시 돌면 표시가 안 붙는다", p3.wrote.dup === false);
+  }
+
   // ---- 문 ----
   {
     const mk = (env, headers, claims) => {

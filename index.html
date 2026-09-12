@@ -6421,10 +6421,18 @@ function nightlyHtml(noMath) {
   if (!due.length) return "";
   var f = S.mathFound, t = f && Date.parse(f.at || "");
   var ok = t && Date.now() - t < 36 * 3600 * 1000;
+  // ⚠ 이 저장소에 버셀 프로젝트가 셋 물려 있다. 두 곳에 CRON_SECRET 을 넣으면 아침마다 두 번 긁는다 —
+  //   AI 하루치를 두 배로 태우는데 **화면에서는 티가 안 난다.** 서버가 어느 곳이 돌았는지 적어 주므로 여기서 짚는다.
+  if (f && f.dup) {
+    return '<p class="banner" style="margin:6px 0 0;font-size:12px">🌙 <b>새벽 찾기를 두 곳이 돌리고 있다</b> — ' +
+      esc(f.host || "") + ' 외. 버셀 프로젝트 하나에만 <b>CRON_SECRET</b> 을 두어야 한다. ' +
+      '둘이 돌면 학교를 두 번 긁고 AI 하루치를 두 배로 쓴다.</p>';
+  }
   if (ok) {
     return '<p class="muted" style="font-size:12px;margin:6px 0 0">🌙 <b>새벽 찾기</b> ' + esc(whenAgo(f.at)) +
       ' · 본 학교 ' + (f.looked || 0) + '곳' + (f.left ? ' · 남은 ' + f.left + '곳은 내일' : "") +
-      ' · 때가 된 학교 ' + due.length + '줄을 매일 아침 혼자 본다.</p>';
+      ' · 때가 된 학교 ' + due.length + '줄을 매일 아침 혼자 본다.' +
+      (f.host ? ' <span style="opacity:.7">(' + esc(f.host) + ')</span>' : "") + '</p>';
   }
   return '<p class="banner" style="margin:6px 0 0;font-size:12px">🌙 <b>새벽 찾기가 안 돌고 있다</b>' +
     (t ? ' (마지막 ' + esc(whenAgo(f.at)) + ')' : ' (한 번도 안 돌았다)') +

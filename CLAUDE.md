@@ -548,6 +548,31 @@ node tools/test-roster.js
 `dash/mathFound.at` 이 36시간보다 오래면 «새벽 찾기가 안 돌고 있다» 고 `CRON_SECRET` 까지 짚어 말한다.
 때가 된 학교가 하나도 없으면 아무 말도 안 한다.
 
+#### ⚠ 이 저장소에 버셀 프로젝트가 **셋** 물려 있다 (2026-09-12에 알았다)
+
+깃허브 배포 기록(`api.github.com/repos/minsuci/climath-team/deployments`)이 말해 줬다.
+**2026-09-04부터 셋 다 118번씩, 밀 때마다 같이 배포돼 왔다.**
+
+| 프로젝트 | 지금 | |
+|---|---|---|
+| `climath-team1` | **쓰는 것.** 열쇠 있음 | `api/push.js` 의 `SUBJECT` 이고 폰 홈 화면 아이콘이 이 주소다 |
+| `climath-team-zu5m` | 살아 있는 **쌍둥이.** 열쇠 있음 | 같은 Firestore 를 쓴다. 로그인도 된다 |
+| `climath-team` | **껍데기.** 열쇠 없음 | `TEAM_SERVICE_ACCOUNT` 가 없어 로그인이 안 된다 |
+
+> [!danger] 이름이 제일 그럴듯한 것이 함정이다
+> `CRON_SECRET` 을 **`climath-team`** 에 넣으면 크론은 통과하는데 Firestore 를 못 열어
+> 날마다 조용히 500 이 난다. 화면에는 «새벽 찾기가 안 돌고 있다» 로만 보여서,
+> 넣어 뒀다고 믿는 채로 영영 안 돈다. **`climath-team1` 에만 넣는다.**
+
+두 곳에 넣으면 아침마다 **두 번 긁는다.** 줄이 쌓이지는 않지만(`redo`·`keyD`) **AI 하루치를 두 배로 태운다.**
+그래서 서버가 `dash/mathFound.host` 에 **어느 곳이 돌렸는지 적고**, 어제와 다르면 `dup` 을 세워
+학교 일정 화면이 «두 곳이 돌리고 있다» 고 시끄럽게 말한다.
+
+지우는 것은 나중 일이다. 급한 것은 **깃 연결 끊기**(Settings → Git → Disconnect) —
+빌드는 멈추고 지금 올라간 판은 그대로 서 있어서 아무것도 안 깨진다.
+`climath-team-zu5m` 을 지우기 전에 **폰 알림이 그 주소에 매여 있지 않은지** 먼저 확인할 것
+(서비스 워커와 푸시 구독은 **주소마다 따로**다).
+
 > [!warning] `CRON_SECRET` 을 꼭 넣어야 한다
 > 없으면 `/api/cron` 이 **아무나 부를 수 있는 주소**가 된다. 남의 학교 홈페이지를 스무 곳씩 긁는 길이다.
 > 버셀 → climath-team → Settings → Environment Variables.
@@ -558,7 +583,7 @@ node tools/test-roster.js
 `{"ran":20,"left":0,"found":14,"sent":1}` — 볼 목록 48줄 중 **때가 된 20곳**을 45초 안에 다 봤다.
 표로 읽힌 것은 건대부고·언남고 둘, 나머지 열둘은 글만 찾았다. 이 숫자가 위의 판단을 뒤집었다.
 
-- 시험 `tools/test-cron.js` 77건.
+- 시험 `tools/test-cron.js` 81건.
 
 ### 수학시험 날짜 넣기 — 가정통신문을 붙여넣는다 (2026-09-08)
 

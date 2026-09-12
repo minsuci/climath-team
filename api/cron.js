@@ -178,8 +178,14 @@ export async function runMathScan() {
   await Promise.all(Array.from({ length: Math.min(CONC, names.length) }, worker));
 
   const left = names.length - ran;
+  // ⚠ **어느 프로젝트가 돌렸는지 적어 둔다.** 이 저장소에 버셀 프로젝트가 셋 물려 있다
+  //   (climath-team · climath-team-zu5m · climath-team1 — 2026-09-04부터 셋 다 118번씩 배포됐다).
+  //   두 곳에 CRON_SECRET 을 넣으면 **아침마다 두 번 긁는다.** 줄이 쌓이지는 않지만 AI 하루치를 두 배로 태운다.
+  //   화면에서 그게 안 보이면 영영 모른다. 어제와 다른 곳이 돌았으면 앱이 시끄럽게 말한다.
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || "";
   const out = { at: now, term, diffs: diffs.slice(0, 60), links: links.slice(0, 60),
-                looked: ran, left, due: due.length, note: "" };
+                looked: ran, left, due: due.length, note: "", host,
+                dup: !!(prev.host && host && prev.host !== host) };
   const sig = sigOf([out.diffs, out.links]);
   const found = addedD.length + addedL.length;
 
@@ -198,7 +204,7 @@ export async function runMathScan() {
   out.sig = sig;
   out.sent = sent;
   await patchDoc("dash/mathFound", out, Object.keys(out));
-  return { ok: true, ran, left, found, sent, due: due.length, schools: names.length, aiLeft: ai.n };
+  return { ok: true, ran, left, found, sent, due: due.length, schools: names.length, aiLeft: ai.n, host };
 }
 
 export default async function handler(req, res) {
