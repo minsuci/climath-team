@@ -456,6 +456,16 @@
   table.cgrid .nm i { font-style: normal; opacity: .65; margin-left: 2px; font-size: 11px; }
   table.cgrid .sch { margin-left: 4px; font-size: 10px; color: var(--muted); }
   table.cgrid .sch.red { color: var(--red); font-weight: 700; }
+  /* 개진반 — 열이 요일, 줄이 반 (9/15) */
+  table.cgrid.ind thead th.wk { min-width: 92px; }
+  table.cgrid.ind thead th.rn { text-align: left; }
+  table.cgrid.ind th.rn.ik { text-align: left; min-width: 118px; color: var(--text); vertical-align: top; padding: 5px 8px; }
+  table.cgrid.ind th.rn.ik.mine { background: #dce6f8; box-shadow: inset 3px 0 0 var(--navy); }
+  table.cgrid.ind td.wk { vertical-align: top; padding: 4px 5px; }
+  table.cgrid.ind td.wk.none { background: #fdf1f1; }
+  table.cgrid.ind thead th.none .cn { color: var(--red); }
+  table.cgrid.ind .ii { line-height: 1.7; }
+  table.cgrid.ind .ii.dim { opacity: .22; }
 
   /* 명단 편집 시트 */
   /* 기본 table 은 width:100% 라 화면이 좁으면 칸을 줄여 글씨를 자른다.
@@ -5308,8 +5318,10 @@ function classGridHtml() {
   // 어느 반에도 없는 학생은 맨 아래 한 열로 모은다. 안 그러면 배치표에서 통째로 사라진다.
   var loose = S.students.filter(function (x) { return !assignedNames(x, cols); });
   var byG = {}, groups = [];
-  cols.forEach(function (x) { var g = classGroup(x.c); (byG[g] = byG[g] || []).push(x); });
+  // 개진반은 이름으로 안 가르고 한데 모아 요일 표로 그린다 (9/15). 예전엔 «그 밖» 에 정규반처럼 섞였다
+  cols.forEach(function (x) { var g = isIndividual(x.c) ? "개진반" : classGroup(x.c); (byG[g] = byG[g] || []).push(x); });
   GRID_GROUPS.forEach(function (p) { if (byG[p[0]]) groups.push({ name: p[0], grade: p[2], cols: byG[p[0]] }); });
+  if (byG["개진반"]) groups.push({ name: "개진반", grade: "", cols: byG["개진반"], indiv: true });
   if (byG[""]) groups.push({ name: "그 밖", grade: "", cols: byG[""] });
   if (loose.length) groups.push({ name: "반 미배정", grade: "", cols: [{ c: { id: "_loose", name: "반 미배정", classDays: [] }, studs: loose.map(looseRow), t: "", mine: false, loose: true }] });
   var one = groups.length === 1;
@@ -5318,11 +5330,11 @@ function classGridHtml() {
     var head = one ? "" : '<h3 class="gh">' +
       (g.grade ? '<span class="pill ' + gradeCls(g.grade) + '">' + esc(g.name) + '</span>' : '<span class="pill' + (g.name === "반 미배정" ? " red" : "") + '">' + esc(g.name) + '</span>') +
       '<span class="muted">' + (g.name === "반 미배정" ? "" : g.cols.length + "반 · ") + n + '명</span></h3>';
-    return head + classGridTable(g.cols);
+    return head + (g.indiv ? indivGridTable(g.cols) : classGridTable(g.cols));
   }).join("") +
     '<p class="muted" style="font-size:12px;margin:6px 0 0">이름 옆 숫자는 학년(중3=9 · 고1=10 · 고2=11 · 고3=12). ' +
     '인원이 <span class="orange">주황</span>이면 5명 이하, <span class="red">빨강</span>이면 0명이다. 파란 머리는 내가 담당인 반.<br>' +
-    '<b>개진</b> 이라 적힌 반은 개별진도반이라 학생마다 오는 요일이 다르다 — 이름 아래가 학교가 아니라 <b>등원 요일</b>이다.</p>';
+    '<b>개진반</b> 표는 열이 요일이다 — 학생이 오는 요일 칸마다 이름이 뜬다. 요일이 빈 학생은 맨 끝 <span class="red">요일 없음</span> 칸에 모인다.</p>';
 }
 function classGridTable(cols) {
   var maxN = cols.reduce(function (m, x) { return Math.max(m, x.studs.length); }, 0);
@@ -5352,6 +5364,49 @@ function classGridTable(cols) {
     }).join("") + '</tr>';
   }
   return '<div class="gridwrap"><table class="cgrid"><thead><tr><th class="rn">#</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+// ---- 개진반 요일 표 (2026-09-15) ----
+//
+// 마왕님 — "개진반 안에서도 요일별로 정렬해보자. 월화수목금토일을 열로 두고 그 아래 학생을 둬봐".
+// 열이 요일(월→일), 줄이 개진반 하나, 칸 안에 **그 요일에 오는 학생**. 요일이 여럿인 학생은 칸마다 뜬다 —
+// «토요일에 누가 오나» 를 한 칸으로 보는 게 목적이라 겹쳐 뜨는 게 맞다. 선생님 칸의 인원은 사람 수(겹침 없이).
+// 요일이 빈 학생은 **맨 끝 «요일 없음» 칸**에 빨갛게 — 그런 학생이 하나라도 있을 때만 칸이 생긴다.
+// 그 학생은 어느 날 업무보고에도 안 뜬다(indivDays 참고). 요일 칸 표에서 조용히 사라지면 안 된다.
+var INDIV_WEEK = [1, 2, 3, 4, 5, 6, 0];
+function indivOnDay(x, k) {
+  return x.studs.filter(function (r) { var d = indivDays(r); return k === "none" ? !d.length : d.indexOf(k) >= 0; })
+    .sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || ""), "ko"); });
+}
+function indivGridTable(cols) {
+  var hasNone = cols.some(function (x) { return indivOnDay(x, "none").length; });
+  var keys = INDIV_WEEK.concat(hasNone ? ["none"] : []);
+  var head = '<th class="rn">반</th>' + keys.map(function (k) {
+    var n = cols.reduce(function (m, x) { return m + indivOnDay(x, k).length; }, 0);
+    return '<th class="wk' + (k === "none" ? " none" : "") + '" data-wk="' + k + '"><div class="cn">' + (k === "none" ? "요일 없음" : DAY_NAMES[k]) + '</div>' +
+      '<div class="cm"><span class="cnt' + (k === "none" ? " red" : "") + '">' + n + '</span>명</div></th>';
+  }).join("");
+  var body = cols.map(function (x) {
+    return '<tr><th class="rn ik' + (x.mine ? " mine" : "") + '"><div class="cn">' + esc(x.c.name) + '</div>' +
+      '<div class="cm">' + (x.t ? esc(x.t) : '<span class="red">담당 없음</span>') + ' · <span class="cnt">' + x.studs.length + '</span>명</div></th>' +
+      keys.map(function (k) {
+        var list = indivOnDay(x, k);
+        return '<td class="wk' + (k === "none" && list.length ? " none" : "") + '" data-wk="' + k + '">' +
+          list.map(function (r) { return indivGridName(x, r); }).join("") + '</td>';
+      }).join("") + '</tr>';
+  }).join("");
+  return '<div class="gridwrap"><table class="cgrid ind"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+// 칸 안의 이름 하나 — 정규반 칸과 같은 모양(학년 색·숫자·학교·눌러서 고치기·검색 흐리기)
+function indivGridName(x, r) {
+  var g = gradeOf(r), sch = schoolOf(r);
+  var hit = stHit(r.name, g, sch, x.t, x.c.name);
+  var ghost = !!(r.pid && !S.byPid[r.pid]);
+  return '<div class="ii' + (hit ? "" : " dim") + '" title="' +
+    esc(ghost ? r.name + " — 사람 정보가 지워졌다. 명단 편집에서 반 명단에서 빼면 된다"
+              : [r.name, g, sch, dayLabel(indivDays(r)) || "요일 없음"].filter(Boolean).join(" · ") + " — 눌러서 고치기") + '">' +
+    '<span class="nm ' + (ghost ? "ghost" : gradeCls(g)) + '"' + (r.pid && !ghost ? ' data-open="' + esc(r.pid) + '"' : "") + '>' +
+    esc(r.name) + (ghost ? "" : (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "")) + '</span>' +
+    (ghost || !sch ? "" : '<span class="sch">' + esc(sch) + '</span>') + '</div>';
 }
 // 이름 아래 한 줄. 정규반은 학교, 개진반은 **등원 요일**이다 —
 // 개진반에서 «무슨 요일에 오나»는 학교보다 훨씬 자주 찾는 것이고, 비어 있으면 사고다.
