@@ -1193,6 +1193,7 @@ function renderBanner() {
 //   · 수업 준비 여부는 안 넣는다 (교재를 받고 있다)
 //   · 테스트 점수 — 처음엔 안 넣기로 했다가 **9/14 마왕님이 넣었다.** «나중에 점수 보고 퇴원위험을 판단하게».
 //     맞은 수/총 문항이 아니라 **점수 한 칸**이다(마왕님). 빈 칸은 «안 봤다» 이지 0점이 아니다 — 0 으로 적으면 위험 신호가 거짓으로 뜬다.
+//     **클래스앱에 학생이 낸 점수가 기본값**이다(9/14 마왕님 «출결이 넘어오는 것처럼»). 앱 값은 autoScore 로 따로 남긴다(출결의 auto 와 같다).
 //   · 마감 시각은 없다. **다음 날 아침 8시까지 안 내면 알림** — 팀장에게도, 본인에게도
 //   · 받는 사람은 원장님. 부원장님은 중등관이라 안 거친다
 //   · **선생님끼리는 서로 못 본다.** 자기 것과 팀장만 — 화면이 아니라 **규칙**이 막는다
@@ -1200,7 +1201,7 @@ function renderBanner() {
 //   dailyReports/{tid}/days/{date}
 //     { tid, name, date, submitted(처음 낸 시각), updated,
 //       classes: [{ cid, name, progress, homework,
-//                   students: [{ sid, name, att, auto, called, score, note, consult, makeup }] }],
+//                   students: [{ sid, name, att, auto, called, score, autoScore, note, consult, makeup }] }],
 //       tasks: [{ id, text, state, note }], extra: [{ kind, text }], toLead }
 //   사람마다 칸 하나(marks·myTasks 와 같은 모양). 문서 이름이 곧 누구인지라 규칙이 남의 것을 막는다.
 var RP_ATT = ["출석", "결석", "지각", "조퇴"];
@@ -1341,7 +1342,7 @@ function rpDraft(tid, d, prev) {
       students: rpStudentsOn(c, d).map(function (r) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
         return { sid: r.id, pid: r.pid || "", name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
-          called: ps ? !!ps.called : false, score: ps && ps.score != null ? ps.score : "", appScore: null,
+          called: ps ? !!ps.called : false, score: ps && ps.score != null ? ps.score : "", autoScore: ps && ps.autoScore != null ? ps.autoScore : null,
           note: ps ? (ps.note || "") : "",
           consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
       }) };
@@ -1437,6 +1438,7 @@ function rpApplyApp(rep, app) {
   rep.classes.forEach(function (c) {
     var ad = (app && app[c.cid]) || {};
     c.attRead = !!ad.att;
+    c.scoreRead = !!ad.score;
     c.students.forEach(function (s) {
       var auto = ad.att ? (ad.att[s.sid] ? "출석" : "결석") : "";
       if (auto) s.auto = auto;
@@ -1445,9 +1447,15 @@ function rpApplyApp(rep, app) {
       if (cs.length) s.consult = Math.max.apply(null, cs.map(function (x) { return Number(x.risk) || 0; }));
       var mk = ad.makeup && ad.makeup[s.sid];
       if (mk) s.makeup = mk.planned || mk.date || "";
-      // 학생이 앱 점수 탭에서 낸 점수 — 출결처럼 **빈 칸만** 채운다. 선생님이 적은 것은 안 덮는다.
+      // 학생이 앱 점수 탭에서 낸 점수가 **기본값**이다 — 출결이 넘어오는 것과 같다.
+      // 선생님이 손대지 않은 칸(비었거나 지난번 앱 점수 그대로)은 앱을 따라간다. 보고를 연 뒤에
+      // 학생이 다시 내도 최신 점수가 들어간다. **선생님이 고친 값은 안 덮는다** — 그건 선생님 말이다.
       var sc = ad.score ? ad.score[s.sid] : null;
-      if (sc != null) { s.appScore = sc; if (rpScoreVal(s.score) == null) s.score = String(sc); }
+      if (sc != null) {
+        var cur = rpScoreVal(s.score);
+        if (cur == null || (s.autoScore != null && cur === s.autoScore)) s.score = String(sc);
+        s.autoScore = sc;
+      }
     });
   });
   return rep;
@@ -1491,7 +1499,7 @@ function rpClean(rep) {
         week: wk,
         students: c.students.map(function (s) {
           return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
-                   score: rpScoreVal(s.score),
+                   score: rpScoreVal(s.score), autoScore: s.autoScore == null ? null : s.autoScore,
                    note: String(s.note || "").trim(), consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
         }) };
     }),
@@ -1740,10 +1748,12 @@ function rpDrawMine(box, d) {
                        : ' 업무만 적어도 된다. 안 내도 «안 냈다» 로 세지 않는다.') + '</p>';
   rep.classes.forEach(function (c, ci) {
     var come = c.students.filter(function (s) { return s.auto === "출석"; }).length;
+    var got = c.students.filter(function (s) { return s.autoScore != null; }).length;
     h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b>' +
       '<span class="muted" style="font-size:12px">학생 ' + c.students.length + '명 · ' +
       (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명 — 출결을 미리 채워 뒀다"
-        : "앱 출석을 못 읽었다 — 직접 고른다") + '</span></div>' +
+        : "앱 출석을 못 읽었다 — 직접 고른다") +
+      (S.rpEdit.app && c.scoreRead && got ? " · 앱에 점수 낸 학생 " + got + "명 — 점수도 채워 뒀다" : "") + '</span></div>' +
       '<div class="row rp-two"><label>진도 <input type="text" data-rpc="' + ci + '|progress" value="' + esc(c.progress) + '" placeholder="교재 · 단원 · 어디까지"' + RPK + '></label>' +
       '<label>과제 <input type="text" data-rpc="' + ci + '|homework" value="' + esc(c.homework) + '" placeholder="낸 과제"' + RPK + '></label></div>' +
       '<div class="rpwrap"><table class="rp-t"><thead><tr><th>#</th><th>이름</th><th>출결</th><th>결석 연락</th><th>앱에 적힌 것</th><th>점수</th><th style="width:36%">특이사항</th></tr></thead><tbody>' +
@@ -1761,7 +1771,7 @@ function rpDrawMine(box, d) {
           '<td>' + (s.consult != null ? '<span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담' + (s.consult ? " · 위험 " + s.consult : "") + '</span> ' : "") +
             (s.makeup ? '<span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td>' +
           '<td style="white-space:nowrap"><input type="text" inputmode="decimal" class="rp-score" data-rps="' + k + '|score" value="' + esc(s.score == null ? "" : s.score) + '" placeholder="—"' + RPK + '>' +
-            (s.appScore != null && rpScoreVal(s.score) !== s.appScore ? ' <span class="rp-auto">앱: ' + esc(s.appScore) + '</span>' : "") + '</td>' +
+            (s.autoScore != null && rpScoreVal(s.score) !== s.autoScore ? ' <span class="rp-auto">앱: ' + esc(s.autoScore) + '</span>' : "") + '</td>' +
           '<td><input type="text" data-rps="' + k + '|note" value="' + esc(s.note) + '" placeholder="' +
             (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '></td></tr>';
       }).join("") + '</tbody></table></div>' +

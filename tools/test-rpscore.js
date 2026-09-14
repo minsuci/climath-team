@@ -74,10 +74,24 @@ const ap = by(JSON.parse(run(`var r = rpDraft("T2","2026-09-14",{ classes:[{ cid
   return JSON.stringify(r.classes[0].students);`)));
 ok("빈 칸은 앱 점수로 채운다", ap.s1.score === "90", String(ap.s1.score));
 ok("⚠ 선생님이 적은 점수는 앱 점수가 안 덮는다", ap.s2.score === 60, String(ap.s2.score));
-ok("앱 점수는 따로 들고 있다 (다르면 «앱: 55» 로 보인다)", ap.s2.appScore === 55);
-ok("앱에 점수가 없는 학생은 그대로 비어 있다", ap.s3.score === "" && ap.s3.appScore === null);
+ok("앱 점수는 따로 들고 있다 (다르면 «앱: 55» 로 보인다)", ap.s2.autoScore === 55);
+ok("앱에 점수가 없는 학생은 그대로 비어 있다", ap.s3.score === "" && ap.s3.autoScore === null);
 const ap2 = JSON.parse(run(`var r = rpDraft("T2","2026-09-14",null); rpApplyApp(r, { c2: { att: null, score: null } }); return JSON.stringify(r.classes[0].students);`));
 ok("앱 점수를 못 읽었으면 아무것도 안 채운다", ap2.every((s) => s.score === ""));
+
+// ---- 앱 점수가 기본값 — 출결이 넘어오는 것처럼 (9/14 마왕님) ----
+// 보고를 한 번 낸 뒤에 학생이 앱에 점수를 다시 내는 일이 있다. 선생님이 손대지 않은 칸은 따라가야 한다.
+const fol = by(JSON.parse(run(`var r = rpDraft("T2","2026-09-14",{ classes:[{ cid:"c2", students:[
+    { sid:"s1", score:70, autoScore:70 },      // 지난번 앱 점수 그대로 냈다
+    { sid:"s2", score:75, autoScore:55 } ] }] });   // 선생님이 55 를 75 로 고쳐 냈다
+  rpApplyApp(r, { c2: { att: { s1:true, s2:true }, score: { s1: 90, s2: 60 } } });
+  return JSON.stringify(r.classes[0].students);`)));
+ok("손대지 않은 점수는 앱의 새 점수를 따라간다", fol.s1.score === "90" && fol.s1.autoScore === 90, JSON.stringify(fol.s1));
+ok("⚠ 선생님이 고친 점수는 앱이 다시 바뀌어도 안 덮는다", fol.s2.score === 75 && fol.s2.autoScore === 60, JSON.stringify(fol.s2));
+const kept = JSON.parse(run(`var r = rpDraft("T2","2026-09-14",null); rpApplyApp(r, { c2: { att:{ s1:true }, score:{ s1: 90 } } });
+  var o = {}; rpClean(r).classes[0].students.forEach(function(s){ o[s.sid] = [s.score, s.autoScore]; }); return JSON.stringify(o);`));
+ok("앱 점수를 따로 저장한다 (출결의 auto 처럼 — 누가 적었는지 남는다)", JSON.stringify(kept.s1) === "[90,90]", JSON.stringify(kept));
+ok("앱 점수가 없으면 null 로 저장", kept.s3[1] === null, JSON.stringify(kept.s3));
 
 // ---- 내기 전 검사 ----
 const stopOf = (scores) => JSON.parse(run(`var r = rpDraft("T2","2026-09-14",null), m = ${JSON.stringify(scores)};
@@ -126,6 +140,7 @@ ok("점수 칸이 특이사항 바로 앞에 있다",
   h.indexOf("<th>점수</th>") > 0 && h.indexOf("<th>점수</th>") < h.indexOf("특이사항</th>") && h.indexOf("<th>점수</th>") > h.indexOf("앱에 적힌 것"),
   h.slice(h.indexOf("<thead>"), h.indexOf("</thead>")));
 ok("학생마다 점수 칸", (h.match(/\|score"/g) || []).length === 3);
+ok("반 머리에 «앱에 점수 낸 학생 n명 — 점수도 채워 뒀다» (출결 안내 옆)", /앱에 점수 낸 학생 1명 — 점수도 채워 뒀다/.test(h), h.slice(h.indexOf("학생 3명"), h.indexOf("학생 3명") + 120));
 ok("선생님이 고친 점수와 앱 점수가 다르면 «앱: 90» 을 옆에 적는다", /85"[^>]*>\s*<span class="rp-auto">앱: 90<\/span>/.test(h));
 ok("점수 칸도 선생님 화면에서 안 잠긴다 (data-keep)", /class="rp-score" data-rps="[^"]*" value="[^"]*" placeholder="—" data-keep/.test(h));
 
