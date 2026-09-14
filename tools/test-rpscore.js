@@ -140,7 +140,7 @@ ok("점수 칸이 특이사항 바로 앞에 있다",
   h.indexOf("<th>점수</th>") > 0 && h.indexOf("<th>점수</th>") < h.indexOf("특이사항</th>") && h.indexOf("<th>점수</th>") > h.indexOf("앱에 적힌 것"),
   h.slice(h.indexOf("<thead>"), h.indexOf("</thead>")));
 ok("학생마다 점수 칸", (h.match(/\|score"/g) || []).length === 3);
-ok("반 머리에 «앱에 점수 낸 학생 n명 — 점수도 채워 뒀다» (출결 안내 옆)", /앱에 점수 낸 학생 1명 — 점수도 채워 뒀다/.test(h), h.slice(h.indexOf("학생 3명"), h.indexOf("학생 3명") + 120));
+ok("반 머리에 «앱에 점수 낸 학생 n명» (출결 안내 옆 — 9/14 설명 글씨는 뗐다)", /앱에 점수 낸 학생 1명</.test(h), h.slice(h.indexOf("학생 3명"), h.indexOf("학생 3명") + 120));
 ok("선생님이 고친 점수와 앱 점수가 다르면 «앱: 90» 을 옆에 적는다", /85"[^>]*>\s*<span class="rp-auto">앱: 90<\/span>/.test(h));
 ok("점수 칸도 선생님 화면에서 안 잠긴다 (data-keep)", /class="rp-score" data-rps="[^"]*" value="[^"]*" placeholder="—" data-keep/.test(h));
 

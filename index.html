@@ -392,13 +392,24 @@
   table.rp-read { min-width: 480px; }
   table.rp-t tr.rp-dim td { color: #9aa3af; }
   .rp-auto { font-size: 10px; color: var(--muted); }
+  /* 9/14 마왕님 «간격이 좁다 · 색이 단조로워 눈에 안 띈다». 월간계획도 .rp-h 를 써서 업무보고 안에서만 넓힌다 */
+  #sec-report .rp-h { font-size: 15px; margin: 30px 0 10px; padding-top: 16px; }
+  #sec-report .btn.send { background: var(--orange); color: #fff; font-weight: 700; font-size: 15px; padding: 9px 22px; border-radius: 8px; box-shadow: 0 2px 6px rgba(240,138,36,.35); }
+  #sec-report .btn.send:disabled { opacity: .5; box-shadow: none; }
+  #sec-report .mini.go { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+  #sec-report .mini.go:disabled { background: #fff; border-color: var(--line); color: #9aa3af; font-weight: 400; }
+  #sec-report .mini.plus { border-color: var(--blue); color: var(--blue); background: #eef3fb; font-weight: 600; }
+  #sec-report .mini.plus.leave { border-color: var(--red); color: #b42318; background: #fdecec; }
+  #sec-report .rp-seg .mini.st-done.on { background: var(--green); border-color: var(--green); }
+  #sec-report .rp-seg .mini.st-doing.on { background: var(--blue); border-color: var(--blue); }
+  #sec-report .rp-seg .mini.st-hold.on { background: var(--yellow); border-color: var(--yellow); color: #5a3d00; }
   table.rp-t input.rp-score { width: 52px; text-align: right; }
-  .rp-task { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .rp-task { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .rp-task .t { flex: 1 1 260px; }
   .rp-task input { flex: 1 1 200px; }
   .rp-seg { display: flex; gap: 2px; }
-  .rp-extra { margin-bottom: 4px; }
-  .rp-move { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .rp-extra { margin-bottom: 8px; }
+  .rp-move { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .rp-move .rp-mnote { flex: 1 1 180px; }
   .rp-moves { border: 1px solid #c7d6ee; background: #f5f8fd; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
   .rp-mrow { margin-top: 5px; line-height: 1.8; }
@@ -1481,7 +1492,7 @@ function rpAllUndo(c) {
 }
 function rpAllBtns(c, ci) {
   var left = c.students.some(function (s) { return rpAllCan(s) && s.att !== "출석"; });
-  return ' <button class="mini" data-rpall="' + ci + '"' + RPK + (left ? "" : " disabled") +
+  return ' <button class="mini go" data-rpall="' + ci + '"' + RPK + (left ? "" : " disabled") +
       ' title="빈 칸과 앱이 채운 결석을 출석으로. 직접 고른 것은 그대로">전체 출석</button>' +
     (c.allUndo ? ' <button class="mini" data-rpundo="' + ci + '"' + RPK + '>되돌리기</button>' : "");
 }
@@ -1776,9 +1787,9 @@ function rpDrawMine(box, d) {
     var got = c.students.filter(function (s) { return s.autoScore != null; }).length;
     h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b>' +
       '<span class="muted" style="font-size:12px">학생 ' + c.students.length + '명 · ' +
-      (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명 — 출결을 미리 채워 뒀다"
-        : "앱 출석을 못 읽었다 — 직접 고른다") +
-      (S.rpEdit.app && c.scoreRead && got ? " · 앱에 점수 낸 학생 " + got + "명 — 점수도 채워 뒀다" : "") + '</span>' +
+      (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명"
+        : "앱 출석을 못 읽었다") +
+      (S.rpEdit.app && c.scoreRead && got ? " · 앱에 점수 낸 학생 " + got + "명" : "") + '</span>' +
       rpAllBtns(c, ci) + '</div>' +
       '<div class="row rp-two"><label>진도 <input type="text" data-rpc="' + ci + '|progress" value="' + esc(c.progress) + '" placeholder="교재 · 단원 · 어디까지"' + RPK + '></label>' +
       '<label>과제 <input type="text" data-rpc="' + ci + '|homework" value="' + esc(c.homework) + '" placeholder="낸 과제"' + RPK + '></label></div>' +
@@ -1803,7 +1814,7 @@ function rpDrawMine(box, d) {
       }).join("") + '</tbody></table></div>' +
       // 이번 주 우리 반 — 그 반의 그 주 마지막 수업일에만 뜬다 (월금 반은 금, 화목 반은 목)
       (c.week ? '<div class="rp-week"><b>이번 주 ' + esc(c.name) + '</b> ' +
-        '<span class="muted" style="font-size:12px">— 이번 주 마지막 수업이다. 세 줄만 적는다. <b>없으면 «없음»</b></span>' +
+
         RP_WEEK.map(function (f) {
           return '<label><b>' + f.label + '</b><input type="text" data-rpw="' + ci + '|' + f.k + '" value="' +
             esc(c.week[f.k]) + '" placeholder="' + f.ph + '"' + RPK + '></label>';
@@ -1812,7 +1823,7 @@ function rpDrawMine(box, d) {
 
   // 명단 변동 — 반 이동 · 퇴원
   var roster = rpMyRoster(me, d);
-  h += '<h3 class="rp-h">명단 변동 <span class="muted" style="font-size:12px;font-weight:400">— 반이 바뀐 학생 · 퇴원생. 팀장이 보고 앱 명단에 옮긴다</span></h3>';
+  h += '<h3 class="rp-h">명단 변동</h3>';
   h += rep.moves.map(function (m, mi) {
     var st = m.name && saved && saved.submitted ? rpMoveState(m) : null;
     var other = m.toOther || (!m.toCid && m.toName);
@@ -1834,17 +1845,17 @@ function rpDrawMine(box, d) {
       (st ? '<span class="pill ' + (st.done ? "green" : "") + '">' + esc(st.done ? "팀장이 앱에 반영함" : "팀장 확인 전") + '</span>' : "") +
       '<button class="x" data-rpmdel="' + mi + '"' + RPK + ' title="이 줄 빼기">×</button></div>';
   }).join("") +
-    '<div class="row"><button class="mini" data-rpmadd="move"' + RPK + '>＋ 반 이동</button>' +
-    '<button class="mini" data-rpmadd="leave"' + RPK + '>＋ 퇴원</button>' +
+    '<div class="row"><button class="mini plus" data-rpmadd="move"' + RPK + '>＋ 반 이동</button>' +
+    '<button class="mini plus leave" data-rpmadd="leave"' + RPK + '>＋ 퇴원</button>' +
     (roster.length ? "" : '<span class="muted" style="font-size:12px">맡은 반 명단이 없다</span>') + '</div>';
 
   // 업무 — 할 일
-  h += '<h3 class="rp-h">업무 <span class="muted" style="font-size:12px;font-weight:400">— 그 날까지 기한인 내 할 일. «완료» 는 할 일 메뉴의 내 완료로도 남는다</span></h3>';
+  h += '<h3 class="rp-h">업무</h3>';
   h += rep.tasks.length ? rep.tasks.map(function (t, ti) {
     return '<div class="rp-task"><div class="t">' + esc(t.text) +
       (t.due ? ' <span class="muted" style="font-size:12px">' + esc(fmtMD(t.due)) + (t.due < d ? ' · 기한 지남' : "") + '</span>' : "") + '</div>' +
       '<div class="rp-seg">' + Object.keys(RP_STATE).map(function (k) {
-        return '<button class="mini' + (t.state === k ? " on" : "") + '" data-rpk="' + ti + '|' + k + '"' + RPK + '>' + RP_STATE[k] + '</button>';
+        return '<button class="mini st-' + k + (t.state === k ? " on" : "") + '" data-rpk="' + ti + '|' + k + '"' + RPK + '>' + RP_STATE[k] + '</button>';
       }).join("") + '</div>' +
       '<input type="text" data-rpn="' + ti + '" value="' + esc(t.note) + '" placeholder="한 줄 (보류면 왜)"' + RPK + '></div>';
   }).join("") : '<p class="muted" style="font-size:13px">그 날까지 기한인 내 할 일이 없다.</p>';
@@ -1856,13 +1867,13 @@ function rpDrawMine(box, d) {
         '<input type="text" data-rpx="' + xi + '|text" value="' + esc(x.text) + '" placeholder="무엇을 했나" style="flex:1"' + RPK + '>' +
         '<button class="x" data-rpxdel="' + xi + '"' + RPK + ' title="이 줄 빼기">×</button></div>';
     }).join("") +
-    '<button class="mini" data-rpxadd' + RPK + '>＋ 한 줄</button>';
+    '<button class="mini plus" data-rpxadd' + RPK + '>＋ 한 줄</button>';
 
   h += '<h3 class="rp-h">팀장에게</h3>' +
     '<textarea data-rpf="toLead" rows="2" placeholder="막힌 것 · 필요한 것 · 데스크에 부탁할 것 (없으면 비움)"' + RPK + '>' + esc(rep.toLead) + '</textarea>';
 
   h += (chk.warn.length ? '<div class="rp-warn">' + chk.warn.map(esc).join("<br>") + '</div>' : "") +
-    '<div class="row" style="margin-top:10px"><button class="btn" data-rpsave' + RPK + '>' + (saved && saved.submitted ? "다시 내기" : "제출") + '</button>' +
+    '<div class="row" style="margin-top:10px"><button class="btn send" data-rpsave' + RPK + '>' + (saved && saved.submitted ? "다시 내기" : "제출") + '</button>' +
     '<span class="muted" style="font-size:12px">' + (S.ro ? "팀장만 본다. 다른 선생님은 못 본다." : "팀장 것도 같은 칸에 적는다.") + '</span></div>';
   box.innerHTML = h;
   rpWireMine(box);
@@ -1971,13 +1982,13 @@ function rpDrawAll(box, d, sm) {
         (st.done ? '<span class="pill green">' + esc(st.text) + '</span>'
           : '<span class="pill orange">' + esc(st.text) + '</span>' +
             (m.pid && (m.kind === "leave" || m.toCid || rpInClass(m.fromCid, m))
-              ? ' <button class="mini" data-rpmv="' + i + '">앱에 반영</button>'
+              ? ' <button class="mini go" data-rpmv="' + i + '">앱에 반영</button>'
               : !m.pid ? ' <span class="muted" style="font-size:12px">학생 번호가 없는 줄 — 학생 명단 메뉴에서 직접</span>' : "")) + '</div>';
     }).join("") + '</div>';
-  h += '<div class="row" style="margin:8px 0"><button class="btn" data-rpdig>원장님께 올릴 문서</button>' +
+  h += '<div class="row" style="margin:8px 0"><button class="btn send" data-rpdig>원장님께 올릴 문서</button>' +
     '<span class="muted" style="font-size:12px">낸 보고를 한 장으로 모은다 (마크다운). 복사해서 올린다.</span></div>' +
     (S.rpDig === d ? '<textarea class="rp-dig" rows="16" readonly>' + esc(rpDigest(d)) + '</textarea>' +
-      '<div class="row"><button class="mini" data-rpcopy>복사</button><button class="mini" data-rpdigx>접기</button></div>' : "");
+      '<div class="row"><button class="mini plus" data-rpcopy>복사</button><button class="mini" data-rpdigx>접기</button></div>' : "");
   if (!tids.length) h += '<p class="muted">' + esc(fmtMD(d)) + ' 에 수업한 선생님이 없다.</p>';
   tids.forEach(function (tid) {
     var rep = ((S.reports || {})[tid] || {})[d];
