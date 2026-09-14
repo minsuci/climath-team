@@ -394,6 +394,10 @@
   .rp-auto { font-size: 10px; color: var(--muted); }
   /* 9/14 마왕님 «간격이 좁다 · 색이 단조로워 눈에 안 띈다». 월간계획도 .rp-h 를 써서 업무보고 안에서만 넓힌다 */
   #sec-report .rp-h { font-size: 15px; margin: 30px 0 10px; padding-top: 16px; }
+  /* 9/14 마왕님 «명단 변동·업무·할 일에 없던 업무를 각각 박스에 넣어 분리된 느낌» */
+  #sec-report .rp-box { border: 1px solid #d9e0ea; border-radius: 12px; background: #f8fafd; padding: 12px 16px 14px; margin-top: 18px; }
+  #sec-report .rp-box > .rp-h { margin: 0 0 8px; padding-top: 0; border-top: 0; }
+  #sec-report .rp-box .rp-move, #sec-report .rp-box .rp-task { border-bottom-color: #e6ebf2; }
   #sec-report .btn.send { background: var(--orange); color: #fff; font-weight: 700; font-size: 15px; padding: 9px 22px; border-radius: 8px; box-shadow: 0 2px 6px rgba(240,138,36,.35); }
   #sec-report .btn.send:disabled { opacity: .5; box-shadow: none; }
   #sec-report .mini.go { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
@@ -1823,7 +1827,7 @@ function rpDrawMine(box, d) {
 
   // 명단 변동 — 반 이동 · 퇴원
   var roster = rpMyRoster(me, d);
-  h += '<h3 class="rp-h">명단 변동</h3>';
+  h += '<div class="rp-box"><h3 class="rp-h">명단 변동</h3>';
   h += rep.moves.map(function (m, mi) {
     var st = m.name && saved && saved.submitted ? rpMoveState(m) : null;
     var other = m.toOther || (!m.toCid && m.toName);
@@ -1849,8 +1853,10 @@ function rpDrawMine(box, d) {
     '<button class="mini plus leave" data-rpmadd="leave"' + RPK + '>＋ 퇴원</button>' +
     (roster.length ? "" : '<span class="muted" style="font-size:12px">맡은 반 명단이 없다</span>') + '</div>';
 
+  h += '</div>';
+
   // 업무 — 할 일
-  h += '<h3 class="rp-h">업무</h3>';
+  h += '<div class="rp-box"><h3 class="rp-h">업무</h3>';
   h += rep.tasks.length ? rep.tasks.map(function (t, ti) {
     return '<div class="rp-task"><div class="t">' + esc(t.text) +
       (t.due ? ' <span class="muted" style="font-size:12px">' + esc(fmtMD(t.due)) + (t.due < d ? ' · 기한 지남' : "") + '</span>' : "") + '</div>' +
@@ -1859,15 +1865,16 @@ function rpDrawMine(box, d) {
       }).join("") + '</div>' +
       '<input type="text" data-rpn="' + ti + '" value="' + esc(t.note) + '" placeholder="한 줄 (보류면 왜)"' + RPK + '></div>';
   }).join("") : '<p class="muted" style="font-size:13px">그 날까지 기한인 내 할 일이 없다.</p>';
+  h += '</div>';
 
-  h += '<h3 class="rp-h">할 일에 없던 업무</h3>' +
+  h += '<div class="rp-box"><h3 class="rp-h">할 일에 없던 업무</h3>' +
     rep.extra.map(function (x, xi) {
       return '<div class="row rp-extra"><select data-rpx="' + xi + '|kind"' + RPK + '>' +
         RP_KINDS.map(function (k) { return '<option' + (k === x.kind ? " selected" : "") + '>' + k + '</option>'; }).join("") + '</select>' +
         '<input type="text" data-rpx="' + xi + '|text" value="' + esc(x.text) + '" placeholder="무엇을 했나" style="flex:1"' + RPK + '>' +
         '<button class="x" data-rpxdel="' + xi + '"' + RPK + ' title="이 줄 빼기">×</button></div>';
     }).join("") +
-    '<button class="mini plus" data-rpxadd' + RPK + '>＋ 한 줄</button>';
+    '<button class="mini plus" data-rpxadd' + RPK + '>＋ 한 줄</button></div>';
 
   h += '<h3 class="rp-h">팀장에게</h3>' +
     '<textarea data-rpf="toLead" rows="2" placeholder="막힌 것 · 필요한 것 · 데스크에 부탁할 것 (없으면 비움)"' + RPK + '>' + esc(rep.toLead) + '</textarea>';

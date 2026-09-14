@@ -47,6 +47,24 @@ ok("사실은 남긴다 — «앱에 출석 찍힌 학생 1명»", h.indexOf("�
 ok("내기 전 경고 문구는 그대로 (설명 글씨가 아니라 알림이다)",
   run(`return rpCheck(S.rpEdit.rep).warn.some(function(w){ return /이번 주 마지막 수업이다/.test(w); })`) === true);
 
+// ---- 세 섹션을 각각 상자에 (9/14 «분리된 느낌») ----
+// 상자 안의 내용을 여는 태그부터 짝이 맞는 닫는 태그까지 잘라 본다 — 닫는 태그가 어긋나면 아래 섹션이 딸려 들어온다.
+function boxOf(html, title) {
+  const at = html.indexOf('<div class="rp-box"><h3 class="rp-h">' + title + '</h3>');
+  if (at < 0) return null;
+  const re = new RegExp("<div[ >]|</div>", "g"); re.lastIndex = at; let depth = 0, m;   // 역슬래시 없이 — 셸·파이썬을 거치면 줄어든다
+  while ((m = re.exec(html))) { depth += m[0] === "</div>" ? -1 : 1; if (depth === 0) return html.slice(at, m.index + 6); }
+  return null;
+}
+ok("상자가 셋", (h.match(/class="rp-box"/g) || []).length === 3, String((h.match(/class="rp-box"/g) || []).length));
+const bMove = boxOf(h, "명단 변동"), bTask = boxOf(h, "업무"), bExtra = boxOf(h, "할 일에 없던 업무");
+ok("명단 변동 상자 — 반 이동·퇴원 단추가 안에 있다", !!bMove && /data-rpmadd="move"/.test(bMove) && /data-rpmadd="leave"/.test(bMove));
+ok("명단 변동 상자에 업무가 딸려 들어오지 않는다", !!bMove && bMove.indexOf("rp-task") < 0 && bMove.indexOf("data-rpxadd") < 0);
+ok("업무 상자 — 할 일 줄이 안에 있다", !!bTask && /class="rp-task"/.test(bTask) && bTask.indexOf("data-rpxadd") < 0);
+ok("할 일에 없던 업무 상자 — ＋ 한 줄 이 안에 있다", !!bExtra && /data-rpxadd/.test(bExtra) && bExtra.indexOf("data-rpf=\"toLead\"") < 0);
+ok("팀장에게 · 제출은 상자 밖 (요청에 없었다)", h.indexOf('<div class="rp-box"><h3 class="rp-h">팀장에게') < 0);
+ok("상자 안 머리는 위 여백·선을 뗀다", /#sec-report \.rp-box > \.rp-h \{ margin: 0 0 8px; padding-top: 0; border-top: 0; \}/.test(/<style>([\s\S]*?)<\/style>/.exec(html)[1]));
+
 // ---- 단추 색 ----
 ok("제출은 주황 큰 단추", /class="btn send" data-rpsave/.test(h));
 ok("전체 출석은 초록", /class="mini go" data-rpall=/.test(h));
