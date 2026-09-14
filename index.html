@@ -392,6 +392,7 @@
   table.rp-read { min-width: 480px; }
   table.rp-t tr.rp-dim td { color: #9aa3af; }
   .rp-auto { font-size: 10px; color: var(--muted); }
+  table.rp-t input.rp-score { width: 52px; text-align: right; }
   .rp-task { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .rp-task .t { flex: 1 1 260px; }
   .rp-task input { flex: 1 1 200px; }
@@ -1189,7 +1190,9 @@ function renderBanner() {
 //
 // 마왕님 결정 (9/11)
 //   · 수업은 **학생 단위** — 명단을 쫙 뽑고 옆에 특이사항. (특이 학생만 골라 적게 하지 않는다)
-//   · 일일테스트는 안 넣는다. 수업 준비 여부도 안 넣는다 (교재를 받고 있다)
+//   · 수업 준비 여부는 안 넣는다 (교재를 받고 있다)
+//   · 테스트 점수 — 처음엔 안 넣기로 했다가 **9/14 마왕님이 넣었다.** «나중에 점수 보고 퇴원위험을 판단하게».
+//     맞은 수/총 문항이 아니라 **점수 한 칸**이다(마왕님). 빈 칸은 «안 봤다» 이지 0점이 아니다 — 0 으로 적으면 위험 신호가 거짓으로 뜬다.
 //   · 마감 시각은 없다. **다음 날 아침 8시까지 안 내면 알림** — 팀장에게도, 본인에게도
 //   · 받는 사람은 원장님. 부원장님은 중등관이라 안 거친다
 //   · **선생님끼리는 서로 못 본다.** 자기 것과 팀장만 — 화면이 아니라 **규칙**이 막는다
@@ -1197,7 +1200,7 @@ function renderBanner() {
 //   dailyReports/{tid}/days/{date}
 //     { tid, name, date, submitted(처음 낸 시각), updated,
 //       classes: [{ cid, name, progress, homework,
-//                   students: [{ sid, name, att, auto, called, note, consult, makeup }] }],
+//                   students: [{ sid, name, att, auto, called, score, note, consult, makeup }] }],
 //       tasks: [{ id, text, state, note }], extra: [{ kind, text }], toLead }
 //   사람마다 칸 하나(marks·myTasks 와 같은 모양). 문서 이름이 곧 누구인지라 규칙이 남의 것을 막는다.
 var RP_ATT = ["출석", "결석", "지각", "조퇴"];
@@ -1212,6 +1215,21 @@ var RP_DUE_HOUR = 8;               // 그 날 보고는 **다음 날 아침 8시
 // 이 날부터 «안 냈다» 를 센다. 기능을 올리기 전 날들이 전부 «안 냄» 으로 뜨면 안 된다.
 // 9/11(금)에 올리고 **9/14(월)부터** 센다 — 선생님들께 알릴 주말을 둔다. 그 전에 내는 것은 막지 않는다.
 var RP_START = "2026-09-14";
+// 점수 칸 읽기. 비었으면 null(안 봤다), 0~100 숫자면 그 수, 나머지는 NaN(잘못 적음 — 내기 전에 막는다).
+function rpScoreVal(v) {
+  if (v == null) return null;
+  var t = String(v).trim();
+  if (!t) return null;
+  if (!/^[0-9]+(?:[.][0-9]+)?$/.test(t)) return NaN;
+  var n = Number(t);
+  return n > 100 ? NaN : n;
+}
+// 그 반 그 날 점수 평균. 적힌 사람만 센다.
+function rpScoreAvg(students) {
+  var v = (students || []).map(function (s) { return rpScoreVal(s.score); })
+    .filter(function (x) { return x != null && !isNaN(x); });
+  return v.length ? { n: v.length, avg: Math.round(v.reduce(function (a, b) { return a + b; }, 0) / v.length) } : null;
+}
 function rpCol(tid) { return tdb.collection("dailyReports").doc(tid).collection("days"); }
 function rpTeacher(tid) { return S.teachers.filter(function (t) { return t.tid === tid; })[0] || null; }
 
@@ -1323,7 +1341,8 @@ function rpDraft(tid, d, prev) {
       students: rpStudentsOn(c, d).map(function (r) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
         return { sid: r.id, pid: r.pid || "", name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
-          called: ps ? !!ps.called : false, note: ps ? (ps.note || "") : "",
+          called: ps ? !!ps.called : false, score: ps && ps.score != null ? ps.score : "", appScore: null,
+          note: ps ? (ps.note || "") : "",
           consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
       }) };
   });
@@ -1426,6 +1445,9 @@ function rpApplyApp(rep, app) {
       if (cs.length) s.consult = Math.max.apply(null, cs.map(function (x) { return Number(x.risk) || 0; }));
       var mk = ad.makeup && ad.makeup[s.sid];
       if (mk) s.makeup = mk.planned || mk.date || "";
+      // 학생이 앱 점수 탭에서 낸 점수 — 출결처럼 **빈 칸만** 채운다. 선생님이 적은 것은 안 덮는다.
+      var sc = ad.score ? ad.score[s.sid] : null;
+      if (sc != null) { s.appScore = sc; if (rpScoreVal(s.score) == null) s.score = String(sc); }
     });
   });
   return rep;
@@ -1438,6 +1460,9 @@ function rpCheck(rep) {
   rep.classes.forEach(function (c) {
     var none = c.students.filter(function (s) { return !s.att; }).length;
     if (none) warn.push(c.name + " — 출결을 안 고른 학생 " + none + "명");
+    c.students.forEach(function (s) {
+      if (isNaN(rpScoreVal(s.score))) stop.push(c.name + " — " + s.name + ": 점수는 0~100 숫자로 (안 봤으면 비워 둔다)");
+    });
     var nc = c.students.filter(function (s) { return s.att === "결석" && !s.called; }).length;
     if (nc) warn.push(c.name + " — 결석인데 연락 안 한 학생 " + nc + "명");
     if (!String(c.progress || "").trim()) warn.push(c.name + " — 진도가 비었다");
@@ -1466,6 +1491,7 @@ function rpClean(rep) {
         week: wk,
         students: c.students.map(function (s) {
           return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
+                   score: rpScoreVal(s.score),
                    note: String(s.note || "").trim(), consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
         }) };
     }),
@@ -1518,7 +1544,7 @@ async function loadReports(from) {
 async function rpLoadApp(tid, d) {
   var out = {};
   await Promise.all(rpClassesOn(tid, d).map(function (c) {
-    var one = out[c.id] = { att: null, consult: {}, makeup: {} };
+    var one = out[c.id] = { att: null, consult: {}, makeup: {}, score: null };
     var cref = db.collection("classes").doc(c.id);
     return Promise.all([
       cref.collection("days").doc(d).collection("attendance").get()
@@ -1529,6 +1555,13 @@ async function rpLoadApp(tid, d) {
       cref.collection("makeups").get()
         .then(function (s) { s.forEach(function (x) { var v = x.data(); if (v.date === d || v.planned === d) one.makeup[v.sid] = v; }); })
         .catch(function () {}),
+      // ⚠ 한 학생이 같은 날 여러 번 낸다 (앱 실측: 하루 다섯 번). **마지막 것만** 본다 — 앱 보고서와 같은 규칙.
+      cref.collection("days").doc(d).collection("scores").get()
+        .then(function (s) {
+          var last = {};
+          s.forEach(function (x) { var v = x.data(); if (v.sid && v.score != null && (!last[v.sid] || (v.time || 0) >= (last[v.sid].time || 0))) last[v.sid] = v; });
+          one.score = {}; Object.keys(last).forEach(function (k) { one.score[k] = Number(last[k].score); });
+        }).catch(function () {}),
     ]);
   }));
   return out;
@@ -1573,10 +1606,12 @@ function rpDigest(d) {
     (rep.classes || []).forEach(function (c) {
       var st = c.students || [], come = st.filter(function (s) { return s.att === "출석" || s.att === "지각" || s.att === "조퇴"; }).length;
       L.push("");
-      L.push("**" + c.name + "** · 출석 " + come + "/" + st.length +
+      var av = rpScoreAvg(st);
+      L.push("**" + c.name + "** · 출석 " + come + "/" + st.length + (av ? " · 테스트 평균 " + av.avg + "점(" + av.n + "명)" : "") +
         (c.progress ? " · 진도: " + c.progress : "") + (c.homework ? " · 과제: " + c.homework : ""));
       st.filter(function (s) { return s.note || (s.att && s.att !== "출석"); }).forEach(function (s) {
-        L.push("- " + s.name + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") + (s.note || ""));
+        L.push("- " + s.name + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") +
+          (s.score != null ? s.score + "점" + (s.note ? " · " : "") : "") + (s.note || ""));
       });
       // 이번 주 우리 반 — **«없음» 은 안 싣는다.** 여섯 반 × 세 줄이 «없음» 이면 읽을 것이 묻힌다.
       RP_WEEK.forEach(function (f) {
@@ -1711,7 +1746,7 @@ function rpDrawMine(box, d) {
         : "앱 출석을 못 읽었다 — 직접 고른다") + '</span></div>' +
       '<div class="row rp-two"><label>진도 <input type="text" data-rpc="' + ci + '|progress" value="' + esc(c.progress) + '" placeholder="교재 · 단원 · 어디까지"' + RPK + '></label>' +
       '<label>과제 <input type="text" data-rpc="' + ci + '|homework" value="' + esc(c.homework) + '" placeholder="낸 과제"' + RPK + '></label></div>' +
-      '<div class="rpwrap"><table class="rp-t"><thead><tr><th>#</th><th>이름</th><th>출결</th><th>결석 연락</th><th>앱에 적힌 것</th><th style="width:40%">특이사항</th></tr></thead><tbody>' +
+      '<div class="rpwrap"><table class="rp-t"><thead><tr><th>#</th><th>이름</th><th>출결</th><th>결석 연락</th><th>앱에 적힌 것</th><th>점수</th><th style="width:36%">특이사항</th></tr></thead><tbody>' +
       c.students.map(function (s, si) {
         var k = ci + "|" + si;
         var mv = (rep.moves || []).filter(function (m) { return m.name && m.fromCid === c.cid && m.sid === s.sid; })[0];
@@ -1725,6 +1760,8 @@ function rpDrawMine(box, d) {
             (s.called ? " checked" : "") + RPK + '> 연락함</label>' : "") + '</td>' +
           '<td>' + (s.consult != null ? '<span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담' + (s.consult ? " · 위험 " + s.consult : "") + '</span> ' : "") +
             (s.makeup ? '<span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td>' +
+          '<td style="white-space:nowrap"><input type="text" inputmode="decimal" class="rp-score" data-rps="' + k + '|score" value="' + esc(s.score == null ? "" : s.score) + '" placeholder="—"' + RPK + '>' +
+            (s.appScore != null && rpScoreVal(s.score) !== s.appScore ? ' <span class="rp-auto">앱: ' + esc(s.appScore) + '</span>' : "") + '</td>' +
           '<td><input type="text" data-rps="' + k + '|note" value="' + esc(s.note) + '" placeholder="' +
             (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '></td></tr>';
       }).join("") + '</tbody></table></div>' +
@@ -1809,6 +1846,7 @@ function rpWireMine(box) {
   $$("[data-rps]", box).forEach(function (i) {
     var k = i.getAttribute("data-rps").split("|"), s = rep.classes[+k[0]].students[+k[1]];
     if (k[2] === "note") i.oninput = function () { s.note = i.value; };
+    else if (k[2] === "score") i.oninput = function () { s.score = i.value; };   // 글자 칸 — 다시 그리지 않는다
     else if (k[2] === "called") i.onchange = function () { s.called = i.checked; re(); };
     else i.onchange = function () { s.att = i.value; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
   });
@@ -1915,14 +1953,17 @@ function rpDrawAll(box, d, sm) {
     (rep.classes || []).forEach(function (c) {
       var ss = c.students || [];
       var come = ss.filter(function (s) { return s.att && s.att !== "결석"; }).length;
+      var av = rpScoreAvg(ss);
       h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b><span class="muted" style="font-size:12px">출석 ' + come + '/' + ss.length +
+        (av ? ' · 테스트 평균 ' + av.avg + '점(' + av.n + '명)' : "") +
         (c.progress ? ' · 진도 ' + esc(c.progress) : ' · <span class="red">진도 안 적음</span>') +
         (c.homework ? ' · 과제 ' + esc(c.homework) : "") + '</span></div>' +
         '<div class="rpwrap"><table class="rp-t rp-read"><tbody>' + ss.map(function (s) {
-          var quiet = s.att === "출석" && !s.note;
+          var quiet = s.att === "출석" && !s.note && s.score == null;
           return '<tr class="' + (quiet ? "rp-dim" : s.att === "결석" ? "abs" : s.att === "지각" || s.att === "조퇴" ? "late" : "") + '">' +
             '<td style="width:90px"><b>' + esc(s.name) + '</b></td><td style="width:90px">' + esc(s.att || "—") +
             (s.att === "결석" ? (s.called ? ' <span class="muted">연락함</span>' : ' <span class="red">연락 안 함</span>') : "") + '</td>' +
+            '<td style="width:56px">' + (s.score != null ? esc(s.score) + '점' : "") + '</td>' +
             '<td>' + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
             (s.makeup ? ' <span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td></tr>';
         }).join("") + '</tbody></table></div>' +
