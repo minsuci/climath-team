@@ -1460,6 +1460,31 @@ function rpApplyApp(rep, app) {
   });
   return rep;
 }
+// 한 반 «전체 출석» (9/14 마왕님 «출결 하나하나 누르기 귀찮다»).
+// 앱 출석을 안 찍은 반이면 전원이 «결석» 으로 채워져 온다 — 그걸 한 번에 푼다.
+// ⚠ 선생님이 손으로 고른 것은 안 덮는다: 앱 값과 다르게 고친 것(지각·조퇴) · «연락함» 체크한 결석 · 이 화면에서 직접 고른 출결.
+function rpAllCan(s) { return !s.attTouched && !s.called && (!s.att || s.att === s.auto); }
+function rpAllPresent(c) {
+  var undo = [];
+  c.students.forEach(function (s, i) {
+    if (!rpAllCan(s) || s.att === "출석") return;
+    undo.push({ i: i, att: s.att, called: !!s.called });
+    s.att = "출석"; s.called = false;
+  });
+  c.allUndo = undo.length ? undo : null;      // 화면에만 쓴다 — rpClean 이 안 담는다
+  return undo.length;
+}
+// 잘못 눌렀을 때. **바꾼 학생만** 돌린다.
+function rpAllUndo(c) {
+  (c.allUndo || []).forEach(function (u) { var s = c.students[u.i]; if (s) { s.att = u.att; s.called = u.called; } });
+  c.allUndo = null;
+}
+function rpAllBtns(c, ci) {
+  var left = c.students.some(function (s) { return rpAllCan(s) && s.att !== "출석"; });
+  return ' <button class="mini" data-rpall="' + ci + '"' + RPK + (left ? "" : " disabled") +
+      ' title="빈 칸과 앱이 채운 결석을 출석으로. 직접 고른 것은 그대로">전체 출석</button>' +
+    (c.allUndo ? ' <button class="mini" data-rpundo="' + ci + '"' + RPK + '>되돌리기</button>' : "");
+}
 // 내기 전에 걸리는 것. 대부분 알려만 준다.
 // «내일 할 일» 칸은 처음엔 필수였다가 **뺐다**(9/11 마왕님). 금·토에 수업 없는 사람도 뭔가 적어야 했고, 막으면 한 줄로 때운다.
 // 나머지는 알려만 준다. 다 막으면 5분 안에 못 낸다.
@@ -1753,7 +1778,8 @@ function rpDrawMine(box, d) {
       '<span class="muted" style="font-size:12px">학생 ' + c.students.length + '명 · ' +
       (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명 — 출결을 미리 채워 뒀다"
         : "앱 출석을 못 읽었다 — 직접 고른다") +
-      (S.rpEdit.app && c.scoreRead && got ? " · 앱에 점수 낸 학생 " + got + "명 — 점수도 채워 뒀다" : "") + '</span></div>' +
+      (S.rpEdit.app && c.scoreRead && got ? " · 앱에 점수 낸 학생 " + got + "명 — 점수도 채워 뒀다" : "") + '</span>' +
+      rpAllBtns(c, ci) + '</div>' +
       '<div class="row rp-two"><label>진도 <input type="text" data-rpc="' + ci + '|progress" value="' + esc(c.progress) + '" placeholder="교재 · 단원 · 어디까지"' + RPK + '></label>' +
       '<label>과제 <input type="text" data-rpc="' + ci + '|homework" value="' + esc(c.homework) + '" placeholder="낸 과제"' + RPK + '></label></div>' +
       '<div class="rpwrap"><table class="rp-t"><thead><tr><th>#</th><th>이름</th><th>출결</th><th>결석 연락</th><th>앱에 적힌 것</th><th>점수</th><th style="width:36%">특이사항</th></tr></thead><tbody>' +
@@ -1857,8 +1883,9 @@ function rpWireMine(box) {
     var k = i.getAttribute("data-rps").split("|"), s = rep.classes[+k[0]].students[+k[1]];
     if (k[2] === "note") i.oninput = function () { s.note = i.value; };
     else if (k[2] === "score") i.oninput = function () { s.score = i.value; };   // 글자 칸 — 다시 그리지 않는다
-    else if (k[2] === "called") i.onchange = function () { s.called = i.checked; re(); };
-    else i.onchange = function () { s.att = i.value; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
+    else if (k[2] === "called") i.onchange = function () { s.called = i.checked; rep.classes[+k[0]].allUndo = null; re(); };
+    // 손으로 고르면 «전체 출석» 이 이 학생을 안 건드리고, «되돌리기» 도 거둔다 — 되돌리기가 방금 고른 값을 덮으면 안 된다
+    else i.onchange = function () { s.att = i.value; s.attTouched = true; rep.classes[+k[0]].allUndo = null; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
   });
   $$("[data-rpk]", box).forEach(function (b) {
     b.onclick = function () {
@@ -1873,6 +1900,9 @@ function rpWireMine(box) {
     i.oninput = f; i.onchange = f;
   });
   $$("[data-rpxdel]", box).forEach(function (b) { b.onclick = function () { rep.extra.splice(+b.getAttribute("data-rpxdel"), 1); re(); }; });
+  // 전체 출석 · 되돌리기 — 단추라 다시 그려도 된다
+  $$("[data-rpall]", box).forEach(function (b) { b.onclick = function () { rpAllPresent(rep.classes[+b.getAttribute("data-rpall")]); re(); }; });
+  $$("[data-rpundo]", box).forEach(function (b) { b.onclick = function () { rpAllUndo(rep.classes[+b.getAttribute("data-rpundo")]); re(); }; });
   var add = $("[data-rpxadd]", box);
   if (add) add.onclick = function () { rep.extra.push({ kind: RP_KINDS[0], text: "" }); re(); };
   $$("[data-rpf]", box).forEach(function (i) { i.oninput = function () { rep[i.getAttribute("data-rpf")] = i.value; }; });
