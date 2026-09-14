@@ -5926,8 +5926,8 @@ async function stSyncRosters(person) {
 //   ├ «담임» 줄
 //   ├ B열 «재원» 부터 1~18번 — 지금 다니는 학생. 칸은 "김서진10" = 이름 + 학년 숫자(7=중1 … 12=고3),
 //   │   앞의 N 은 이번 달 신입, 뒤의 a·b·A 는 동명이인 표시(앱도 A·B 로 가른다 — 이름의 일부로 본다)
-//   ├ B열 «신입예정» 1~10번 — 아직 안 온 사람. 예고로만 보인다
-//   └ B열 «퇴원» — 나가는 사람. 예고로만 보인다
+//   ├ B열 «신입예정» 1~10번 — 아직 안 온 사람. 읽기만 하고 화면에는 안 띄운다(9/15)
+//   └ B열 «퇴원» — 나가는 사람. 읽기만 하고 화면에는 안 띄운다(9/15)
 //   이 덩어리가 요일별로 셋(월금 / 화목 / 다른 관) 이어진다. 오른쪽에 FP 강좌 격자가 같은 줄을 나눠 쓴다.
 //
 // ⚠ 이름으로 맞춘다. 시트에 학생 번호가 없어서다. 그래서 **같은 이름이 둘이면 손을 뗀다**(«확인» 줄) —
@@ -6250,17 +6250,8 @@ function rosterDiffBox() {
             '</select></div>';
         }).join("");
     }
-    var joining = [], leaving = [];
-    matchSheetCols(S.sheetCols || []).forEach(function (m) {
-      if (!m.cid) return;
-      m.col.joining.forEach(function (p) { joining.push(p.name + (p.grade ? " " + p.grade : "") + " → " + className(m.cid)); });
-      m.col.leaving.forEach(function (p) { leaving.push(p.name + (p.grade ? " " + p.grade : "") + " ← " + className(m.cid)); });
-    });
-    if (joining.length || leaving.length) {
-      body += '<div class="dfsub">시트의 예고 — 아직 반영할 것은 아니다</div>' +
-        (joining.length ? '<div class="dfrow"><span class="pill">신입 예정</span><span class="muted">' + esc(joining.join(" · ")) + '</span></div>' : "") +
-        (leaving.length ? '<div class="dfrow"><span class="pill">퇴원 예정</span><span class="muted">' + esc(leaving.join(" · ")) + '</span></div>' : "");
-    }
+    // 시트의 «신입예정»·«퇴원» 칸(예고)은 안 보인다 — 9/15 마왕님 «학생명단에 신입예정 퇴원 예정은 빼자».
+    // 읽기는 그대로 한다(parseRosterSheet 의 joining·leaving). 재원 줄과 섞여 차이로 잡히지 않게 하려면 갈라 읽어야 한다.
     if (d.ignored) body += '<div class="dfsub muted">무시한 줄 ' + d.ignored + '건 <button class="mini" data-diff-unignore="1">되살리기</button></div>';
   } else if (!S.diffBusy && !S.diffErr) {
     body += '<div class="muted" style="font-size:13px;padding:4px 0">아직 안 맞춰 봤다.</div>';

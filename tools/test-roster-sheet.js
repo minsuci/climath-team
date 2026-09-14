@@ -394,7 +394,9 @@ const setup = (who) => {
   ok("학생 명단에 대조 상자가 뜬다", html.indexOf("시트와 대조") >= 0);
   ok("몇 건 다른지 보인다", html.indexOf("3건 다르다") >= 0);
   ok("줄마다 «반영»·«무시» 가 있다", (html.match(/data-diff-apply=/g) || []).length === 3 && (html.match(/data-diff-skip=/g) || []).length === 3);
-  ok("예고(신입 예정·퇴원 예정)는 단추 없이 보인다", html.indexOf("신입 예정") >= 0 && html.indexOf("박준호") >= 0 && html.indexOf("퇴원 예정") >= 0);
+  // 9/15 마왕님 «학생명단에 신입예정 퇴원 예정은 빼자»
+  ok("예고(신입 예정·퇴원 예정)는 안 보인다", html.indexOf("신입 예정") < 0 && html.indexOf("퇴원 예정") < 0 && html.indexOf("박준호") < 0 && html.indexOf("정하늘") < 0 && html.indexOf("시트의 예고") < 0);
+  ok("예고 학생은 차이 줄로도 안 선다 — 읽을 때 재원과 갈라 둔다", !val("S.diff.items").some((x) => x.name === "박준호" || x.name === "정하늘"));
   // 예전에는 FP 강좌 «(수)개별진도» 가 «어느 반인지 모른다» 로 섰다. 고등부만 보게 되면서(2026-09-08) 아예 안 선다
   ok("FP 강좌는 고르는 칸에 안 선다 — 다 맞춰졌으니 칸 자체가 없다", html.indexOf("data-diff-map=") < 0 && html.indexOf("(수)개별진도") < 0);
   ok("div 를 다 닫는다", (html.match(/<div/g) || []).length === (html.match(/<\/div>/g) || []).length,
