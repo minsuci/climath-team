@@ -263,11 +263,12 @@ const setup = (who) => {
   {
     const all = val(`parseRosterSheet(${JSON.stringify(WIDE)})`);
     const high = val(`highCols(parseRosterSheet(${JSON.stringify(WIDE)}))`);
-    const labels = high.map((c) => c.label.replace(/\s+/g, " ")).join(" | ");
+    // 9/15 부터 고PL(개진반) 도 들어온다 — 정규반 열은 따로 본다
+    const labels = high.filter((c) => !/^고PL/.test(c.key)).map((c) => c.label.replace(/\s+/g, " ")).join(" | ");
     ok("덩어리 번호가 열에 남는다", all.filter((c) => c.block === 2).length === 2 && all[0].block === 0, JSON.stringify(all.map((c) => c.block)));
-    ok("고1·예비고1 열만 남는다 (6개)", high.length === 6, labels);
+    ok("고1·예비고1 열 6개 + 고PL 1개", high.length === 7, labels);
     ok("고1S·고1T·자사·예비고1A·고1TOP·예비고1S(화목)", labels === "고1S (201호) | 고1T (402호) | 고1 자사 토1부(201호) | 예비고1 A(401호) | 고1TOP (204호) | 예비고1 S(402호)", labels);
-    ok("고PL 은 «고» 뒤에 숫자가 없어 빠진다", !/고PL/.test(labels));
+    ok("고PL 은 개진반이라 들어온다 (9/15)", high.some((c) => /^고PL/.test(c.key)));
     ok("GS·중PL·FP 는 빠진다", !/GS|중PL|개별진도/.test(labels));
     ok("고3M 수1 은 고1 이 아니라 빠진다", !/고3M/.test(labels));
     ok("셋째 덩어리의 예비고1S 는 이름은 걸려도 덩어리로 뺀다", high.filter((c) => c.key === "예비고1S").length === 1 && !high.some((c) => c.teacher === "다른관"));
@@ -275,8 +276,9 @@ const setup = (who) => {
   // 읽을 때 거른다 — 상자에도 고PL 이 «어느 반인지 모른다» 로 안 뜬다
   setup(); SHEET.values = WIDE;
   await run("return checkRosterSheet()");
-  ok("읽은 열은 고등부만", val("S.sheetCols").length === 6, String(val("S.sheetCols").length));
-  ok("고PL·GS 는 «어느 반인지 모른다» 에도 안 선다", !/<b>(고PL|2GS|중PL|세화여)/.test(run("return rosterDiffBox()")), run("return rosterDiffBox()").slice(0, 200));
+  ok("읽은 열은 고등부 + 고PL", val("S.sheetCols").length === 7, String(val("S.sheetCols").length));
+  ok("GS·중PL 은 «어느 반인지 모른다» 에도 안 선다", !/<b>(2GS|중PL|세화여)/.test(run("return rosterDiffBox()")), run("return rosterDiffBox()").slice(0, 200));
+  ok("담임 줄이 빈 고PL 칸은 «어느 반인지 모른다» 로 선다 — 팀장이 고른다", /<b>고PL 월/.test(run("return rosterDiffBox()")));
   ok("상자 머리에 «고등부 6반»", run("return rosterDiffBox()").indexOf("고등부 6반") >= 0);
   ok("다른 관 학생은 배정으로 안 잡힌다 (이수민은 예비고1A 한 곳)", !val("S.diff").items.some((it) => it.name === "이수민" && it.kind === "배정" && it.why), JSON.stringify(val("S.diff").items.filter((it) => it.name === "이수민")));
   ok("고등부 반이 하나도 없으면 실패로 적힌다", await (async () => {

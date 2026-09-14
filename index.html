@@ -5941,13 +5941,32 @@ function parseRosterSheet(values) {
 //   - 셋째 덩어리의 «예비고1S» 는 이름은 걸리지만 덩어리 번호로 뺀다. 이걸 안 빼면 월금 덩어리의 예비고1 S 와
 //     같은 열쇠가 둘이 되어 한 사람이 «반 둘에 있다» 로 보인다.
 // 고2·고3 반이 팀에 들어오면 HIGH_CLASS 를 넓힌다.
-var HIGH_CLASS = /^(예비)?고1/, HIGH_BLOCKS = 2;
-function isHighCol(col) { return HIGH_CLASS.test(col.key || "") && (col.block || 0) < HIGH_BLOCKS; }
+//
+// ---- 고PL = 개진반도 (2026-09-15) ----
+// 마왕님 — "통합명단에서 이승엽 개진반에 한 명 추가됐는데 왜 명단 대조를 해도 일치한다고 나오지?"
+//   9/14 에 개진반을 앱에 넣고도 대조는 안 넓혀서 고PL 칸을 통째로 안 봤다. 차이가 있어도 «같다» 였다.
+// 고PL 칸은 정규반과 모양이 다르다:
+//   - 칸 하나가 **요일 하나**다 («고PL 월 (204호)» · «고PL 토2부A» · «고PL 일D»). 한 선생님이 칸을 여럿 가진다
+//   - 칸 이름이 선생님끼리 겹친다 — «고PL 일 (402호)» 가 이승엽·이창혁A 둘이다. 그래서 이름이 아니라 **담임 줄로**
+//     앱의 «개진반 ○○○» 과 맞춘다
+//   - 학생마다 등원 요일이 있다 → 명단에 있어도 요일이 다르면 «요일» 줄로 알린다
+// 중PL(중등) 은 여전히 안 본다. 덩어리 규칙(앞 둘)도 그대로 — 고PL 은 월금·화목 두 덩어리에 나뉘어 있다.
+var HIGH_CLASS = /^(예비)?고1/, HIGH_BLOCKS = 2, PL_CLASS = /^고PL/;
+function isPLCol(col) { return PL_CLASS.test(col.key || ""); }
+function isHighCol(col) { return (HIGH_CLASS.test(col.key || "") || isPLCol(col)) && (col.block || 0) < HIGH_BLOCKS; }
+// 고PL 칸 이름의 첫 요일 글자 (0=일). 못 읽으면 -1 — 그 칸 학생은 요일을 안 따진다. 틀린 «요일» 줄보다 안 묻는 게 낫다
+function plDay(col) { var m = /^고PL\s*([일월화수목금토])/.exec(String(col.label || "").replace(/\s+/g, "")); return m ? DAY_NAMES.indexOf(m[1]) : -1; }
+// 개진반의 선생님 이름 — 명단의 선생님 줄, 없으면 반 이름에서 «개진반» 을 뗀 것
+function indivTeacherOf(c) {
+  var t = (c.roster || []).filter(function (r) { return r.teacher && r.name; })[0];
+  return t ? t.name : String(c.name || "").replace(/^\s*개진반\s*/, "").trim();
+}
 function highCols(cols) { return (cols || []).filter(isHighCol); }
 // 시트 열 ↔ 앱 반. 손으로 정한 것(config.rosterMap)이 먼저, 없으면 이름 열쇠로.
 // 요일까지 붙인 열쇠("예비고1S화목")가 맞으면 그것을, 안 맞으면 요일 뗀 열쇠("고1S")로 본다.
 // **둘 이상 맞으면 안 맞춘 것으로 둔다** — 팀장이 고른다.
-function colMapKey(col) { return col.label.replace(/\s+/g, " ") + "|" + col.day; }
+// 고PL 은 칸 이름이 선생님끼리 겹쳐서 담임까지 붙인다. 정규반 열쇠는 그대로 — 손으로 정해 둔 것이 이미 있다
+function colMapKey(col) { return col.label.replace(/\s+/g, " ") + "|" + col.day + (isPLCol(col) ? "|" + (col.teacher || "") : ""); }
 function classKeys(c) { var k = normClassKey(c.name), t = stripDays(k); return t !== k ? [k, t] : [k]; }
 function sheetColKeys(col) { var k = col.key, d = normClassKey(col.day); return d ? [k + d, k] : [k]; }
 function matchSheetCols(cols) {
@@ -5955,6 +5974,11 @@ function matchSheetCols(cols) {
   return (cols || []).map(function (col) {
     var manual = map[colMapKey(col)];
     if (manual !== undefined) return { col: col, cid: manual || "", manual: true, hits: [] };
+    if (isPLCol(col)) {           // 담임 줄 ↔ 개진반 선생님. 담임이 비었으면 못 맞춘다 — 팀장이 고른다
+      var who = String(col.teacher || "").trim();
+      var ph = who ? classes.filter(function (c) { return isIndividual(c) && indivTeacherOf(c) === who; }) : [];
+      return { col: col, cid: ph.length === 1 ? ph[0].id : "", manual: false, hits: ph.map(function (c) { return c.id; }) };
+    }
     var keys = sheetColKeys(col), hits = [];
     for (var i = 0; i < keys.length && !hits.length; i++) {
       hits = classes.filter(function (c) { return classKeys(c).indexOf(keys[i]) >= 0; });
@@ -5968,10 +5992,15 @@ function matchSheetCols(cols) {
 //   전반: 앱은 이 반, 시트는 저 반                     → 빼고 넣는다
 //   퇴원: 앱 그 반에 있는데 시트 어디에도 없다           → 반에서 뺀다 (사람은 남긴다)
 //   확인: 같은 이름이 앱에 둘 이상                     → 손으로 본다
+//   요일: 개진반에 둘 다 있는데 등원 요일이 다르다        → 다른 요일만 켜고 끈다 (9/15)
+//   개진반으로 가는 신입·배정·전반에는 시트 요일(days)을 같이 싣는다. 정규반 줄에는 절대 안 싣는다(stAssign 참고).
 function rosterDiff(cols) {
   var matched = matchSheetCols(cols).filter(function (m) { return m.cid; });
   var mcid = {}; matched.forEach(function (m) { mcid[m.cid] = 1; });
+  var ind = {}; activeClasses().forEach(function (c) { if (isIndividual(c)) ind[c.id] = 1; });
   var A = {}, B = {}, pidOf = {}, gradeOf = {}, dup = {};
+  // 개진반만 — 앱 요일 Ad · 시트 요일 Bd (이름 → 반 → 요일들). 요일 글자를 못 읽은 칸에 있으면 noDay: 그 반 요일은 안 따진다
+  var Ad = {}, Bd = {}, noDay = {};
   activeClasses().forEach(function (c) {
     if (!mcid[c.id]) return;
     rosterStudents(c).forEach(function (r) {
@@ -5980,32 +6009,50 @@ function rosterDiff(cols) {
       if (pidOf[r.name] && r.pid && pidOf[r.name] !== r.pid) dup[r.name] = 1;
       if (r.pid) pidOf[r.name] = r.pid;
       gradeOf[r.name] = gradeOf[r.name] || r.grade || "";
+      if (ind[c.id]) (Ad[r.name] = Ad[r.name] || {})[c.id] = indivDays(r).slice();
     });
   });
   matched.forEach(function (m) {
-    m.col.students.forEach(function (p) { (B[p.name] = B[p.name] || {})[m.cid] = 1; gradeOf[p.name] = gradeOf[p.name] || p.grade || ""; });
+    var dw = ind[m.cid] ? plDay(m.col) : -1;
+    m.col.students.forEach(function (p) {
+      (B[p.name] = B[p.name] || {})[m.cid] = 1; gradeOf[p.name] = gradeOf[p.name] || p.grade || "";
+      if (!ind[m.cid]) return;
+      Bd[p.name] = Bd[p.name] || {};
+      var set = Bd[p.name][m.cid] = Bd[p.name][m.cid] || [];
+      if (dw < 0) (noDay[p.name] = noDay[p.name] || {})[m.cid] = 1;
+      else if (set.indexOf(dw) < 0) set.push(dw);
+    });
   });
+  var byNum = function (x, y) { return x - y; };
+  var daysTo = function (n, cid) { return ind[cid] ? ((Bd[n] || {})[cid] || []).slice().sort(byNum) : undefined; };
   var names = {}; Object.keys(A).concat(Object.keys(B)).forEach(function (n) { names[n] = 1; });
   var items = [];
   Object.keys(names).sort().forEach(function (n) {
     var a = Object.keys(A[n] || {}), b = Object.keys(B[n] || {});
     var onlyA = a.filter(function (x) { return !(B[n] && B[n][x]); }), onlyB = b.filter(function (x) { return !(A[n] && A[n][x]); });
-    if (!onlyA.length && !onlyB.length) return;
     var g = gradeOf[n] || "";
+    var dayItems = a.filter(function (x) { return ind[x] && B[n] && B[n][x] && !(noDay[n] && noDay[n][x]); }).map(function (cid) {
+      var was = ((Ad[n] || {})[cid] || []).slice().sort(byNum), now = daysTo(n, cid);
+      return was.join(",") === now.join(",") ? null : { kind: "요일", name: n, grade: g, pid: pidOf[n], to: cid, was: was, days: now };
+    }).filter(function (x) { return x; });
+    if (!onlyA.length && !onlyB.length && !dayItems.length) return;
     if (dup[n]) { items.push({ kind: "확인", name: n, grade: g, why: "앱에 같은 이름이 둘 이상이다" }); return; }
-    if (onlyA.length === 1 && onlyB.length === 1) { items.push({ kind: "전반", name: n, grade: g, pid: pidOf[n], from: onlyA[0], to: onlyB[0] }); return; }
+    dayItems.forEach(function (x) { items.push(x); });
+    if (onlyA.length === 1 && onlyB.length === 1) { items.push({ kind: "전반", name: n, grade: g, pid: pidOf[n], from: onlyA[0], to: onlyB[0], days: daysTo(n, onlyB[0]) }); return; }
     onlyA.forEach(function (cid) { items.push({ kind: "퇴원", name: n, grade: g, pid: pidOf[n], from: cid }); });
     onlyB.forEach(function (cid) {
-      if (pidOf[n]) { items.push({ kind: "배정", name: n, grade: g, pid: pidOf[n], to: cid }); return; }
+      var dd = daysTo(n, cid);
+      if (pidOf[n]) { items.push({ kind: "배정", name: n, grade: g, pid: pidOf[n], to: cid, days: dd }); return; }
       var ppl = S.students.filter(function (x) { return x.name === n; });
       if (ppl.length > 1) items.push({ kind: "확인", name: n, grade: g, to: cid, why: "앱에 같은 이름이 둘 이상이다" });
-      else if (ppl.length === 1) items.push({ kind: "배정", name: n, grade: g, pid: ppl[0].pid, to: cid });
-      else items.push({ kind: "신입", name: n, grade: g, to: cid });
+      else if (ppl.length === 1) items.push({ kind: "배정", name: n, grade: g, pid: ppl[0].pid, to: cid, days: dd });
+      else items.push({ kind: "신입", name: n, grade: g, to: cid, days: dd });
     });
   });
   return items;
 }
-function diffKey(it) { return [it.kind, it.name, it.from || "", it.to || ""].join("|"); }
+// «요일» 줄은 요일까지 열쇠에 넣는다 — 무시해 둔 뒤 시트 요일이 또 바뀌면 다시 묻는다
+function diffKey(it) { return [it.kind, it.name, it.from || "", it.to || ""].join("|") + (it.kind === "요일" ? "|" + (it.days || []).join("") : ""); }
 // 차이의 지문. 줄 순서가 달라도 같다 — 같은 차이에 종이 두 번 울리면 안 된다.
 function sigOf(keys) {
   var t = keys.slice().sort().join("\n"), h = 5381;
@@ -6050,8 +6097,8 @@ async function checkRosterSheet(force) {
     var r = await sheetsApi({ action: "values", spreadsheetId: sh.id, range: "'" + tab.title.replace(/'/g, "''") + "'!A1:BZ400" });
     var all = parseRosterSheet(r.values || []);
     if (!all.length) throw new Error("«반» 줄을 못 찾았다 — 탭이 인원 현황 모양이 아니다: " + tab.title);
-    var cols = highCols(all);      // 고등부 반만. 나머지 열은 읽지도 맞추지도 않는다
-    if (!cols.length) throw new Error("고등부 반(고1·예비고1)이 앞 두 덩어리에 없다: " + all.slice(0, 6).map(function (c) { return c.label.replace(/\s+/g, " "); }).join(", "));
+    var cols = highCols(all);      // 고등부 반 + 고PL 만. 나머지 열은 읽지도 맞추지도 않는다
+    if (!cols.length) throw new Error("고등부 반(고1·예비고1·고PL)이 앞 두 덩어리에 없다: " + all.slice(0, 6).map(function (c) { return c.label.replace(/\s+/g, " "); }).join(", "));
     S.sheetCols = cols; S.diffTab = tab.title; S.diffAt = Date.now();
     applyRosterDiff();
     await saveRosterDiff();
@@ -6064,17 +6111,27 @@ async function checkRosterSheet(force) {
 async function applyDiffItem(it) {
   if (!S.byPid || !Object.keys(S.byPid).length) { S.byPid = {}; S.students.forEach(function (x) { S.byPid[x.pid] = x; }); }
   if (it.kind === "신입") {
-    var p = await stCreate({ name: it.name, grade: it.grade || "", school: "", homeroom: "" });
-    await stAssign(it.to, p);
+    // 9/14 마왕님 — 새로 만드는 개진반 학생의 담임은 그 개진반 선생님
+    var cls = S.classes.filter(function (x) { return x.id === it.to; })[0];
+    var hr = cls && isIndividual(cls) ? ((S.teachers.filter(function (t) { return (t.classIds || []).indexOf(it.to) >= 0; })[0] || {}).tid || "") : "";
+    var p = await stCreate({ name: it.name, grade: it.grade || "", school: "", homeroom: hr });
+    await stAssign(it.to, p, it.days);
   } else if (it.kind === "배정") {
     var q = S.byPid[it.pid]; if (!q) throw new Error("그 사람이 명단에 없다");
-    await stAssign(it.to, q);
+    await stAssign(it.to, q, it.days);
   } else if (it.kind === "전반") {
     var w = S.byPid[it.pid]; if (!w) throw new Error("그 사람이 명단에 없다");
     await stUnassign(it.from, it.pid);
-    await stAssign(it.to, w);
+    await stAssign(it.to, w, it.days);
   } else if (it.kind === "퇴원") {
     await stUnassign(it.from, it.pid);
+  } else if (it.kind === "요일") {
+    // 통째로 덮지 않는다 — 시트와 앱이 다른 요일만 켜고 끈다. stSetDay 가 반 명단을 새로 읽어 그 줄만 고친다
+    var was = it.was || [], now = it.days || [];
+    for (var d = 0; d < 7; d++) {
+      var on = now.indexOf(d) >= 0;
+      if ((was.indexOf(d) >= 0) !== on) await stSetDay(it.to, it.pid, d, on);
+    }
   } else throw new Error("이 줄은 손으로 본다");
 }
 async function ignoreDiffItem(it) {
@@ -6084,12 +6141,16 @@ async function ignoreDiffItem(it) {
 }
 var DIFF_KIND = { "신입": ["blue", "사람을 만들고 반에 넣는다 (학교는 나중에 적는다)"], "배정": ["blue", "반에 넣는다"],
   "전반": ["yellow", "옛 반에서 빼고 새 반에 넣는다. 번호는 이어진다"], "퇴원": ["red", "반에서 뺀다. 사람 문서는 남는다 — 다시 오면 기록이 이어진다"],
+  "요일": ["yellow", "등원 요일을 시트대로 고친다 (다른 요일만 켜고 끈다)"],
   "확인": ["", "손으로 본다"] };
 function diffLabel(it) {
   var cn = function (cid) { return cid ? className(cid) : ""; };
-  if (it.kind === "전반") return esc(cn(it.from)) + " → " + esc(cn(it.to));
+  var dl = function (d) { return d && d.length ? dayLabel(d) : "요일 없음"; };
+  if (it.kind === "요일") return esc(cn(it.to)) + " · " + esc(dl(it.was)) + " → " + esc(dl(it.days));
+  var tail = it.days ? " · " + esc(dl(it.days)) : "";        // 개진반으로 가는 줄만 요일이 있다
+  if (it.kind === "전반") return esc(cn(it.from)) + " → " + esc(cn(it.to)) + tail;
   if (it.kind === "퇴원") return esc(cn(it.from));
-  return esc(cn(it.to));
+  return esc(cn(it.to)) + tail;
 }
 function rosterDiffBox() {
   if (S.ro) return "";
@@ -6105,7 +6166,9 @@ function rosterDiffBox() {
       : S.diffErr ? '<span class="pill red">못 읽었다</span>'
       : d ? (d.items.length ? '<span class="pill orange">' + d.items.length + '건 다르다</span>' : '<span class="pill green">같다</span>') : "") +
     (S.diffTab ? '<span class="muted">' + esc(S.diffTab) + '</span>' : "") +
-    (S.sheetCols && S.sheetCols.length ? '<span class="muted" title="고1·예비고1 반만 본다. 고PL·GS·중등·FP 는 안 본다">고등부 ' + S.sheetCols.length + '반</span>' : "") +
+    (S.sheetCols && S.sheetCols.length ? '<span class="muted" title="고1·예비고1 반과 고PL(개진반) 칸만 본다. 중PL·GS·중등·FP 는 안 본다">고등부 ' +
+      S.sheetCols.filter(function (c) { return !isPLCol(c); }).length + '반' +
+      (S.sheetCols.some(isPLCol) ? ' · 개진 ' + S.sheetCols.filter(isPLCol).length + '칸' : "") + '</span>' : "") +
     (when ? '<span class="muted">' + esc(fmtMD(ymd(when))) + " " + ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2) + '</span>' : "") +
     '<span class="sp"></span>' +
     '<button class="mini" data-diff-run="1"' + (S.diffBusy ? " disabled" : "") + '>다시 대조</button>' +
