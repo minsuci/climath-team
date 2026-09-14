@@ -74,7 +74,7 @@ ok("정규반·개진반 둘 다인 학생은 양쪽에 다 뜬다", /data-open=
 run(`S.classes[1].roster[2].days = []`);
 h = run("return classGridHtml()");
 ok("요일 빈 학생은 맨 끝 «요일 없음» 칸에", JSON.stringify(cell(h, "개진반 박리안", "none")) === '["p3"]', JSON.stringify(cell(h, "개진반 박리안", "none")));
-ok("«요일 없음» 칸은 빨갛다 (머리·칸)", /<th class="wk none" data-wk="none"><div class="cn">요일 없음/.test(h) && /<td class="wk none" data-wk="none">[^<]*<div class="ii"/.test(h));
+ok("«요일 없음» 칸은 빨갛다 (머리·칸)", /<th class="wk none" data-wk="none"><div class="cn">요일 없음/.test(h) && /<td class="wk none" data-wk="none"><div class="icols"><div class="icol"><div class="ii"/.test(h));
 ok("요일 빈 학생이 없는 반의 «요일 없음» 칸은 빈 흰 칸", /<td class="wk" data-wk="none"><\/td>/.test(h));
 ok("그 학생은 다른 요일 칸에는 없다", cell(h, "개진반 박리안", 6).indexOf("p3") < 0);
 
@@ -87,6 +87,35 @@ ok("그만둔 학생은 요일 칸에서도 빠진다", cell(h, "개진반 박�
 setup(); run(`S.classes = S.classes.filter(function(c){ return c.type !== "individual"; })`);
 h = run("return classGridHtml()");
 ok("개진반이 없으면 요일 표도 없다", h.indexOf("cgrid ind") < 0);
+
+// ---- 한 칸에 8명 넘으면 옆 열로 (9/15 «너무 위아래로 길다. 2열로, 한 열에 8명까지») ----
+const colsOf = (h, cls, wk) => {
+  const tb = /<table class="cgrid ind">([\s\S]*?)<\/table>/.exec(h)[1];
+  const row = tb.split("<tr>").filter((r) => r.indexOf('<div class="cn">' + cls + "</div>") >= 0)[0];
+  const td = new RegExp('<td class="wk[^"]*" data-wk="' + wk + '">([\\s\\S]*?)</td>').exec(row)[1];
+  return td.split('<div class="icol">').slice(1).map((c) => (c.match(/data-open="([^"]+)"/g) || []).map((x) => x.slice(11, -1)));
+};
+const crowd = (n) => {
+  setup();
+  run(`var k = S.classes[1]; k.roster = [k.roster[0]];
+    for (var i = 0; i < ${n}; i++) { var nm = "학생" + String.fromCharCode(44032 + i); S.students.push({ pid:"q" + i, name:nm, grade:"중3" });
+      k.roster.push({ id:"x" + i, pid:"q" + i, name:nm, grade:"중3", days:[6] }); }
+    S.byPid = {}; S.students.forEach(function (x) { S.byPid[x.pid] = x; });`);
+  return colsOf(run("return classGridHtml()"), "개진반 박리안", 6);
+};
+{
+  const c8 = crowd(8), c9 = crowd(9), c14 = crowd(14), c16 = crowd(16), c17 = crowd(17);
+  ok("8명은 한 열", c8.length === 1 && c8[0].length === 8, JSON.stringify(c8.map((c) => c.length)));
+  ok("9명이면 두 열 — 8 + 1", c9.length === 2 && c9[0].length === 8 && c9[1].length === 1, JSON.stringify(c9.map((c) => c.length)));
+  ok("14명(지금 박리안 토요일) — 8 + 6", JSON.stringify(c14.map((c) => c.length)) === "[8,6]", JSON.stringify(c14.map((c) => c.length)));
+  ok("16명까지 두 열", JSON.stringify(c16.map((c) => c.length)) === "[8,8]");
+  ok("17명부터는 셋째 열 — 이름이 안 잘린다", JSON.stringify(c17.map((c) => c.length)) === "[8,8,1]", JSON.stringify(c17.map((c) => c.length)));
+  ok("열은 위에서 아래로 채운다 — 이름순이 첫 열 끝에서 둘째 열 머리로 이어진다",
+    JSON.stringify(c9[0].concat(c9[1])) === JSON.stringify(["q0","q1","q2","q3","q4","q5","q6","q7","q8"]), JSON.stringify(c9));
+  ok("CSS — 열을 옆으로 붙인다", /table\.cgrid\.ind \.icols \{[^}]*display: flex/.test(fs.readFileSync("index.html", "utf8")));
+}
+setup(); h = run("return classGridHtml()");
+ok("빈 칸에는 열 상자를 안 만든다", /<td class="wk" data-wk="3"><\/td>/.test(h));
 
 // div 짝
 setup(); h = run("return classGridHtml()");

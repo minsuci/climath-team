@@ -465,6 +465,7 @@
   table.cgrid.ind td.wk.none { background: #fdf1f1; }
   table.cgrid.ind thead th.none .cn { color: var(--red); }
   table.cgrid.ind .ii { line-height: 1.7; }
+  table.cgrid.ind .icols { display: flex; gap: 6px; align-items: flex-start; }
   table.cgrid.ind .ii.dim { opacity: .22; }
 
   /* 명단 편집 시트 */
@@ -5372,7 +5373,7 @@ function classGridTable(cols) {
 // «토요일에 누가 오나» 를 한 칸으로 보는 게 목적이라 겹쳐 뜨는 게 맞다. 선생님 칸의 인원은 사람 수(겹침 없이).
 // 요일이 빈 학생은 **맨 끝 «요일 없음» 칸**에 빨갛게 — 그런 학생이 하나라도 있을 때만 칸이 생긴다.
 // 그 학생은 어느 날 업무보고에도 안 뜬다(indivDays 참고). 요일 칸 표에서 조용히 사라지면 안 된다.
-var INDIV_WEEK = [1, 2, 3, 4, 5, 6, 0];
+var INDIV_WEEK = [1, 2, 3, 4, 5, 6, 0], INDIV_PER_COL = 8;
 function indivOnDay(x, k) {
   return x.studs.filter(function (r) { var d = indivDays(r); return k === "none" ? !d.length : d.indexOf(k) >= 0; })
     .sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || ""), "ko"); });
@@ -5390,8 +5391,14 @@ function indivGridTable(cols) {
       '<div class="cm">' + (x.t ? esc(x.t) : '<span class="red">담당 없음</span>') + ' · <span class="cnt">' + x.studs.length + '</span>명</div></th>' +
       keys.map(function (k) {
         var list = indivOnDay(x, k);
+        // 한 열에 INDIV_PER_COL 명까지 — 넘으면 옆 열로 (9/15 마왕님 «너무 위아래로 길다. 2열로, 한 열에 8명까지»).
+        // 열은 위에서 아래로 채운다(이름순이 첫 열 끝에서 둘째 열 머리로 이어진다). 16명을 넘으면 셋째 열 — 이름을 자르지는 않는다
+        var chunks = [];
+        for (var ci = 0; ci < list.length; ci += INDIV_PER_COL) chunks.push(list.slice(ci, ci + INDIV_PER_COL));
         return '<td class="wk' + (k === "none" && list.length ? " none" : "") + '" data-wk="' + k + '">' +
-          list.map(function (r) { return indivGridName(x, r); }).join("") + '</td>';
+          (chunks.length ? '<div class="icols">' + chunks.map(function (ch) {
+            return '<div class="icol">' + ch.map(function (r) { return indivGridName(x, r); }).join("") + '</div>';
+          }).join("") + '</div>' : "") + '</td>';
       }).join("") + '</tr>';
   }).join("");
   return '<div class="gridwrap"><table class="cgrid ind"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
