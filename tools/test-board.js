@@ -240,6 +240,11 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   ok("어느 블록도 화면 너비를 안 넘는다", P.parts.every((part) => part.ks.every((k) => k * P.w + (k - 1) * 4 + 12 <= 1870)));
   ok("세로 한 줄이 아니다 — 개진반 박리안(21명)이 여러 열로 퍼진다", P.parts[2].ks[1] >= 2, JSON.stringify(P.parts[2]));
   ok("같은 묶음 블록은 줄 수를 가지런히 (박리안이 제일 길다)", Math.max.apply(null, P.parts[2].rs) === P.parts[2].rs[1]);
+  // 9/15 «두 반 듣는 학생은 한 번만» 뒤 실제 인원 — 107장 (개진반 7반 58명 → 블록 5개 38명, 이승엽·정찬준은 전원 앞 반에)
+  const DEDUP = [[5, 8, 4, 14], [5, 8, 4, 3, 11, 4], [8, 19, 5, 2, 4], [3]];
+  const D = pack(DEDUP, 1870, 785);
+  ok("겹침을 빼면 1920 어림(1870×785)에 한 화면 — 카드 88", D.fits && D.w === 88 && D.h <= 785, JSON.stringify({ w: D.w, h: Math.round(D.h) }));
+  ok("겹침 뺀 것도 가장 큰 폭 — 2px 더 크면 넘친다", atH(DEDUP, D.w + 2, 1870) > 785, D.w + " → " + Math.round(atH(DEDUP, D.w + 2, 1870)));
   const small = pack(REAL, 980, 361);
   ok("작은 창(980×361)은 84 에서 멈추고 스크롤", !small.fits && small.w === 84, JSON.stringify({ w: small.w, fits: small.fits }));
   ok("한 반만 걸렀으면 180 까지 커진다", pack([[3]], 1870, 785).w === 180);
