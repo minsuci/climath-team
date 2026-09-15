@@ -1789,11 +1789,13 @@ function boardMiniHtml(x) {
 }
 // ---- 반별로 묶기 (9/15 마왕님 «학생명단처럼 반별로 묶여있으면 좋을 듯») ----
 // 학생 명단 배치표와 같은 묶음: 고3·고2·고1·예비고1 줄(GRID_GROUPS) → 개진반 → 그 밖 → 반 미배정.
-// 한 줄에 반 블록이 나란하고, 블록 안의 작은 카드는 **한 열에 8장씩 위에서 아래로** 채운다(개진반 요일 표와 같은 규칙).
+// 한 줄에 반 블록이 나란하고, 블록 안의 작은 카드는 위에서 아래로 채운다.
 // 두 반을 듣는 학생은 **두 블록에 다 뜬다** — 배치표도 그렇다. 머리의 «학생 N명» 은 겹침 없이 센다.
-// ⚠ 한 화면에 전원(9/15 «3번»)은 이걸로 포기했다 — 반마다 세로로 8장이라 묶음 줄이 넷이면 1920 화면에서도 넘친다.
-//   카드 너비만 화면에 맞추고(가장 빽빽한 줄이 한 줄에 들어가게) 세로는 스크롤한다.
+// 처음엔 배치표처럼 블록마다 한 열 8장으로 세웠더니 세로가 넘쳐 «한 화면에 전원» 을 못 지켰다.
+// 9/15 마왕님 «꼭 세로로 한 줄이 아니어도 됨. 한 화면에 최대한 많은 인원» → 블록의 열·줄 수를 **화면에 맞춰 고른다**(boardPack).
 var BOARD_GAP = 4, BOARD_MIN_W = 84, BOARD_MAX_W = 180, BOARD_PER_COL = 8, BOARD_BLOCK_GAP = 10, BOARD_BLOCK_PAD = 12;
+// 세로 셈에 쓰는 어림값(px) — 반 블록 머리 두 줄+안쪽 여백 · 묶음 머리 · 묶음 사이. 어림이 틀리면 boardApplyFit 이 실제로 재서 줄인다
+var BOARD_BLOCK_HEAD = 40, BOARD_GROUP_HEAD = 30, BOARD_GROUP_GAP = 8;
 function boardGroups(shown) {
   var byPid = {}; shown.forEach(function (x) { byPid[x.p.pid] = x; });
   var me = S.claims ? teacherName(S.claims.tid) : "";
@@ -1816,44 +1818,84 @@ function boardGroups(shown) {
   return groups;
 }
 function boardGroupsHtml(groups) {
-  return groups.map(function (g) {
+  return '<div class="bd-groups">' + groups.map(function (g) {
     var uniq = {}; g.blocks.forEach(function (b) { b.xs.forEach(function (x) { uniq[x.p.pid] = 1; }); });
     return '<div class="bd-grp"><h3 class="gh">' +
       '<span class="pill' + (g.grade ? " " + gradeCls(g.grade) : g.loose ? " red" : "") + '">' + esc(g.name) + '</span>' +
       '<span class="muted">' + (g.loose ? "" : g.blocks.length + "반 · ") + Object.keys(uniq).length + '명</span></h3>' +
       '<div class="bd-row-cls">' + g.blocks.map(function (b) {
         var k = Math.max(1, Math.ceil(b.xs.length / BOARD_PER_COL)), r = Math.min(b.xs.length, BOARD_PER_COL);
-        return '<div class="bd-cb' + (b.mine ? " mine" : "") + '" data-k="' + k + '" data-cid="' + esc(b.c.id) + '">' +
+        return '<div class="bd-cb' + (b.mine ? " mine" : "") + '" data-n="' + b.xs.length + '" data-k="' + k + '" data-cid="' + esc(b.c.id) + '">' +
           '<div class="bd-ch" title="' + esc(b.c.name + (b.t ? " · " + b.t : "")) + '"><b>' + esc(b.c.name) + '</b><span class="muted">' +
             (b.t ? esc(b.t) + " · " : "") + b.xs.length + '명</span></div>' +
           '<div class="bd-cg" style="--k:' + k + ';--r:' + r + '">' + b.xs.map(boardMiniHtml).join("") + '</div></div>';
       }).join("") + '</div></div>';
-  }).join("");
+  }).join("") + '</div>';
 }
-// 카드 너비. rows = 줄마다 [반 블록의 열 수…]. 가장 빽빽한 줄이 너비 W 한 줄에 들어가는 폭(84~180).
-// 84 밑이면 줄이 접힌다(flex-wrap) — 이름을 못 읽을 만큼 줄이지는 않는다.
-function boardColW(rows, W) {
-  var w = BOARD_MAX_W;
-  (rows || []).forEach(function (ks) {
-    if (!ks || !ks.length) return;
-    var cols = ks.reduce(function (a, b) { return a + b; }, 0);
-    var fixed = (ks.length - 1) * BOARD_BLOCK_GAP + ks.length * BOARD_BLOCK_PAD + (cols - ks.length) * BOARD_GAP;
-    w = Math.min(w, Math.floor((W - fixed) / cols));
-  });
-  return Math.max(BOARD_MIN_W, w);
+// ---- 한 화면에 최대한 (9/15) ----
+// 한 묶음(인원 ns = [반마다 인원…])을 카드 폭 w · 너비 W 에 까는 가장 낮은 모양.
+// 블록들이 함께 쓸 줄 수 R 을 1 부터 늘려 보며, 반마다 열 수 k = ceil(n / R)(너비를 넘지 않게) → 블록을 줄지어 늘어놓고(넘치면 다음 줄)
+// 그 높이가 가장 낮은 R 을 고른다. 줄 수가 같으면 블록 높이가 가지런해 빈틈이 적다.
+function boardPackGroup(ns, w, W) {
+  var h = w * 5 / 8, kmax = Math.max(1, Math.floor((W - BOARD_BLOCK_PAD + BOARD_GAP) / (w + BOARD_GAP)));
+  var maxN = Math.max.apply(null, ns.concat([1])), best = null;
+  for (var R = 1; R <= maxN; R++) {
+    var ks = ns.map(function (n) { return Math.max(1, Math.min(kmax, Math.ceil(n / R))); });
+    var rs = ns.map(function (n, i) { return Math.max(1, Math.ceil(n / ks[i])); });
+    var lineW = 0, lineH = 0, total = 0, lines = 0;
+    for (var i = 0; i < ns.length; i++) {
+      var bw = ks[i] * w + (ks[i] - 1) * BOARD_GAP + BOARD_BLOCK_PAD;
+      var bh = BOARD_BLOCK_HEAD + rs[i] * h + (rs[i] - 1) * BOARD_GAP;
+      if (lineW > 0 && lineW + BOARD_BLOCK_GAP + bw > W) { total += lineH; lines++; lineW = 0; lineH = 0; }
+      lineW += (lineW > 0 ? BOARD_BLOCK_GAP : 0) + bw; lineH = Math.max(lineH, bh);
+    }
+    total += lineH; lines++; total += (lines - 1) * BOARD_BLOCK_GAP;
+    if (!best || total < best.h - 0.5) best = { h: total, ks: ks, rs: rs, lines: lines };
+  }
+  return best;
 }
-// 그려진 줄을 재서 카드 너비를 정한다(--bw). 메뉴가 안 떠 있으면 잴 수 없으니 그만둔다 — showPage 가 띄울 때 다시 부른다
+// 묶음들 전체 높이 (카드 폭 w)
+function boardPackAt(groups, w, W) {
+  var parts = (groups || []).map(function (ns) { return boardPackGroup(ns, w, W); });
+  var h = parts.reduce(function (m, p) { return m + p.h + BOARD_GROUP_HEAD; }, 0) + Math.max(0, parts.length - 1) * BOARD_GROUP_GAP;
+  return { h: h, parts: parts };
+}
+// 너비 W · 높이 H 에 스크롤 없이 들어가는 **가장 큰** 카드 폭(2px 씩). 84 에서도 안 들어가면 84 로 두고 스크롤(fits:false).
+function boardPack(groups, W, H) {
+  groups = (groups || []).filter(function (ns) { return ns && ns.length; });
+  if (!groups.length || !(W > 0)) return { w: BOARD_MAX_W, fits: true, h: 0, parts: [] };
+  for (var w = BOARD_MAX_W; w >= BOARD_MIN_W; w -= 2) {
+    var at = boardPackAt(groups, w, W);
+    if (at.h <= H) return { w: w, fits: true, h: at.h, parts: at.parts };
+  }
+  var low = boardPackAt(groups, BOARD_MIN_W, W);
+  return { w: BOARD_MIN_W, fits: false, h: low.h, parts: low.parts };
+}
+// 그려진 묶음을 재서 카드 폭(--bw)과 블록마다 열·줄(--k·--r)을 입힌다. 다시 그리지 않고 모양만 바꾼다.
+// 어림값이 실제와 다르면(글꼴·줄바꿈) 넘친 만큼 높이 예산을 줄여 두 번까지 다시 맞춘다.
 function boardApplyFit() {
-  var el = $("#sec-board"); if (!el || el.hidden || !el.querySelectorAll) return;
-  var rows = [], W = 0;
-  $$(".bd-row-cls", el).forEach(function (row) {
-    W = Math.max(W, row.clientWidth || 0);
-    rows.push(Array.prototype.map.call($$(".bd-cb", row), function (b) { return Number(b.getAttribute("data-k")) || 1; }));
-  });
-  if (!rows.length || !W) return;
-  var w = boardColW(rows, W);
-  if (el.style && el.style.setProperty) el.style.setProperty("--bw", w + "px");
-  S.bdColW = w;
+  var el = $("#sec-board"); if (!el || el.hidden || !el.querySelector) return;
+  var wrap = el.querySelector(".bd-groups"); if (!wrap || !wrap.getBoundingClientRect) return;
+  var grps = Array.prototype.slice.call($$(".bd-grp", wrap));
+  var blocks = grps.map(function (g) { return Array.prototype.slice.call($$(".bd-cb", g)); });
+  var groups = blocks.map(function (bs) { return bs.map(function (b) { return Number(b.getAttribute("data-n")) || 1; }); });
+  var sy = window.scrollY || window.pageYOffset || 0;
+  var W = wrap.clientWidth, budget = window.innerHeight - (wrap.getBoundingClientRect().top + sy) - 12, pk = null;
+  for (var t = 0; t < 3; t++) {
+    pk = boardPack(groups, W, budget);
+    if (el.style && el.style.setProperty) el.style.setProperty("--bw", pk.w + "px");
+    pk.parts.forEach(function (part, gi) {
+      (blocks[gi] || []).forEach(function (b, bi) {
+        b.setAttribute("data-k", part.ks[bi]);
+        var cg = b.querySelector(".bd-cg");
+        if (cg && cg.style) { cg.style.setProperty("--k", part.ks[bi]); cg.style.setProperty("--r", part.rs[bi]); }
+      });
+    });
+    var over = wrap.getBoundingClientRect().bottom + sy - (window.innerHeight - 12);
+    if (!pk.fits || over <= 0) break;
+    budget -= over;
+  }
+  S.bdPack = pk;
 }
 function boardHit(x) {
   if (S.bdCls === "_none") { if (x.cls.length) return false; }

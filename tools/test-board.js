@@ -193,25 +193,45 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   ok("개진반 블록 — 그 반 학생만 (옛줄 p4 · 진유준)", JSON.stringify(opens(block("k1"))) === '["p4","p1"]', JSON.stringify(opens(block("k1"))));
   ok("반 블록 머리 — 반 이름 · 담당 · 인원", /<div class="bd-ch" title="고1S · 한민수"><b>고1S<\/b><span class="muted">한민수 · 3명<\/span>/.test(hg));
   ok("반 블록 머리는 두 줄 — 좁은 블록에서 반 이름이 «고…» 로 안 잘린다 (9/15 실제 화면)", /\.bd-ch \{[^}]*flex-direction: column/.test(html));
-  ok("내가 담당인 반 블록은 파랗게", /<div class="bd-cb mine" data-k="1" data-cid="c1">/.test(hg) && /<div class="bd-cb" data-k="1" data-cid="k1">/.test(hg));
+  ok("내가 담당인 반 블록은 파랗게 · 블록에 인원(data-n)", /<div class="bd-cb mine" data-n="3" data-k="1" data-cid="c1">/.test(hg) && /<div class="bd-cb" data-n="2" data-k="1" data-cid="k1">/.test(hg));
+  ok("묶음 전체를 한 상자로 (화면에 맞출 때 잰다)", /<div class="bd-groups"><div class="bd-grp">/.test(hg));
   ok("반 미배정은 빨간 머리 · 반 수 없이", /<span class="pill red">반 미배정<\/span><span class="muted">1명/.test(hg) && opens(block("_none")).join() === "p5");
   ok("묶음 머리 인원은 겹침 없이 (고1 3명)", heads[0] === "고11반 · 3명");
-  // 한 열에 8장
+  // 재기 전 기본 모양 — 한 열에 8장 (화면에 맞추면 boardApplyFit 이 열·줄을 다시 입힌다)
   run(`for (var i = 0; i < 9; i++) { S.students.push({ pid:"z" + i, name:"학생" + String.fromCharCode(44032 + i), grade:"고1" });
          S.classes[0].roster.push({ id:"zz" + i, pid:"z" + i, name:"학생" + String.fromCharCode(44032 + i) }); }
        S.byPid = {}; S.students.forEach(function (x) { S.byPid[x.pid] = x; }); renderBoard();`);
   const h12 = val("__BOX.innerHTML");
-  ok("한 반 12명이면 두 열 — 한 열 8장 (data-k 2 · --r 8)", /<div class="bd-cb mine" data-k="2" data-cid="c1">[\s\S]*?<div class="bd-cg" style="--k:2;--r:8">/.test(h12));
+  ok("재기 전 기본값 — 12명이면 두 열 · 한 열 8장", /<div class="bd-cb mine" data-n="12" data-k="2" data-cid="c1">[\s\S]*?<div class="bd-cg" style="--k:2;--r:8">/.test(h12));
   ok("CSS — 블록 안은 열부터 채운다 (위→아래)", /\.bd-cg \{[^}]*grid-auto-flow: column/.test(html) && /\.bd-cg \{[^}]*repeat\(var\(--k, 1\), var\(--bw/.test(html));
   ok("CSS — 반 블록 줄은 넘치면 접힌다", /\.bd-row-cls \{[^}]*flex-wrap: wrap/.test(html));
 
-  // ---- 카드 너비 ----
-  const colW = (rows, W) => val(`boardColW(${JSON.stringify(rows)}, ${W})`);
-  ok("개진반 줄(열 2·3·1·1·1·2·1) · 1870px — 카드 155", colW([[2, 3, 1, 1, 1, 2, 1]], 1870) === 155, String(colW([[2, 3, 1, 1, 1, 2, 1]], 1870)));
-  ok("가장 빽빽한 줄에 맞춘다", colW([[1, 1], [2, 3, 1, 1, 1, 2, 1]], 1870) === 155);
-  ok("반 하나뿐이면 180 에서 멈춘다", colW([[1]], 1870) === 180);
-  ok("좁으면 84 밑으로는 안 간다 — 줄이 접힌다", colW([[2, 3, 1, 1, 1, 2, 1]], 500) === 84);
-  ok("줄이 없으면 안 터진다", colW([], 1000) === 180);
+  // ---- 한 화면에 최대한 (9/15 «꼭 세로로 한 줄이 아니어도 됨. 한 화면에 최대한 많은 인원») ----
+  // 26년 9월 실제 반별 인원 — 고1 · 예비고1 · 개진반 · 반 미배정
+  const REAL = [[5, 8, 4, 14], [5, 8, 4, 3, 11, 4], [10, 21, 6, 2, 3, 10, 8], [3]];
+  const pack = (g, W, H) => val(`boardPack(${JSON.stringify(g)}, ${W}, ${H})`);
+  const atH = (g, w, W) => val(`boardPackAt(${JSON.stringify(g)}, ${w}, ${W})`).h;
+  const P = pack(REAL, 1870, 785);
+  // ⚠ 1920 화면(1870×785)은 84px 에서도 약 12px 모자란다 — 묶음 머리 넷 · 반 머리 줄마다 두 줄이 약 300px 를 먹는다.
+  //   (처음엔 «1920 이면 96px 로 들어간다» 고 어림했다가 머리 몫을 빠뜨린 것이었다 — 시험이 잡았다)
+  ok("1920 어림(1870×785) — 84 에서 약간 모자라 스크롤 (거짓으로 «들어간다» 하지 않는다)", !P.fits && P.w === 84 && P.h > 785 && P.h - 785 < 40, JSON.stringify({ w: P.w, h: Math.round(P.h) }));
+  const BIG = pack(REAL, 2510, 1145);
+  ok("2560 화면(2510×1145)은 한 화면에 — 카드 128", BIG.fits && BIG.w === 128 && BIG.h <= 1145, JSON.stringify({ w: BIG.w, h: Math.round(BIG.h) }));
+  ok("들어가는 것 중 가장 큰 폭이다 — 2px 더 크면 넘친다", atH(REAL, BIG.w + 2, 2510) > 1145, BIG.w + " → " + Math.round(atH(REAL, BIG.w + 2, 2510)));
+  ok("세로 한 열 8장보다 낮다 — 1870 · 84px 에서 박리안 21명이 3줄 7열 이하로", Math.max.apply(null, P.parts[2].rs) < 8, JSON.stringify(P.parts[2].rs));
+  ok("블록마다 열×줄이 인원을 다 담는다 (줄 = ceil(인원/열))", REAL.every((ns, gi) => ns.every((n, bi) => {
+    const k = P.parts[gi].ks[bi], r = P.parts[gi].rs[bi]; return k * r >= n && r === Math.ceil(n / k); })), JSON.stringify(P.parts.map((x) => [x.ks, x.rs])));
+  ok("어느 블록도 화면 너비를 안 넘는다", P.parts.every((part) => part.ks.every((k) => k * P.w + (k - 1) * 4 + 12 <= 1870)));
+  ok("세로 한 줄이 아니다 — 개진반 박리안(21명)이 여러 열로 퍼진다", P.parts[2].ks[1] >= 2, JSON.stringify(P.parts[2]));
+  ok("같은 묶음 블록은 줄 수를 가지런히 (박리안이 제일 길다)", Math.max.apply(null, P.parts[2].rs) === P.parts[2].rs[1]);
+  const small = pack(REAL, 980, 361);
+  ok("작은 창(980×361)은 84 에서 멈추고 스크롤", !small.fits && small.w === 84, JSON.stringify({ w: small.w, fits: small.fits }));
+  ok("한 반만 걸렀으면 180 까지 커진다", pack([[3]], 1870, 785).w === 180);
+  ok("묶음이 없으면 안 터진다", pack([], 1870, 785).fits === true && pack([[]], 1870, 785).fits === true);
+  ok("묶음 높이는 줄 수를 고른 가장 낮은 모양 — 한 줄로 늘어놓기보다 낮거나 같다", (() => {
+    const g = val(`boardPackGroup([10,21,6,2,3,10,8], 100, 1870)`);
+    return g.h <= val(`boardPackGroup([10,21,6,2,3,10,8], 100, 1870)`).h && g.rs.length === 7;
+  })());
 
   // ---- 위쪽 줄 접기 ----
   setup();
