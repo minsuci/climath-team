@@ -1741,6 +1741,51 @@ function rpClean(rep) {
     }),
     toLead: String(rep.toLead || "").trim() };
 }
+// ---- 낸 출석을 수업관리 앱에도 찍는다 (9/15 마왕님 «업무보고에 출석으로 제출하면 클래스앱에도 출석으로») ----
+// 앱은 «문서가 있으면 출석» 하나뿐이다(classes/{cid}/days/{date}/attendance/{sid}). 그래서 지각·조퇴도 출석으로 찍는다.
+// - 이미 찍힌 학생(학생이 스스로 찍은 것)은 안 건드린다 — 찍은 시각이 남아야 한다
+// - 결석은 **팀체크가 찍은 것(byTeam)만** 지운다. 출석으로 냈다가 결석으로 고친 것을 되돌리는 것이지,
+//   학생이 스스로 찍은 출석을 보고 한 줄로 지우지는 않는다
+// - 앞날짜 보고는 안 찍는다. 앱 규칙이 담당 반 days 쓰기를 원래 열어 두어 규칙은 안 고쳤다
+// - 선생님은 읽기 계정이라 쓰기마다 passWrite 로 연다(동기 구간만 열리므로 set/delete 를 그 안에서 바로 부른다)
+// ⚠ 여기서 던지면 보고는 저장됐는데 «내지 못했다» 가 뜬다. 반마다 잡아서 failed 로만 돌려준다.
+var RP_PRESENT = { "출석": 1, "지각": 1, "조퇴": 1 };
+async function rpSyncAppAtt(rep) {
+  var out = { added: 0, removed: 0, failed: [] };
+  if (!rep || !rep.date || rep.date > TODAY) return out;
+  await Promise.all((rep.classes || []).map(async function (c) {
+    try {
+      var day = db.collection("classes").doc(c.cid).collection("days").doc(rep.date);
+      var col = day.collection("attendance"), have = {};
+      (await col.get()).forEach(function (x) { have[x.id] = (x.data && x.data()) || {}; });
+      var add = [], del = [];
+      (c.students || []).forEach(function (st) {
+        if (!st.sid) return;
+        if (RP_PRESENT[st.att] && !have[st.sid]) add.push(st);
+        else if (st.att === "결석" && have[st.sid] && have[st.sid].byTeam) del.push(st);
+      });
+      if (!add.length && !del.length) return;
+      await Promise.all(add.map(function (st) {
+        return passWrite(function () { return col.doc(st.sid).set({ name: st.name, time: Date.now(), byTeacher: true, byTeam: true }); })
+          .then(function () { out.added++; });
+      }).concat(del.map(function (st) {
+        return passWrite(function () { return col.doc(st.sid).delete(); }).then(function () { out.removed++; });
+      })));
+      // 앱 월간 출석부가 «그 날 뭔가 있었다» 를 보는 자리 — 앱의 touchDay 와 같다
+      if (add.length) await passWrite(function () { return day.set({ updated: Date.now() }, { merge: true }); }).catch(function () {});
+    } catch (e) { out.failed.push(c.name || c.cid); }
+  }));
+  return out;
+}
+function rpAttSyncNote(saved) {
+  var y = S.rpAttSync;
+  if (!y || !saved || y.tid !== saved.tid || y.date !== saved.date) return "";
+  var bits = [];
+  if (y.added) bits.push("출석 " + y.added + "명 찍음");
+  if (y.removed) bits.push(y.removed + "명 지움");
+  return (bits.length ? ' <span class="muted">· 수업관리 앱 ' + bits.join(" · ") + '</span>' : "") +
+    (y.failed.length ? ' <span class="red" style="font-size:12px">· 수업관리 앱 출석을 못 옮긴 반: ' + esc(y.failed.join(", ")) + '</span>' : "");
+}
 // ⚠ **자기 칸에만 쓴다.** 팀장도 남의 보고는 못 고친다 — 규칙도 같다(tid == myTid()).
 //   선생님은 읽기 계정이라 쓰기 가로채기(guardWrites)를 passWrite 로 한 번 연다 (toggleMyMark 와 같다).
 // ⚠ 이름을 saveReport 로 지었다가 «한 줄 보고» 의 saveReport(id, text) 와 겹쳐 **조용히 덮였다** (2026-09-11).
@@ -1755,6 +1800,9 @@ async function saveDailyReport(rep) {
   var doc = Object.assign(rpClean(rep), { submitted: (prev && prev.submitted) || now, updated: now });
   await passWrite(function () { return rpCol(tid).doc(rep.date).set(doc); });
   S.reports = S.reports || {}; S.reports[tid] = S.reports[tid] || {}; S.reports[tid][rep.date] = doc;
+  // 낸 출석을 수업관리 앱에도 (rpSyncAppAtt) — 못 옮겨도 보고는 낸 것이다
+  try { S.rpAttSync = Object.assign({ tid: tid, date: rep.date }, await rpSyncAppAtt(doc)); }
+  catch (e) { S.rpAttSync = { tid: tid, date: rep.date, added: 0, removed: 0, failed: ["전체 — " + e.message] }; }
   // ⚠ **처음 올릴 때만** 팀장 폰을 울린다. 고칠 때마다 울리면 하루에 열 번이고, 그러면 끄게 된다.
   if (!prev || !prev.submitted) pingLead("report");
   // 보고에서 «완료» 로 고른 할 일은 **내 완료 표시**로도 남긴다 — 할 일 메뉴·완료 현황이 같은 것을 보게.
@@ -2261,7 +2309,7 @@ function rpDrawMine(box, d) {
   }
   var rep = S.rpEdit.rep, chk = rpCheck(rep);
   var st = saved && saved.submitted
-    ? '<span class="pill green">냈다 ' + esc(rpHM(saved.updated || saved.submitted)) + '</span> <span class="muted">고친 뒤 다시 내면 덮어쓴다</span>'
+    ? '<span class="pill green">냈다 ' + esc(rpHM(saved.updated || saved.submitted)) + '</span> <span class="muted">고친 뒤 다시 내면 덮어쓴다</span>' + rpAttSyncNote(saved)
     : (rpExpected(me, d) && rpDeadline(d) <= Date.now()
         ? '<span class="pill red">안 냈다 — 다음 날 아침 8시가 지났다</span>'
         : '<span class="pill">아직 안 냈다</span> <span class="muted">다음 날 아침 8시까지 내면 된다</span>');
@@ -2444,7 +2492,11 @@ function rpWireMine(box) {
     if (chk.stop.length) { alert(chk.stop.join("\n")); return; }
     if (chk.warn.length && !confirm("이대로 낼까?\n\n" + chk.warn.join("\n"))) return;
     go.disabled = true;
-    try { await saveDailyReport(rep); S.rpEdit = null; renderBanner(); renderReport(); }
+    try {
+      await saveDailyReport(rep); S.rpEdit = null; renderBanner(); renderReport();
+      var y = S.rpAttSync;
+      if (y && y.failed.length) alert("보고는 냈다. 다만 수업관리 앱에 출석을 못 옮긴 반이 있다: " + y.failed.join(", ") + "\n앱에서 직접 찍거나, 잠시 뒤 «다시 내기» 를 누른다.");
+    }
     catch (e) { go.disabled = false; alert("내지 못했다: " + e.message); }
   };
 }

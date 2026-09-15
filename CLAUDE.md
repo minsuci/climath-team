@@ -31,6 +31,7 @@ repo/
 |---|---|---|---|
 | `firebase.app()` 기본 | climath-class | teachers · classes · appConfig · exams · scores | 읽기만 |
 | 〃 | 〃 | **students · classes.roster** | **쓴다** — 학생 명단이 이 앱에서 관리된다 |
+| 〃 | 〃 | **classes/{cid}/days/{date}/attendance** | **쓴다** — 업무보고를 낼 때 출석을 찍는다(`rpSyncAppAtt`, 2026-09-15) |
 | `teamApp` | climath-team | `dash/tasks`(팀 할 일 공개분) · `dash/config`(시트·저장소) · `dash/students`(메모) | 여기만 |
 | 〃 | 〃 | `dash/tasksLead` — **팀장 전용 할 일** | 〃 |
 | 〃 | 〃 | `minutes`(회의록) — **`open` 인 것만 선생님이 읽는다** | push-minutes.mjs |
@@ -1726,6 +1727,11 @@ node tools/test-done.js
 
 - **명단은 앱 규칙 그대로** — 정규반은 반 요일에 명단 전원, 개별진도반만 학생 요일(`rpClassesOn`·`rpStudentsOn`). 쉬는 날(`holidayOf`)은 수업 없음
 - 판을 열 때 수업관리 앱에서 출석·상담·보강을 읽어 **미리 채운다**(`rpLoadApp`→`rpApplyApp`). 못 읽으면 비운다(결석으로 적지 않는다). 선생님이 고른 출결은 안 덮는다
+- **낼 때 출석을 수업관리 앱에도 찍는다**(`rpSyncAppAtt`, 2026-09-15 «업무보고에 출석으로 제출하면 클래스앱에도 출석으로»).
+  출석·지각·조퇴 → 앱에 문서가 없으면 `{name, time, byTeacher, byTeam}` + 그 날 `updated`(앱의 touchDay). 앱은 «문서 있음 = 출석» 뿐이라 지각·조퇴도 출석이다
+  - 이미 찍힌 학생은 안 건드린다(찍은 시각 보존). 결석은 **팀체크가 찍은 것(`byTeam`)만** 지운다 — 학생이 스스로 찍은 출석을 보고 한 줄로 지우지 않는다
+  - 앞날짜 보고는 안 찍는다. 앱 규칙이 담당 반 `days` 쓰기를 원래 열어 둬 **규칙은 안 고쳤다.** 선생님은 쓰기마다 `passWrite`
+  - 못 옮긴 반은 보고는 낸 채로 알리고 «냈다» 줄에 반 이름을 남긴다. 시험 `tools/test-rpattsync.js`
 - 할 일 = 그 날까지 기한인 내 할 일 + 그 날 끝낸 것 + 그 요일 매주 일(`rpTasksFor`). 보고에서 «완료» 로 고르면 내 완료 표시(`toggleMyMark`)도 남는다
 - **«내일 할 일» 칸은 없다.** 처음엔 필수 칸이었는데 마왕님이 뺐다(9/11) — 금·토에 수업 없는 사람도 뭔가 적어야 했다.
   출결 미선택·결석 연락 안 함·진도 빔은 알려만 준다(`rpCheck`). 막는 것은 «어디로» 가 빈 반 이동 하나
