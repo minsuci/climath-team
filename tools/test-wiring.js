@@ -53,7 +53,7 @@ const typeOf = (f) => vm.runInContext("typeof " + f, ctx);
 
 // ---- 메뉴마다 그릴 함수가 있고, 불러도 안 터진다 ----
 const RENDER = { cal: "renderCal", plan: "renderPlan", tasks: "renderTasks", report: "renderReport", done: "renderDone", exec: "renderExec", minutes: "renderMinutes", dev: "renderDev", week: "renderWeek",
-  students: "renderStudents", terms: "renderTerms", exams: "renderExams", scores: "renderScores", sheets: "renderSheets" };
+  students: "renderStudents", board: "renderBoard", terms: "renderTerms", exams: "renderExams", scores: "renderScores", sheets: "renderSheets" };
 // ---- 같은 이름의 함수가 둘이면 안 된다 ----
 // 나중 선언이 **조용히** 앞의 것을 덮는다. 문법도 화면도 멀쩡하고 엉뚱한 것이 돈다.
 // 9/8 markOf(내신 달력과 겹침), 9/11 saveReport(한 줄 보고와 업무보고가 겹침 — 업무보고가 marks 로 저장됐다).
@@ -68,7 +68,9 @@ const RENDER = { cal: "renderCal", plan: "renderPlan", tasks: "renderTasks", rep
 const pages = JSON.parse(vm.runInContext("JSON.stringify(PAGES)", ctx));
 // 9/11 «업무보고» 가 열셋째. 선생님도 보는 메뉴다 — 안이 갈린다(자기 것 · 팀장은 받은 보고까지).
 // 9/11 «월간계획» 이 열넷째 — 업무 달력 옆. 선생님도 본다(읽기만).
-ok("메뉴가 열넷이다", pages.length === 14, String(pages.length));
+// 9/15 «학생 한눈에» 가 열다섯째 — 팀장만 본다(owner).
+ok("메뉴가 열다섯이다", pages.length === 15, String(pages.length));
+ok("학생 한눈에 메뉴는 팀장만", pages.some(function (p) { return p[0] === "board" && p[2] === "owner"; }));
 ok("월간계획 메뉴가 있고 선생님도 본다", pages.some(function (p) { return p[0] === "plan" && p[2] !== "owner"; }));
 ok("업무보고 메뉴가 있고 선생님도 본다", pages.some(function (p) { return p[0] === "report" && p[2] !== "owner"; }));
 
@@ -78,8 +80,8 @@ ok("업무보고 메뉴가 있고 선생님도 본다", pages.some(function (p) 
 {
   const mine = (ro) => JSON.parse(vm.runInContext(
     "(function(){ var b=S.ro; S.ro=" + ro + "; var r=JSON.stringify(myPages().map(function(p){return p[0]})); S.ro=b; return r; })()", ctx));
-  ok("팀장은 열넷을 다 본다", mine(false).length === 14, mine(false).join(","));
-  ok("선생님에게는 «완료 현황»·«간부회의» 가 안 보인다", mine(true).indexOf("done") < 0 && mine(true).indexOf("exec") < 0 && mine(true).length === 12, mine(true).join(","));
+  ok("팀장은 열다섯을 다 본다", mine(false).length === 15, mine(false).join(","));
+  ok("선생님에게는 «완료 현황»·«간부회의» 가 안 보인다", mine(true).indexOf("done") < 0 && mine(true).indexOf("exec") < 0 && mine(true).indexOf("board") < 0 && mine(true).length === 12, mine(true).join(","));
   ok("선생님도 회의록 메뉴는 있다 (안이 갈린다)", mine(true).indexOf("minutes") >= 0);
   ok("선생님이 주소에 #done 을 쳐도 안 열린다", (() => {
     const r = vm.runInContext(`(function(){ var b=S.ro; S.ro=true; var v=isPage("done"); S.ro=b; return v; })()`, ctx);
