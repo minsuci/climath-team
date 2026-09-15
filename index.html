@@ -493,8 +493,10 @@
   .bd-row-cls { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
   .bd-cb { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; padding: 4px 5px 5px; background: #f7f8fb; box-sizing: border-box; }
   .bd-cb.mine { background: #eef3fb; border-color: #b9c9e6; }
-  .bd-ch { width: 0; min-width: 100%; display: flex; gap: 5px; align-items: baseline; font-size: 11px; margin: 0 0 4px; white-space: nowrap; overflow: hidden; }
-  .bd-ch b { overflow: hidden; text-overflow: ellipsis; }
+  .bd-ch { width: 0; min-width: 100%; display: flex; flex-direction: column; font-size: 11px; line-height: 1.3; margin: 0 0 4px; white-space: nowrap; overflow: hidden; }
+  /* 머리는 두 줄 — 한 줄이면 카드 한 장 폭(84px) 블록에서 반 이름이 «고…» 로 잘렸다 (9/15 실제 화면) */
+  .bd-ch b, .bd-ch span { overflow: hidden; text-overflow: ellipsis; }
+  .bd-ch span { font-size: 10px; }
   .bd-cg { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--r, 1), auto); grid-template-columns: repeat(var(--k, 1), var(--bw, 110px)); gap: 4px; }
   .bd-cg .bd-mini { width: var(--bw, 110px); }
   .bd-mini { aspect-ratio: 8 / 5; max-width: 100%; box-sizing: border-box; overflow: hidden; min-width: 0; border: 1px solid var(--line); border-radius: 6px;

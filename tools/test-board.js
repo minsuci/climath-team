@@ -192,6 +192,7 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   ok("고1S 블록 — 이름순 (김서진 · 옛줄 · 진유준)", JSON.stringify(opens(block("c1"))) === '["p2","p3","p1"]', JSON.stringify(opens(block("c1"))));
   ok("개진반 블록 — 그 반 학생만 (옛줄 p4 · 진유준)", JSON.stringify(opens(block("k1"))) === '["p4","p1"]', JSON.stringify(opens(block("k1"))));
   ok("반 블록 머리 — 반 이름 · 담당 · 인원", /<div class="bd-ch" title="고1S · 한민수"><b>고1S<\/b><span class="muted">한민수 · 3명<\/span>/.test(hg));
+  ok("반 블록 머리는 두 줄 — 좁은 블록에서 반 이름이 «고…» 로 안 잘린다 (9/15 실제 화면)", /\.bd-ch \{[^}]*flex-direction: column/.test(html));
   ok("내가 담당인 반 블록은 파랗게", /<div class="bd-cb mine" data-k="1" data-cid="c1">/.test(hg) && /<div class="bd-cb" data-k="1" data-cid="k1">/.test(hg));
   ok("반 미배정은 빨간 머리 · 반 수 없이", /<span class="pill red">반 미배정<\/span><span class="muted">1명/.test(hg) && opens(block("_none")).join() === "p5");
   ok("묶음 머리 인원은 겹침 없이 (고1 3명)", heads[0] === "고11반 · 3명");
