@@ -477,6 +477,33 @@
   .bd-dots i.late { background: var(--yellow); }
   .bd-note .bd-k { margin-right: 6px; }
   .bd-note { flex: 1; min-height: 0; overflow: hidden; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  /* 한 화면에 전원 (9/15 «3번») — 위쪽 줄을 접고, 작은 카드를 화면에 맞춰 늘어놓는다. 누르면 큰 카드 */
+  body.bd-full .wrap { max-width: none; padding: 8px 12px; }
+  body.bd-full .top { padding: 6px 14px; }
+  body.bd-full #banner { display: none; }
+  body.bd-full .nav { margin-bottom: 6px; gap: 3px; }
+  body.bd-full .nav button { font-size: 12px; padding: 3px 9px; border-radius: 6px; }
+  body.bd-full #sec-board { padding: 8px 10px; }
+  .bd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 6px; }
+  .bd-head h2 { margin: 0 !important; font-size: 14px; }
+  .bd-head .bd-bar { margin: 0; flex: 1; }
+  .bd-grid.fit { gap: 4px; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  .bd-mini { aspect-ratio: 8 / 5; max-width: 100%; box-sizing: border-box; overflow: hidden; min-width: 0; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; padding: 3px 5px; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; font-size: 10px; line-height: 1.25; }
+  .bd-mini:hover { outline: 2px solid var(--navy); }
+  .bd-mini.quiet { background: #fafbfd; }
+  .bd-mini .nm { font-weight: 700; font-size: 11px; padding: 0 3px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: flex-start; max-width: 100%; }
+  .bd-mini .nm i { font-style: normal; opacity: .65; margin-left: 1px; font-size: 9px; }
+  .bd-mini .bm { display: flex; gap: 4px; align-items: center; white-space: nowrap; overflow: hidden; min-height: 12px; }
+  .bd-mini .bm .ab { color: var(--red); font-weight: 700; }
+  .bd-mini .bm .sc { font-weight: 700; }
+  .bd-mini .bm .nt { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--orange); flex: none; }
+  .bd-pop { position: fixed; inset: 0; z-index: 50; background: rgba(15,23,42,.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .bd-popin { position: relative; width: min(440px, 100%); }
+  .bd-popin .bd-card { font-size: 13px; box-shadow: 0 12px 32px rgba(0,0,0,.25); }
+  .bd-popin .bd-top { padding-right: 52px; }
+  .bd-popin .bd-note { -webkit-line-clamp: 6; }
+  .bd-popin .bd-x { position: absolute; top: 8px; right: 10px; z-index: 1; }
   /* 개진반 — 열이 요일, 줄이 반 (9/15) */
   table.cgrid.ind thead th.wk { min-width: 92px; }
   table.cgrid.ind thead th.rn { text-align: left; }
@@ -751,7 +778,7 @@ var S = {
   doneRange: "week", doneWho: "",               // 완료 현황 (2026-09-08)
   // 시트와 명단 대조 (2026-09-08) — 팀장 화면에서만 돈다
   sheetCols: null, diff: null, diffErr: "", diffAt: 0, diffBusy: false, diffSig: "", diffN: 0, diffTab: "", diffDoc: null, stDiffOpen: true,
-  board: null, boardLoading: false, boardErr: "", bdCls: "", bdQ: "",
+  board: null, boardLoading: false, boardErr: "", bdCls: "", bdQ: "", bdOpen: "",
   own: {},        // tid -> { items: [...], name } — 각자 스스로 적은 할 일 (myTasks/<tid>)
   tasksLead: [],  // 팀장 전용 할 일 (dash/tasksLead). 선생님은 규칙에 막혀 빈 배열
   events: [],     // 달력 일정 (dash/calEvents). 할 일과 달리 **팀 전체가 같은 것을 본다**
@@ -986,7 +1013,10 @@ function showPage(id) {
       .catch(function (e) { S.devLoading = false; S.devErr = e.message; renderDev(); });
   }
   // 학생 한눈에는 8주치 업무보고를 **따로** 읽는다(배너가 쓰는 21일치 S.reports 와 안 섞는다). 그 메뉴를 열 때만.
+  // 학생 한눈에서는 위쪽 줄(알림 띠·메뉴)을 접는다 — 한 화면에 전원을 담으려고 (9/15 «3번»)
+  if (document.body && document.body.classList) document.body.classList.toggle("bd-full", id === "board");
   if (id === "board" && boardKick()) renderBoard();
+  if (id === "board") boardApplyFit();
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", function () { if (S.claims) showPage(currentPage()); });
@@ -1324,7 +1354,14 @@ function rpRepeatOn(tid, d) {
 }
 // 보고해야 하는 날 = 수업이 있는 날 **또는 매주 하는 일이 걸린 날**.
 // 그 밖의 날에 적는 것은 막지 않지만 «안 냈다» 로 세지는 않는다.
-function rpExpected(tid, d) { return d >= RP_START && (rpClassesOn(tid, d).length > 0 || rpRepeatOn(tid, d)); }
+// 업무보고에서 빠지는 사람 (9/15 마왕님 «업무보고에서 원장님(박리안)은 빼자»).
+// 원장님은 개진반 박리안을 맡아 선생님 명단에 있지만 보고를 **받는** 분이다 —
+// 보고할 날로 안 세고, «안 낸 선생님» 알림에도, 받은 보고의 «수업한 사람·안 낸 사람» 에도 안 든다.
+// 이름으로 가른다 — 할 일의 «누구» 칸도 이름이다(taskIsFor). 그래서 «전원» 반복 할 일이 걸린 날도 안 센다.
+// ⚠ 원장님 개진반 학생은 그래서 **어느 업무보고에도 안 뜬다.** 학생 한눈에 카드도 그 반 기록은 비어 있다.
+var RP_SKIP_NAMES = ["박리안"];
+function rpSkip(tid) { return RP_SKIP_NAMES.indexOf(teacherName(tid)) >= 0; }
+function rpExpected(tid, d) { return d >= RP_START && !rpSkip(tid) && (rpClassesOn(tid, d).length > 0 || rpRepeatOn(tid, d)); }
 // ---- 이번 주 우리 반 (2026-09-12) — 한 주에 한 번만 묻는 세 줄 ----
 // 진도·출결·과제는 매일 이미 낸다. 주간으로만 필요한 것은 저조자 · 신경 쓰이는 학생 · 막힌 것 셋이다.
 // ⚠ **«금요일에만» 으로 못 박으면 화·목 반은 영영 안 뜬다.** 반마다 요일이 달라 «주의 끝»도 반마다 다르다.
@@ -1696,33 +1733,72 @@ function boardCards() {
     return (GRADE_NUM[a.p.grade] || 99) - (GRADE_NUM[b.p.grade] || 99) || String(a.p.name || "").localeCompare(String(b.p.name || ""), "ko");
   });
 }
-function boardCardHtml(x) {
-  var p = x.p, g = p.grade || "";
+// 카드 한 장의 셈 — 큰 카드·작은 카드가 같은 수를 보게 한 곳에서
+function boardSum(x) {
   var scores = x.list.filter(function (e) { return e.score != null; }).slice(-BOARD_SCORES);
   var atts = x.list.filter(function (e) { return e.att; }).slice(-BOARD_DOTS);
   var notes = x.list.filter(function (e) { return e.note; });
-  var last = notes[notes.length - 1] || null;
-  var avg = scores.length ? Math.round(scores.reduce(function (m, e) { return m + e.score; }, 0) / scores.length) : null;
-  var absent = atts.filter(function (e) { return e.att === "결석"; }).length;
+  return { scores: scores, atts: atts, notes: notes, last: notes[notes.length - 1] || null,
+    avg: scores.length ? Math.round(scores.reduce(function (m, e) { return m + e.score; }, 0) / scores.length) : null,
+    lastScore: scores.length ? scores[scores.length - 1].score : null,
+    absent: atts.filter(function (e) { return e.att === "결석"; }).length };
+}
+// 큰 카드 — 작은 카드를 누르면 가운데 뜬다
+function boardCardHtml(x) {
+  var p = x.p, g = p.grade || "", m = boardSum(x);
   var none = '<span class="muted">기록 없음</span>';
   return '<div class="bd-card' + (x.list.length ? "" : " quiet") + '" data-bd-pid="' + esc(p.pid) + '">' +
     '<div class="bd-top"><span class="nm ' + gradeCls(g) + '">' + esc(p.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span>' +
       '<span class="bd-cls" title="' + esc(x.cls.map(function (c) { return c.name; }).join(" · ")) + '">' +
       (x.cls.length ? esc(x.cls.map(function (c) { return c.name; }).join(" · ")) : '<span class="red">반 없음</span>') + '</span></div>' +
-    '<div class="bd-row bd-score"><span class="bd-k">점수</span>' + (scores.length
-      ? '<span class="bd-bars">' + scores.map(function (e) {
+    '<div class="bd-row bd-score"><span class="bd-k">점수</span>' + (m.scores.length
+      ? '<span class="bd-bars">' + m.scores.map(function (e) {
           return '<i style="height:' + Math.max(6, Math.round(e.score)) + '%" title="' + esc(fmtMD(e.date) + " " + e.cname + " " + e.score + "점") + '"></i>';
-        }).join("") + '</span><b>' + scores[scores.length - 1].score + '</b><span class="muted">평균 ' + avg + '</span>'
+        }).join("") + '</span><b>' + m.lastScore + '</b><span class="muted">평균 ' + m.avg + '</span>'
       : none) + '</div>' +
-    '<div class="bd-row bd-att"><span class="bd-k">출결</span>' + (atts.length
-      ? '<span class="bd-dots">' + atts.map(function (e) {
+    '<div class="bd-row bd-att"><span class="bd-k">출결</span>' + (m.atts.length
+      ? '<span class="bd-dots">' + m.atts.map(function (e) {
           var k = BOARD_ATT[e.att] || "";
           return '<i class="' + k + (e.called ? " called" : "") + '" title="' + esc(fmtMD(e.date) + " " + e.cname + " " + e.att + (e.called ? " · 연락함" : "")) + '"></i>';
-        }).join("") + '</span>' + (absent ? '<span class="red">결석 ' + absent + '</span>' : "")
+        }).join("") + '</span>' + (m.absent ? '<span class="red">결석 ' + m.absent + '</span>' : "")
       : none) + '</div>' +
-    '<div class="bd-note"><span class="bd-k">특이사항' + (notes.length ? " " + notes.length : "") + '</span>' +
-      (last ? '<span class="muted">' + esc(fmtMD(last.date)) + '</span> ' + esc(last.note) : '<span class="muted">없음</span>') + '</div>' +
+    '<div class="bd-note"><span class="bd-k">특이사항' + (m.notes.length ? " " + m.notes.length : "") + '</span>' +
+      (m.last ? '<span class="muted">' + esc(fmtMD(m.last.date)) + '</span> ' + esc(m.last.note) : '<span class="muted">없음</span>') + '</div>' +
   '</div>';
+}
+// 작은 카드 — 이름·학년 / 결석 수 · 마지막 점수 · 특이사항 점. 한 화면에 전원을 담는 크기라 이 넷만 (9/15 «3번»)
+function boardMiniHtml(x) {
+  var p = x.p, g = p.grade || "", m = boardSum(x);
+  return '<div class="bd-mini' + (x.list.length ? "" : " quiet") + '" data-bd-open="' + esc(p.pid) + '" title="' +
+      esc([p.name, x.cls.map(function (c) { return c.name; }).join(" · ") || "반 없음"].join(" · ")) + '">' +
+    '<span class="nm ' + gradeCls(g) + '">' + esc(p.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span>' +
+    '<span class="bm">' + (m.absent ? '<span class="ab">결' + m.absent + '</span>' : "") +
+      (m.lastScore != null ? '<span class="sc">' + m.lastScore + '점</span>' : "") +
+      (m.notes.length ? '<i class="nt" title="특이사항 ' + m.notes.length + '"></i>' : "") + '</span></div>';
+}
+// n 장을 너비 W · 높이 H 에 **스크롤 없이** 넣는 가장 큰 8:5 카드.
+// 너무 크면(학생을 몇 명만 걸렀을 때) BOARD_MAX_W 로 막고, 너무 작아지면(BOARD_MIN_W 밑) 읽을 수 없으니 스크롤을 허락한다(fits:false).
+var BOARD_GAP = 4, BOARD_MIN_W = 84, BOARD_MAX_W = 180;
+function boardFit(n, W, H, gap) {
+  gap = gap == null ? BOARD_GAP : gap;
+  if (!n || !(W > 0)) return { cols: 1, w: 0, h: 0, rows: 0, fits: true };
+  var maxCols = Math.max(1, Math.floor((W + gap) / (BOARD_MIN_W + gap)));
+  var minCols = Math.min(maxCols, Math.max(1, Math.ceil((W + gap) / (BOARD_MAX_W + gap))));
+  for (var c = minCols; c <= maxCols; c++) {
+    var w = (W - (c - 1) * gap) / c, h = w * 5 / 8, rows = Math.ceil(n / c);
+    if (rows * h + (rows - 1) * gap <= H) return { cols: c, w: Math.floor(w), h: Math.floor(h), rows: rows, fits: true };
+  }
+  var w2 = (W - (maxCols - 1) * gap) / maxCols;
+  return { cols: maxCols, w: Math.floor(w2), h: Math.floor(w2 * 5 / 8), rows: Math.ceil(n / maxCols), fits: false };
+}
+// 그려진 격자를 재서 열 수를 정한다. 메뉴가 안 떠 있으면 잴 수 없으니 그만둔다 — showPage 가 띄울 때 다시 부른다
+function boardApplyFit() {
+  var el = $("#sec-board"); if (!el || el.hidden || !el.querySelector) return;
+  var grid = el.querySelector(".bd-grid"); if (!grid || !grid.getBoundingClientRect) return;
+  var r = grid.getBoundingClientRect();
+  var f = boardFit(grid.children.length, grid.clientWidth || r.width, window.innerHeight - r.top - 12);
+  grid.style.gridTemplateColumns = "repeat(" + f.cols + ", minmax(0, 1fr))";
+  S.bdFit = f;
 }
 function boardHit(x) {
   if (S.bdCls === "_none") { if (x.cls.length) return false; }
@@ -1735,26 +1811,29 @@ function renderBoard() {
   var el = $("#sec-board"); if (!el) return;       // 선생님 화면에는 이 칸이 아예 없다
   if (S.ro) { el.innerHTML = ""; return; }
   if (!el.hidden) boardKick();                    // 메뉴가 떠 있는데 아직 안 읽었으면(명단이 늦게 온 경우) 지금 읽는다
-  var head = '<h2>학생 한눈에 <span class="n">최근 ' + BOARD_WEEKS + '주 업무보고</span></h2>';
+  var title = '<h2>학생 한눈에 <span class="n">최근 ' + BOARD_WEEKS + '주 업무보고</span></h2>';
   if (!S.board) {
-    el.innerHTML = head + (S.boardErr ? '<div class="err">업무보고를 못 읽었다: ' + esc(S.boardErr) + ' <button class="mini" data-bd-reload>다시 읽기</button></div>'
+    el.innerHTML = title + (S.boardErr ? '<div class="err">업무보고를 못 읽었다: ' + esc(S.boardErr) + ' <button class="mini" data-bd-reload>다시 읽기</button></div>'
       : '<div class="empty">' + (S.boardLoading ? "업무보고를 읽는 중…" : "선생님 명단을 기다리는 중…") + '</div>');
     $$("[data-bd-reload]", el).forEach(function (b) { b.onclick = function () { S.boardErr = ""; if (boardKick()) renderBoard(); }; });
     return;
   }
   var all = boardCards(), shown = all.filter(boardHit);
+  var open = S.bdOpen ? all.filter(function (x) { return x.p.pid === S.bdOpen; })[0] || null : null;
   var nRep = Object.keys(S.board.reports).reduce(function (m, tid) {
     return m + Object.keys(S.board.reports[tid] || {}).filter(function (d) { return S.board.reports[tid][d] && S.board.reports[tid][d].submitted; }).length;
   }, 0);
-  el.innerHTML = head +
-    (S.board.failed.length ? '<div class="err">이 선생님 보고는 못 읽었다 — 카드가 비어 보여도 기록이 없는 게 아니다: ' + esc(S.board.failed.join(", ")) + '</div>' : "") +
+  el.innerHTML =
+    '<div class="bd-head">' + title +
     '<div class="bd-bar"><select class="mini" data-bd-cls><option value="">모든 반</option>' +
       activeClasses().map(function (c) { return '<option value="' + esc(c.id) + '"' + (S.bdCls === c.id ? " selected" : "") + '>' + esc(c.name) + '</option>'; }).join("") +
       '<option value="_none"' + (S.bdCls === "_none" ? " selected" : "") + '>반 없음</option></select>' +
       '<input type="text" class="mini" data-bd-q placeholder="이름·학교" value="' + esc(S.bdQ || "") + '">' +
       '<span class="muted">학생 ' + shown.length + (shown.length !== all.length ? " / " + all.length : "") + '명 · 보고 ' + nRep + '건 · ' + esc(fmtMD(S.board.from)) + '부터</span>' +
-      '<span class="sp"></span><button class="mini" data-bd-reload' + (S.boardLoading ? " disabled" : "") + '>다시 읽기</button></div>' +
-    (shown.length ? '<div class="bd-grid">' + shown.map(boardCardHtml).join("") + '</div>' : '<div class="empty">맞는 학생이 없다.</div>');
+      '<span class="sp"></span><button class="mini" data-bd-reload' + (S.boardLoading ? " disabled" : "") + '>다시 읽기</button></div></div>' +
+    (S.board.failed.length ? '<div class="err">이 선생님 보고는 못 읽었다 — 카드가 비어 보여도 기록이 없는 게 아니다: ' + esc(S.board.failed.join(", ")) + '</div>' : "") +
+    (shown.length ? '<div class="bd-grid fit">' + shown.map(boardMiniHtml).join("") + '</div>' : '<div class="empty">맞는 학생이 없다.</div>') +
+    (open ? '<div class="bd-pop" data-bd-pop><div class="bd-popin"><button class="mini bd-x" data-bd-close>닫기</button>' + boardCardHtml(open) + '</div></div>' : "");
   $$("[data-bd-cls]", el).forEach(function (sel) { sel.onchange = function () { S.bdCls = sel.value; renderBoard(); }; });
   // 글자 칸은 칠 때마다 다시 그리지 않는다(한글 조합이 깨진다) — Enter·칸 벗어날 때만
   $$("[data-bd-q]", el).forEach(function (inp) { inp.onchange = function () { S.bdQ = inp.value; renderBoard(); }; });
@@ -1765,7 +1844,14 @@ function renderBoard() {
       if (boardKick()) renderBoard();
     };
   });
+  $$("[data-bd-open]", el).forEach(function (b) { b.onclick = function () { S.bdOpen = b.getAttribute("data-bd-open"); renderBoard(); }; });
+  $$("[data-bd-close]", el).forEach(function (b) { b.onclick = function () { S.bdOpen = ""; renderBoard(); }; });
+  $$("[data-bd-pop]", el).forEach(function (pop) { pop.onclick = function (e) { if (e.target === pop) { S.bdOpen = ""; renderBoard(); } }; });
+  boardApplyFit();
 }
+// 창 크기가 바뀌면 열 수를 다시 · Esc 로 큰 카드 닫기
+window.addEventListener("resize", function () { if (S.claims && !S.ro) boardApplyFit(); });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && S.bdOpen) { S.bdOpen = ""; renderBoard(); } });
 // 쓰는 판을 열 때만 수업관리 앱을 읽는다 — 출석·상담·보강. 못 읽은 것은 비워 둔다(결석으로 적지 않는다).
 async function rpLoadApp(tid, d) {
   var out = {};
@@ -1797,6 +1883,7 @@ async function rpLoadApp(tid, d) {
 function rpSummary(d) {
   var sm = { expect: [], got: [], missing: [], noCall: [], notes: [], asks: [], moves: [] };
   S.teachers.forEach(function (t) {
+    if (rpSkip(t.tid)) return;                    // 원장님 — 보고를 받는 분이다(rpSkip)
     var rep = ((S.reports || {})[t.tid] || {})[d];
     var exp = rpExpected(t.tid, d);
     if (exp) sm.expect.push(t.tid);

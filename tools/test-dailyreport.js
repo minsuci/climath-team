@@ -68,6 +68,25 @@ ok("걸리지 않은 요일은 그대로 (9/19 토)", run(`return rpExpected("T1
 ok("그 날 체크해 둔 것은 안 센다", run(`S.tasks[0].doneOn["2026-09-16"] = true; var x = rpExpected("T1","2026-09-16"); delete S.tasks[0].doneOn["2026-09-16"]; return x;`) === false);
 ok("⚠ 쉬는 날은 세지 않는다 (추석 9/25 금 · 금요일 반복)", run(`return rpExpected("T1", "2026-09-25")`) === false);
 ok("반이 없는 선생님에게도 «전원» 은 걸린다", run(`return rpExpected("T3", "2026-09-16")`) === true);
+
+// ---- 원장님은 업무보고에서 뺀다 (9/15 마왕님 «업무보고에서 원장님(박리안)은 빼자») ----
+// 원장님은 개진반을 맡아 선생님 명단에 있다 — 반이 있어도, «전원» 반복 할 일이 걸려도 보고할 날이 아니다.
+run(`S.teachers.push({ tid:"TP", name:"박리안", role:"teacher", classIds:["c2"] })`);
+ok("원장님은 수업이 있는 날도 보고할 날이 아니다 (월 9/14 · 고2A)",
+  run(`return rpExpected("TP", "2026-09-14")`) === false && run(`return rpClassesOn("TP", "2026-09-14").length`) === 1);
+ok("원장님은 «전원» 반복 할 일이 걸린 날도 아니다 (수 9/16)", run(`return rpExpected("TP", "2026-09-16")`) === false);
+ok("원장님은 «안 낸 선생님» 알림에 안 뜬다",
+  !JSON.parse(run(`return JSON.stringify(rpOverdueAll(new Date("2026-09-17T09:00:00")))`)).some((x) => x.tid === "TP"),
+  run(`return JSON.stringify(rpOverdueAll(new Date("2026-09-17T09:00:00")))`));
+ok("같은 날 다른 선생님은 그대로 알림 (이현우 9/14)",
+  JSON.parse(run(`return JSON.stringify(rpOverdueAll(new Date("2026-09-17T09:00:00")))`)).some((x) => x.tid === "T2"));
+{
+  const sm = JSON.parse(run(`return JSON.stringify(rpSummary("2026-09-14"))`));
+  ok("원장님은 받은 보고의 «수업한 사람·안 낸 사람» 에 안 든다", sm.expect.indexOf("TP") < 0 && sm.missing.indexOf("TP") < 0 && sm.expect.indexOf("T2") >= 0, JSON.stringify(sm));
+}
+run(`S.reports.TP = { "2026-09-14": { tid:"TP", date:"2026-09-14", submitted:1, classes:[], tasks:[], extra:[], moves:[] } }`);
+ok("원장님이 혹시 내도 «낸 사람» 에 안 센다", JSON.parse(run(`return JSON.stringify(rpSummary("2026-09-14"))`)).got.indexOf("TP") < 0);
+run(`delete S.reports.TP; S.teachers.pop()`);
 ok("남 이름으로 걸린 반복은 안 센다",
   run(`S.tasks[0].who = "이현우"; var x = rpExpected("T3","2026-09-16"); S.tasks[0].who = "전원"; return x;`) === false);
 const upTasks = (tid, d) => run(`return rpTasksFor("${tid}", "${d}").map(function(t){return t.text;}).join(",")`);

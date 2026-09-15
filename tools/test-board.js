@@ -1,12 +1,15 @@
-// 학생 한눈에 (2026-09-15) — 학생 한 명 = 8:5 카드. 최근 8주 업무보고의 점수·출결·특이사항.
+// 학생 한눈에 (2026-09-15) — 최근 8주 업무보고의 점수·출결·특이사항.
 //
-// 마왕님: «한 줄로 나타내지 말고 8:5 직사각형으로» · «위험신호는 차차 정하자».
+// 마왕님: «한 줄로 나타내지 말고 8:5 직사각형으로» · «위험신호는 차차 정하자» ·
+//         «카드가 너무 커. 한 페이지에 모든 학생» → «3번»: 작은 카드를 화면에 맞추고, 위쪽 줄을 접고, 누르면 큰 카드.
 // 틀리기 쉬운 것:
 //   - 정규반·개진반 기록이 두 카드로 갈리는 것 (반마다 명단 번호가 다르다 → 학생 번호로 묶는다)
 //   - 이름만으로 붙여 동명이인이 섞이는 것
 //   - 점수 빈 칸을 0점으로 세는 것
 //   - 선생님 계정이 남의 보고를 부르는 것 (규칙이 거절한다 — 메뉴째 안 보이고 읽지도 않는다)
 //   - 한 선생님 보고를 못 읽었는데 카드가 조용히 «기록 없음» 인 것
+//   - 선생님 명단이 차기 전에 읽어 «0건을 다 읽었다» 가 되는 것 (9/15 배포 직후 실제로 났다)
+//   - 한 화면 맞춤이 너무 작아져 이름도 못 읽는 것 · 몇 명만 걸렀을 때 카드가 화면만 해지는 것
 const fs = require("fs"), vm = require("vm");
 const html = fs.readFileSync("index.html", "utf8");
 const src = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
@@ -14,8 +17,9 @@ const stub = `
 var firebase={initializeApp:function(c,n){return n?{t:1}:{};},firestore:function(){return {collection:function(){return {doc:function(){return {get:function(){return Promise.resolve({exists:false});}};}};}};},
   auth:()=>({onAuthStateChanged(){},currentUser:null,signOut:()=>Promise.resolve()})};
 var __BOX = { innerHTML: "", hidden: false, querySelector: function(){ return null; }, querySelectorAll: function(){ return []; } };
-var document={querySelector:function(s){ return s === "#sec-board" ? __BOX : null; },querySelectorAll:()=>[],addEventListener(){}};
-var window={addEventListener(){},scrollTo(){}},location={hash:""},history={replaceState(){}},localStorage={getItem:()=>null,setItem(){}};
+var __BODY = { classList: { on: {}, toggle: function (c, v) { this.on[c] = !!v; }, contains: function (c) { return !!this.on[c]; } } };
+var document={body:__BODY,querySelector:function(s){ return s === "#sec-board" ? __BOX : null; },querySelectorAll:()=>[],addEventListener(){}};
+var window={addEventListener(){},scrollTo(){},innerHeight:800},location={hash:""},history={replaceState(){}},localStorage={getItem:()=>null,setItem(){}};
 var fetch=()=>Promise.reject(new Error("no net")); var alert=function(){},confirm=()=>true,prompt=()=>null;
 `;
 const ctx = vm.createContext({ console, setTimeout, clearTimeout, Date, Math, JSON, Object, Array, String, Number, Promise, RegExp, isNaN, parseInt });
@@ -57,8 +61,10 @@ const setup = () => run(`
     { pid:"p3", name:"옛줄", grade:"중3" }, { pid:"p4", name:"옛줄", grade:"고1" }, { pid:"p5", name:"새학생", grade:"고2" } ];
   S.byPid = {}; S.students.forEach(function (x) { S.byPid[x.pid] = x; });
   S.board = { from: "2026-07-24", reports: ${JSON.stringify(REPORTS)}, failed: [], at: 1 };
-  S.boardLoading = false; S.boardErr = ""; S.bdCls = ""; S.bdQ = "";
+  S.boardLoading = false; S.boardErr = ""; S.bdCls = ""; S.bdQ = ""; S.bdOpen = ""; __BOX.hidden = false;
 `);
+const full = (pid) => val(`boardCardHtml(boardCards().filter(function (x) { return x.p.pid === "${pid}"; })[0])`);
+const mini = (pid) => val(`boardMiniHtml(boardCards().filter(function (x) { return x.p.pid === "${pid}"; })[0])`);
 
 // ---- 메뉴 ----
 setup();
@@ -83,7 +89,7 @@ run(`__CALLS = 0; S.board = null; S.boardLoading = false; S.boardErr = ""; __T =
      __BOX.hidden = false; showPage("board");`);
 ok("선생님 명단이 비었으면 안 읽는다 — 빈 것을 «다 읽었다» 로 적지 않는다", val("__CALLS") === 0 && val("S.board") === null);
 run(`renderBoard()`);
-ok("그 사이 화면은 «기다리는 중» (기록 없음 카드가 아니다)", val("__BOX.innerHTML").indexOf("선생님 명단을 기다리는 중") >= 0 && val("__BOX.innerHTML").indexOf("bd-card") < 0);
+ok("그 사이 화면은 «기다리는 중» (기록 없음 카드가 아니다)", val("__BOX.innerHTML").indexOf("선생님 명단을 기다리는 중") >= 0 && val("__BOX.innerHTML").indexOf("bd-mini") < 0);
 run(`S.teachers = __T; renderBoard();`);
 ok("명단이 오고 다시 그릴 때 읽는다 (renderAll → renderBoard)", val("__CALLS") === 1);
 run(`S.board = null; S.boardLoading = false; __BOX.hidden = true; renderBoard(); __BOX.hidden = false;`);
@@ -127,39 +133,87 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   ok("기록 없는 학생도 카드는 있다", !!card("p5") && card("p5").list.length === 0);
   ok("학년 → 이름 순 (중3 먼저)", cards[0].p.grade === "중3" && cards[cards.length - 1].p.grade === "고2", cards.map((c) => c.p.name + c.p.grade).join(","));
 
-  // ---- 카드 ----
-  run("renderBoard()");
-  const h = val("__BOX.innerHTML");
-  const cardHtml = (pid) => { const i = h.indexOf('data-bd-pid="' + pid + '"'); const j = h.indexOf('<div class="bd-card', i + 1); return h.slice(i, j < 0 ? undefined : j); };
-  ok("학생마다 카드 하나 — 다섯", (h.match(/class="bd-card/g) || []).length === 5);
-  ok("CSS — 카드는 8:5", /\.bd-card \{[^}]*aspect-ratio: 8 \/ 5/.test(html));
-  const k1 = cardHtml("p1");
+  // ---- 큰 카드 (누르면 뜨는 것) ----
+  const k1 = full("p1"), k2 = full("p2"), k5 = full("p5");
+  ok("CSS — 큰 카드는 8:5", /\.bd-card \{[^}]*aspect-ratio: 8 \/ 5/.test(html));
   ok("이름·학년", /<span class="nm [^"]*">진유준<i>10<\/i><\/span>/.test(k1));
   ok("반들 — 고1S · 개진반 박리안", k1.indexOf("고1S · 개진반 박리안") >= 0);
   ok("점수 막대 셋 — 0점도 막대다 (빈 칸이 아니다)", (k1.split('class="bd-bars"')[1] || "").split("</span>")[0].match(/<i /g).length === 3);
   ok("마지막 점수 60 · 평균 47 (80·0·60)", /<b>60<\/b><span class="muted">평균 47<\/span>/.test(k1), (k1.match(/<b>\d+<\/b><span class="muted">평균 \d+/) || [""])[0]);
-  const k2 = cardHtml("p2");
   ok("점수 빈 칸만 있으면 «기록 없음» — 0점으로 안 센다", /<span class="bd-k">점수<\/span><span class="muted">기록 없음/.test(k2));
   ok("출결 점 — 결석 둘 · 첫 결석은 연락함", /<span class="bd-dots"><i class="no called"[^>]*><\/i><i class="no"[^>]*><\/i><\/span><span class="red">결석 2<\/span>/.test(k2), (k2.match(/<span class="bd-dots">.*?<\/span>/) || [""])[0]);
   ok("출결 점 — 지각은 노랑", /<i class="late"/.test(k1) && /<i class=""/.test(k1));
   ok("특이사항 — 수와 가장 최근 것", /특이사항 2<\/span><span class="muted">9\/16\([^)]*\)<\/span> 숙제 안 해옴/.test(k1), (k1.match(/bd-note.*?<\/div>/) || [""])[0]);
   ok("특이사항 없으면 «없음»", /특이사항<\/span><span class="muted">없음/.test(k2));
-  ok("기록 없는 학생 카드는 옅게", /<div class="bd-card quiet" data-bd-pid="p5">/.test(h));
-  ok("반 없는 학생은 빨갛게 «반 없음»", /data-bd-pid="p5">[\s\S]*?<span class="red">반 없음/.test(h));
+  ok("기록 없는 학생 큰 카드는 옅게", /<div class="bd-card quiet" data-bd-pid="p5">/.test(k5));
+  ok("반 없는 학생은 빨갛게 «반 없음»", /<span class="red">반 없음/.test(k5));
+
+  // ---- 작은 카드 (9/15 «3번») ----
+  const m1 = mini("p1"), m2 = mini("p2"), m5 = mini("p5");
+  ok("CSS — 작은 카드도 8:5", /\.bd-mini \{[^}]*aspect-ratio: 8 \/ 5/.test(html));
+  ok("작은 카드 — 이름·학년", /<span class="nm [^"]*">진유준<i>10<\/i><\/span>/.test(m1));
+  ok("작은 카드 — 마지막 점수 «60점»", /<span class="sc">60점<\/span>/.test(m1));
+  ok("작은 카드 — 특이사항이 있으면 점", /<i class="nt" title="특이사항 2">/.test(m1) && m2.indexOf('class="nt"') < 0);
+  ok("작은 카드 — 결석 수 «결2» · 점수 빈 칸이면 점수 없음", /<span class="ab">결2<\/span>/.test(m2) && m2.indexOf('class="sc"') < 0);
+  ok("작은 카드 — 결석 없으면 «결» 표시 없음", m1.indexOf('class="ab"') < 0);
+  ok("작은 카드 — 큰 카드와 같은 수 (결석 2 · 60점)", /결석 2/.test(k2) && /<b>60<\/b>/.test(k1));
+  ok("작은 카드 — 기록 없으면 옅게", /<div class="bd-mini quiet" data-bd-open="p5"/.test(m5));
+  ok("작은 카드 — 올리면 반 이름 (title)", /title="진유준 · 고1S · 개진반 박리안"/.test(m1) && /title="새학생 · 반 없음"/.test(m5));
+
+  run("renderBoard()");
+  const h = val("__BOX.innerHTML");
+  ok("격자에는 작은 카드만 — 다섯", (h.match(/class="bd-mini/g) || []).length === 5 && h.indexOf('class="bd-card') < 0);
   ok("위험 신호 칸은 아직 없다 (차차 정한다)", h.indexOf("위험") < 0);
   ok("머리 — 학생 수 · 보고 수(낸 것만) · 시작 날짜", /학생 5명 · 보고 3건 · 7\/24\([^)]*\)부터/.test(h), (h.match(/학생 \d[^<]*/) || [""])[0]);
+  ok("제목과 거르기가 한 줄 (bd-head)", /<div class="bd-head"><h2>학생 한눈에[\s\S]*?<div class="bd-bar">/.test(h));
   ok("div 를 다 닫는다", (h.match(/<div/g) || []).length === (h.match(/<\/div>/g) || []).length);
 
+  // ---- 누르면 큰 카드 ----
+  run(`S.bdOpen = "p1"; renderBoard()`);
+  let ho = val("__BOX.innerHTML");
+  ok("누른 학생의 큰 카드가 가운데 뜬다", /<div class="bd-pop" data-bd-pop><div class="bd-popin"><button class="mini bd-x" data-bd-close>닫기<\/button><div class="bd-card" data-bd-pid="p1">/.test(ho));
+  ok("큰 카드는 하나", (ho.match(/class="bd-card/g) || []).length === 1);
+  ok("뜬 상태에서도 div 짝이 맞다", (ho.match(/<div/g) || []).length === (ho.match(/<\/div>/g) || []).length);
+  run(`S.bdCls = "_none"; renderBoard()`);
+  ok("걸러서 안 보이는 학생이어도 열어 둔 카드는 그대로", /data-bd-pid="p1"/.test(val("__BOX.innerHTML")));
+  run(`S.bdCls = ""; S.bdOpen = "없는번호"; renderBoard()`);
+  ok("없는 학생 번호면 안 뜬다 (안 터진다)", val("__BOX.innerHTML").indexOf("bd-pop") < 0);
+  run(`S.bdOpen = ""; renderBoard()`);
+  ok("닫으면 없다", val("__BOX.innerHTML").indexOf("bd-pop") < 0);
+
+  // ---- 한 화면에 맞추기 ----
+  const fit = (n, W, H) => val(`boardFit(${n}, ${W}, ${H})`);
+  const f108 = fit(108, 1370, 700);
+  ok("108명 · 1370×700 — 12열 × 9줄 · 카드 110×69 로 다 들어간다", f108.fits && f108.cols === 12 && f108.rows === 9 && f108.w === 110 && f108.h === 69, JSON.stringify(f108));
+  ok("맞춘 카드는 8:5", Math.abs(f108.w * 5 / 8 - f108.h) < 1);
+  ok("들어가는 것 중 가장 큰 카드다 — 한 열 적으면 넘친다", (() => { const w = (1370 - 10 * 4) / 11, h = w * 5 / 8; return Math.ceil(108 / 11) * h + (Math.ceil(108 / 11) - 1) * 4 > 700; })());
+  const f5 = fit(5, 1370, 700);
+  ok("몇 명만 걸렀으면 카드가 커지다 만다 (180 까지)", f5.fits && f5.w <= 180 && f5.w >= 160, JSON.stringify(f5));
+  const fx = fit(500, 1370, 300);
+  ok("도저히 안 들어가면 읽을 수 있는 크기(84 이상)에서 멈추고 스크롤", !fx.fits && fx.w >= 84 && fx.cols === 15, JSON.stringify(fx));
+  ok("학생이 없으면 안 터진다", fit(0, 1370, 700).fits === true);
+  ok("좁은 화면(휴대폰 360)에서도 안 터진다 — 84 이상", (() => { const f = fit(108, 340, 600); return f.w >= 84 && f.cols >= 1; })(), JSON.stringify(fit(108, 340, 600)));
+
+  // ---- 위쪽 줄 접기 ----
+  setup();
+  run(`showPage("board")`);
+  ok("학생 한눈에를 열면 위쪽 줄을 접는다 (body.bd-full)", val("__BODY.classList.on")["bd-full"] === true);
+  run(`showPage("tasks")`);
+  ok("다른 메뉴로 가면 편다", val("__BODY.classList.on")["bd-full"] === false);
+  ok("CSS — 접으면 알림 띠를 감추고 너비 제한을 푼다", /body\.bd-full #banner \{ display: none; \}/.test(html) && /body\.bd-full \.wrap \{ max-width: none;/.test(html));
+  ok("CSS — 접으면 메뉴 단추가 작아진다", /body\.bd-full \.nav button \{[^}]*font-size: 12px/.test(html));
+
   // ---- 거르기 ----
+  setup();
   run(`S.bdCls = "k1"; renderBoard()`);
   let hh = val("__BOX.innerHTML");
-  ok("반으로 거른다 — 개진반 박리안은 둘", (hh.match(/class="bd-card/g) || []).length === 2 && /학생 2 \/ 5명/.test(hh));
+  ok("반으로 거른다 — 개진반 박리안은 둘", (hh.match(/class="bd-mini/g) || []).length === 2 && /학생 2 \/ 5명/.test(hh));
   run(`S.bdCls = "_none"; renderBoard()`);
   hh = val("__BOX.innerHTML");
-  ok("«반 없음» 으로 거른다", (hh.match(/class="bd-card/g) || []).length === 1 && hh.indexOf('data-bd-pid="p5"') >= 0);
+  ok("«반 없음» 으로 거른다", (hh.match(/class="bd-mini/g) || []).length === 1 && hh.indexOf('data-bd-open="p5"') >= 0);
   run(`S.bdCls = ""; S.bdQ = "보인고"; renderBoard()`);
   hh = val("__BOX.innerHTML");
-  ok("학교로 찾는다", (hh.match(/class="bd-card/g) || []).length === 1 && hh.indexOf('data-bd-pid="p1"') >= 0);
+  ok("학교로 찾는다", (hh.match(/class="bd-mini/g) || []).length === 1 && hh.indexOf('data-bd-open="p1"') >= 0);
   run(`S.bdQ = "없는사람"; renderBoard()`);
   ok("맞는 학생이 없으면 그렇게 적는다", val("__BOX.innerHTML").indexOf("맞는 학생이 없다") >= 0);
 
