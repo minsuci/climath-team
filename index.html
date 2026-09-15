@@ -487,7 +487,16 @@
   .bd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 6px; }
   .bd-head h2 { margin: 0 !important; font-size: 14px; }
   .bd-head .bd-bar { margin: 0; flex: 1; }
-  .bd-grid.fit { gap: 4px; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  /* 반별로 묶기 (9/15 «학생명단처럼 반별로») — 줄 = 고1·예비고1·개진반…, 블록 = 반, 블록 안은 한 열에 8장씩 위→아래 */
+  .bd-grp { margin: 0 0 8px; }
+  .bd-grp .gh { margin: 4px 0; font-size: 13px; }
+  .bd-row-cls { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+  .bd-cb { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; padding: 4px 5px 5px; background: #f7f8fb; box-sizing: border-box; }
+  .bd-cb.mine { background: #eef3fb; border-color: #b9c9e6; }
+  .bd-ch { width: 0; min-width: 100%; display: flex; gap: 5px; align-items: baseline; font-size: 11px; margin: 0 0 4px; white-space: nowrap; overflow: hidden; }
+  .bd-ch b { overflow: hidden; text-overflow: ellipsis; }
+  .bd-cg { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--r, 1), auto); grid-template-columns: repeat(var(--k, 1), var(--bw, 110px)); gap: 4px; }
+  .bd-cg .bd-mini { width: var(--bw, 110px); }
   .bd-mini { aspect-ratio: 8 / 5; max-width: 100%; box-sizing: border-box; overflow: hidden; min-width: 0; border: 1px solid var(--line); border-radius: 6px;
     background: #fff; padding: 3px 5px; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; font-size: 10px; line-height: 1.25; }
   .bd-mini:hover { outline: 2px solid var(--navy); }
@@ -1776,29 +1785,73 @@ function boardMiniHtml(x) {
       (m.lastScore != null ? '<span class="sc">' + m.lastScore + '점</span>' : "") +
       (m.notes.length ? '<i class="nt" title="특이사항 ' + m.notes.length + '"></i>' : "") + '</span></div>';
 }
-// n 장을 너비 W · 높이 H 에 **스크롤 없이** 넣는 가장 큰 8:5 카드.
-// 너무 크면(학생을 몇 명만 걸렀을 때) BOARD_MAX_W 로 막고, 너무 작아지면(BOARD_MIN_W 밑) 읽을 수 없으니 스크롤을 허락한다(fits:false).
-var BOARD_GAP = 4, BOARD_MIN_W = 84, BOARD_MAX_W = 180;
-function boardFit(n, W, H, gap) {
-  gap = gap == null ? BOARD_GAP : gap;
-  if (!n || !(W > 0)) return { cols: 1, w: 0, h: 0, rows: 0, fits: true };
-  var maxCols = Math.max(1, Math.floor((W + gap) / (BOARD_MIN_W + gap)));
-  var minCols = Math.min(maxCols, Math.max(1, Math.ceil((W + gap) / (BOARD_MAX_W + gap))));
-  for (var c = minCols; c <= maxCols; c++) {
-    var w = (W - (c - 1) * gap) / c, h = w * 5 / 8, rows = Math.ceil(n / c);
-    if (rows * h + (rows - 1) * gap <= H) return { cols: c, w: Math.floor(w), h: Math.floor(h), rows: rows, fits: true };
-  }
-  var w2 = (W - (maxCols - 1) * gap) / maxCols;
-  return { cols: maxCols, w: Math.floor(w2), h: Math.floor(w2 * 5 / 8), rows: Math.ceil(n / maxCols), fits: false };
+// ---- 반별로 묶기 (9/15 마왕님 «학생명단처럼 반별로 묶여있으면 좋을 듯») ----
+// 학생 명단 배치표와 같은 묶음: 고3·고2·고1·예비고1 줄(GRID_GROUPS) → 개진반 → 그 밖 → 반 미배정.
+// 한 줄에 반 블록이 나란하고, 블록 안의 작은 카드는 **한 열에 8장씩 위에서 아래로** 채운다(개진반 요일 표와 같은 규칙).
+// 두 반을 듣는 학생은 **두 블록에 다 뜬다** — 배치표도 그렇다. 머리의 «학생 N명» 은 겹침 없이 센다.
+// ⚠ 한 화면에 전원(9/15 «3번»)은 이걸로 포기했다 — 반마다 세로로 8장이라 묶음 줄이 넷이면 1920 화면에서도 넘친다.
+//   카드 너비만 화면에 맞추고(가장 빽빽한 줄이 한 줄에 들어가게) 세로는 스크롤한다.
+var BOARD_GAP = 4, BOARD_MIN_W = 84, BOARD_MAX_W = 180, BOARD_PER_COL = 8, BOARD_BLOCK_GAP = 10, BOARD_BLOCK_PAD = 12;
+function boardGroups(shown) {
+  var byPid = {}; shown.forEach(function (x) { byPid[x.p.pid] = x; });
+  var me = S.claims ? teacherName(S.claims.tid) : "";
+  var byName = function (a, b) { return String(a.p.name || "").localeCompare(String(b.p.name || ""), "ko"); };
+  var byG = {};
+  activeClasses().forEach(function (c) {
+    if (S.bdCls === "_none" || (S.bdCls && S.bdCls !== c.id)) return;
+    var seen = {}, xs = [];
+    rosterStudents(c).forEach(function (r) { var x = r.pid && byPid[r.pid]; if (x && !seen[r.pid]) { seen[r.pid] = 1; xs.push(x); } });
+    if (!xs.length) return;
+    var ts = classTeachers(c.id), g = isIndividual(c) ? "개진반" : classGroup(c);
+    (byG[g] = byG[g] || []).push({ c: c, xs: xs.sort(byName), t: ts.join("·"), mine: ts.indexOf(me) >= 0 });
+  });
+  var groups = [];
+  GRID_GROUPS.forEach(function (p) { if (byG[p[0]]) groups.push({ name: p[0], grade: p[2], blocks: byG[p[0]] }); });
+  if (byG["개진반"]) groups.push({ name: "개진반", grade: "", blocks: byG["개진반"] });
+  if (byG[""]) groups.push({ name: "그 밖", grade: "", blocks: byG[""] });
+  var loose = !S.bdCls || S.bdCls === "_none" ? shown.filter(function (x) { return !x.cls.length; }) : [];
+  if (loose.length) groups.push({ name: "반 미배정", grade: "", loose: true, blocks: [{ c: { id: "_none", name: "반 미배정" }, xs: loose.slice().sort(byName), t: "", mine: false }] });
+  return groups;
 }
-// 그려진 격자를 재서 열 수를 정한다. 메뉴가 안 떠 있으면 잴 수 없으니 그만둔다 — showPage 가 띄울 때 다시 부른다
+function boardGroupsHtml(groups) {
+  return groups.map(function (g) {
+    var uniq = {}; g.blocks.forEach(function (b) { b.xs.forEach(function (x) { uniq[x.p.pid] = 1; }); });
+    return '<div class="bd-grp"><h3 class="gh">' +
+      '<span class="pill' + (g.grade ? " " + gradeCls(g.grade) : g.loose ? " red" : "") + '">' + esc(g.name) + '</span>' +
+      '<span class="muted">' + (g.loose ? "" : g.blocks.length + "반 · ") + Object.keys(uniq).length + '명</span></h3>' +
+      '<div class="bd-row-cls">' + g.blocks.map(function (b) {
+        var k = Math.max(1, Math.ceil(b.xs.length / BOARD_PER_COL)), r = Math.min(b.xs.length, BOARD_PER_COL);
+        return '<div class="bd-cb' + (b.mine ? " mine" : "") + '" data-k="' + k + '" data-cid="' + esc(b.c.id) + '">' +
+          '<div class="bd-ch" title="' + esc(b.c.name + (b.t ? " · " + b.t : "")) + '"><b>' + esc(b.c.name) + '</b><span class="muted">' +
+            (b.t ? esc(b.t) + " · " : "") + b.xs.length + '명</span></div>' +
+          '<div class="bd-cg" style="--k:' + k + ';--r:' + r + '">' + b.xs.map(boardMiniHtml).join("") + '</div></div>';
+      }).join("") + '</div></div>';
+  }).join("");
+}
+// 카드 너비. rows = 줄마다 [반 블록의 열 수…]. 가장 빽빽한 줄이 너비 W 한 줄에 들어가는 폭(84~180).
+// 84 밑이면 줄이 접힌다(flex-wrap) — 이름을 못 읽을 만큼 줄이지는 않는다.
+function boardColW(rows, W) {
+  var w = BOARD_MAX_W;
+  (rows || []).forEach(function (ks) {
+    if (!ks || !ks.length) return;
+    var cols = ks.reduce(function (a, b) { return a + b; }, 0);
+    var fixed = (ks.length - 1) * BOARD_BLOCK_GAP + ks.length * BOARD_BLOCK_PAD + (cols - ks.length) * BOARD_GAP;
+    w = Math.min(w, Math.floor((W - fixed) / cols));
+  });
+  return Math.max(BOARD_MIN_W, w);
+}
+// 그려진 줄을 재서 카드 너비를 정한다(--bw). 메뉴가 안 떠 있으면 잴 수 없으니 그만둔다 — showPage 가 띄울 때 다시 부른다
 function boardApplyFit() {
-  var el = $("#sec-board"); if (!el || el.hidden || !el.querySelector) return;
-  var grid = el.querySelector(".bd-grid"); if (!grid || !grid.getBoundingClientRect) return;
-  var r = grid.getBoundingClientRect();
-  var f = boardFit(grid.children.length, grid.clientWidth || r.width, window.innerHeight - r.top - 12);
-  grid.style.gridTemplateColumns = "repeat(" + f.cols + ", minmax(0, 1fr))";
-  S.bdFit = f;
+  var el = $("#sec-board"); if (!el || el.hidden || !el.querySelectorAll) return;
+  var rows = [], W = 0;
+  $$(".bd-row-cls", el).forEach(function (row) {
+    W = Math.max(W, row.clientWidth || 0);
+    rows.push(Array.prototype.map.call($$(".bd-cb", row), function (b) { return Number(b.getAttribute("data-k")) || 1; }));
+  });
+  if (!rows.length || !W) return;
+  var w = boardColW(rows, W);
+  if (el.style && el.style.setProperty) el.style.setProperty("--bw", w + "px");
+  S.bdColW = w;
 }
 function boardHit(x) {
   if (S.bdCls === "_none") { if (x.cls.length) return false; }
@@ -1832,7 +1885,7 @@ function renderBoard() {
       '<span class="muted">학생 ' + shown.length + (shown.length !== all.length ? " / " + all.length : "") + '명 · 보고 ' + nRep + '건 · ' + esc(fmtMD(S.board.from)) + '부터</span>' +
       '<span class="sp"></span><button class="mini" data-bd-reload' + (S.boardLoading ? " disabled" : "") + '>다시 읽기</button></div></div>' +
     (S.board.failed.length ? '<div class="err">이 선생님 보고는 못 읽었다 — 카드가 비어 보여도 기록이 없는 게 아니다: ' + esc(S.board.failed.join(", ")) + '</div>' : "") +
-    (shown.length ? '<div class="bd-grid fit">' + shown.map(boardMiniHtml).join("") + '</div>' : '<div class="empty">맞는 학생이 없다.</div>') +
+    (shown.length ? boardGroupsHtml(boardGroups(shown)) : '<div class="empty">맞는 학생이 없다.</div>') +
     (open ? '<div class="bd-pop" data-bd-pop><div class="bd-popin"><button class="mini bd-x" data-bd-close>닫기</button>' + boardCardHtml(open) + '</div></div>' : "");
   $$("[data-bd-cls]", el).forEach(function (sel) { sel.onchange = function () { S.bdCls = sel.value; renderBoard(); }; });
   // 글자 칸은 칠 때마다 다시 그리지 않는다(한글 조합이 깨진다) — Enter·칸 벗어날 때만

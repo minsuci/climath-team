@@ -162,7 +162,8 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
 
   run("renderBoard()");
   const h = val("__BOX.innerHTML");
-  ok("격자에는 작은 카드만 — 다섯", (h.match(/class="bd-mini/g) || []).length === 5 && h.indexOf('class="bd-card') < 0);
+  // 9/15 «학생명단처럼 반별로» — 고1S 셋 · 개진반 박리안 둘 · 반 미배정 하나. 두 반 듣는 진유준은 두 블록에 다 뜬다
+  ok("반 블록마다 작은 카드 — 3 + 2 + 1", (h.match(/class="bd-mini/g) || []).length === 6 && h.indexOf('class="bd-card') < 0, String((h.match(/class="bd-mini/g) || []).length));
   ok("위험 신호 칸은 아직 없다 (차차 정한다)", h.indexOf("위험") < 0);
   ok("머리 — 학생 수 · 보고 수(낸 것만) · 시작 날짜", /학생 5명 · 보고 3건 · 7\/24\([^)]*\)부터/.test(h), (h.match(/학생 \d[^<]*/) || [""])[0]);
   ok("제목과 거르기가 한 줄 (bd-head)", /<div class="bd-head"><h2>학생 한눈에[\s\S]*?<div class="bd-bar">/.test(h));
@@ -181,18 +182,35 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   run(`S.bdOpen = ""; renderBoard()`);
   ok("닫으면 없다", val("__BOX.innerHTML").indexOf("bd-pop") < 0);
 
-  // ---- 한 화면에 맞추기 ----
-  const fit = (n, W, H) => val(`boardFit(${n}, ${W}, ${H})`);
-  const f108 = fit(108, 1370, 700);
-  ok("108명 · 1370×700 — 12열 × 9줄 · 카드 110×69 로 다 들어간다", f108.fits && f108.cols === 12 && f108.rows === 9 && f108.w === 110 && f108.h === 69, JSON.stringify(f108));
-  ok("맞춘 카드는 8:5", Math.abs(f108.w * 5 / 8 - f108.h) < 1);
-  ok("들어가는 것 중 가장 큰 카드다 — 한 열 적으면 넘친다", (() => { const w = (1370 - 10 * 4) / 11, h = w * 5 / 8; return Math.ceil(108 / 11) * h + (Math.ceil(108 / 11) - 1) * 4 > 700; })());
-  const f5 = fit(5, 1370, 700);
-  ok("몇 명만 걸렀으면 카드가 커지다 만다 (180 까지)", f5.fits && f5.w <= 180 && f5.w >= 160, JSON.stringify(f5));
-  const fx = fit(500, 1370, 300);
-  ok("도저히 안 들어가면 읽을 수 있는 크기(84 이상)에서 멈추고 스크롤", !fx.fits && fx.w >= 84 && fx.cols === 15, JSON.stringify(fx));
-  ok("학생이 없으면 안 터진다", fit(0, 1370, 700).fits === true);
-  ok("좁은 화면(휴대폰 360)에서도 안 터진다 — 84 이상", (() => { const f = fit(108, 340, 600); return f.w >= 84 && f.cols >= 1; })(), JSON.stringify(fit(108, 340, 600)));
+  // ---- 반별로 묶기 (9/15 «학생명단처럼 반별로») ----
+  setup(); run("renderBoard()");
+  const hg = val("__BOX.innerHTML");
+  const heads = (hg.match(/<h3 class="gh">.*?<\/h3>/g) || []).map((x) => x.replace(/<[^>]+>/g, ""));
+  ok("묶음 줄 순서 — 고1 · 개진반 · 반 미배정 (배치표와 같다)", JSON.stringify(heads) === JSON.stringify(["고11반 · 3명", "개진반1반 · 2명", "반 미배정1명"]), JSON.stringify(heads));
+  const block = (cid) => { const i = hg.indexOf('data-cid="' + cid + '"'); const j = hg.indexOf('<div class="bd-cb', i + 1); return hg.slice(i, j < 0 ? hg.indexOf('<h3', i) : j); };
+  const opens = (b) => (b.match(/data-bd-open="([^"]+)"/g) || []).map((x) => x.slice(14, -1));
+  ok("고1S 블록 — 이름순 (김서진 · 옛줄 · 진유준)", JSON.stringify(opens(block("c1"))) === '["p2","p3","p1"]', JSON.stringify(opens(block("c1"))));
+  ok("개진반 블록 — 그 반 학생만 (옛줄 p4 · 진유준)", JSON.stringify(opens(block("k1"))) === '["p4","p1"]', JSON.stringify(opens(block("k1"))));
+  ok("반 블록 머리 — 반 이름 · 담당 · 인원", /<div class="bd-ch" title="고1S · 한민수"><b>고1S<\/b><span class="muted">한민수 · 3명<\/span>/.test(hg));
+  ok("내가 담당인 반 블록은 파랗게", /<div class="bd-cb mine" data-k="1" data-cid="c1">/.test(hg) && /<div class="bd-cb" data-k="1" data-cid="k1">/.test(hg));
+  ok("반 미배정은 빨간 머리 · 반 수 없이", /<span class="pill red">반 미배정<\/span><span class="muted">1명/.test(hg) && opens(block("_none")).join() === "p5");
+  ok("묶음 머리 인원은 겹침 없이 (고1 3명)", heads[0] === "고11반 · 3명");
+  // 한 열에 8장
+  run(`for (var i = 0; i < 9; i++) { S.students.push({ pid:"z" + i, name:"학생" + String.fromCharCode(44032 + i), grade:"고1" });
+         S.classes[0].roster.push({ id:"zz" + i, pid:"z" + i, name:"학생" + String.fromCharCode(44032 + i) }); }
+       S.byPid = {}; S.students.forEach(function (x) { S.byPid[x.pid] = x; }); renderBoard();`);
+  const h12 = val("__BOX.innerHTML");
+  ok("한 반 12명이면 두 열 — 한 열 8장 (data-k 2 · --r 8)", /<div class="bd-cb mine" data-k="2" data-cid="c1">[\s\S]*?<div class="bd-cg" style="--k:2;--r:8">/.test(h12));
+  ok("CSS — 블록 안은 열부터 채운다 (위→아래)", /\.bd-cg \{[^}]*grid-auto-flow: column/.test(html) && /\.bd-cg \{[^}]*repeat\(var\(--k, 1\), var\(--bw/.test(html));
+  ok("CSS — 반 블록 줄은 넘치면 접힌다", /\.bd-row-cls \{[^}]*flex-wrap: wrap/.test(html));
+
+  // ---- 카드 너비 ----
+  const colW = (rows, W) => val(`boardColW(${JSON.stringify(rows)}, ${W})`);
+  ok("개진반 줄(열 2·3·1·1·1·2·1) · 1870px — 카드 155", colW([[2, 3, 1, 1, 1, 2, 1]], 1870) === 155, String(colW([[2, 3, 1, 1, 1, 2, 1]], 1870)));
+  ok("가장 빽빽한 줄에 맞춘다", colW([[1, 1], [2, 3, 1, 1, 1, 2, 1]], 1870) === 155);
+  ok("반 하나뿐이면 180 에서 멈춘다", colW([[1]], 1870) === 180);
+  ok("좁으면 84 밑으로는 안 간다 — 줄이 접힌다", colW([[2, 3, 1, 1, 1, 2, 1]], 500) === 84);
+  ok("줄이 없으면 안 터진다", colW([], 1000) === 180);
 
   // ---- 위쪽 줄 접기 ----
   setup();
@@ -207,13 +225,13 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   setup();
   run(`S.bdCls = "k1"; renderBoard()`);
   let hh = val("__BOX.innerHTML");
-  ok("반으로 거른다 — 개진반 박리안은 둘", (hh.match(/class="bd-mini/g) || []).length === 2 && /학생 2 \/ 5명/.test(hh));
+  ok("반으로 거른다 — 개진반 박리안 블록만 · 둘", (hh.match(/class="bd-mini/g) || []).length === 2 && /학생 2 \/ 5명/.test(hh) && (hh.match(/class="bd-cb/g) || []).length === 1 && hh.indexOf('data-cid="k1"') >= 0);
   run(`S.bdCls = "_none"; renderBoard()`);
   hh = val("__BOX.innerHTML");
   ok("«반 없음» 으로 거른다", (hh.match(/class="bd-mini/g) || []).length === 1 && hh.indexOf('data-bd-open="p5"') >= 0);
   run(`S.bdCls = ""; S.bdQ = "보인고"; renderBoard()`);
   hh = val("__BOX.innerHTML");
-  ok("학교로 찾는다", (hh.match(/class="bd-mini/g) || []).length === 1 && hh.indexOf('data-bd-open="p1"') >= 0);
+  ok("학교로 찾는다 — 한 명이 두 반 블록에 · 학생 수는 1", (hh.match(/data-bd-open="p1"/g) || []).length === 2 && (hh.match(/class="bd-mini/g) || []).length === 2 && /학생 1 \/ 5명/.test(hh));
   run(`S.bdQ = "없는사람"; renderBoard()`);
   ok("맞는 학생이 없으면 그렇게 적는다", val("__BOX.innerHTML").indexOf("맞는 학생이 없다") >= 0);
 
