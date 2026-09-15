@@ -1790,7 +1790,11 @@ function boardMiniHtml(x) {
 // ---- 반별로 묶기 (9/15 마왕님 «학생명단처럼 반별로 묶여있으면 좋을 듯») ----
 // 학생 명단 배치표와 같은 묶음: 고3·고2·고1·예비고1 줄(GRID_GROUPS) → 개진반 → 그 밖 → 반 미배정.
 // 한 줄에 반 블록이 나란하고, 블록 안의 작은 카드는 위에서 아래로 채운다.
-// 두 반을 듣는 학생은 **두 블록에 다 뜬다** — 배치표도 그렇다. 머리의 «학생 N명» 은 겹침 없이 센다.
+// 두 반을 듣는 학생은 **한 번만** 뜬다 (9/15 마왕님 «두 반 듣는 학생은 한 번만» — 129장 → 108장).
+//   보이는 순서대로 먼저 나온 블록에 둔다 — 묶음 순서가 고1·예비고1 → 개진반이라 **정규반 블록에 남고 개진반 블록에서 빠진다.**
+//   개진반 둘(안연재·권승규 같은)이면 앞 반. 빠진 수는 그 블록 머리에 «+N» 으로 남긴다 — 반 인원이 줄어든 게 아니다.
+//   학생이 전부 앞 반에 뜬 반은 블록째 빠지고 묶음 머리에 이름을 적는다(반이 조용히 사라지면 안 된다).
+//   ⚠ 반 하나를 거르면 겹침을 안 뺀다 — 그 반 학생은 다 보여야 한다.
 // 처음엔 배치표처럼 블록마다 한 열 8장으로 세웠더니 세로가 넘쳐 «한 화면에 전원» 을 못 지켰다.
 // 9/15 마왕님 «꼭 세로로 한 줄이 아니어도 됨. 한 화면에 최대한 많은 인원» → 블록의 열·줄 수를 **화면에 맞춰 고른다**(boardPack).
 var BOARD_GAP = 4, BOARD_MIN_W = 84, BOARD_MAX_W = 180, BOARD_PER_COL = 8, BOARD_BLOCK_GAP = 10, BOARD_BLOCK_PAD = 12;
@@ -1815,6 +1819,19 @@ function boardGroups(shown) {
   if (byG[""]) groups.push({ name: "그 밖", grade: "", blocks: byG[""] });
   var loose = !S.bdCls || S.bdCls === "_none" ? shown.filter(function (x) { return !x.cls.length; }) : [];
   if (loose.length) groups.push({ name: "반 미배정", grade: "", loose: true, blocks: [{ c: { id: "_none", name: "반 미배정" }, xs: loose.slice().sort(byName), t: "", mine: false }] });
+  if (!S.bdCls) {
+    var placed = {};
+    groups.forEach(function (g) {
+      g.blocks.forEach(function (b) {
+        var keep = []; b.away = 0;
+        b.xs.forEach(function (x) { if (placed[x.p.pid]) b.away++; else { placed[x.p.pid] = 1; keep.push(x); } });
+        b.xs = keep;
+      });
+      g.gone = g.blocks.filter(function (b) { return !b.xs.length; });
+      g.blocks = g.blocks.filter(function (b) { return b.xs.length; });
+    });
+    groups = groups.filter(function (g) { return g.blocks.length || g.gone.length; });
+  }
   return groups;
 }
 function boardGroupsHtml(groups) {
@@ -1822,12 +1839,15 @@ function boardGroupsHtml(groups) {
     var uniq = {}; g.blocks.forEach(function (b) { b.xs.forEach(function (x) { uniq[x.p.pid] = 1; }); });
     return '<div class="bd-grp"><h3 class="gh">' +
       '<span class="pill' + (g.grade ? " " + gradeCls(g.grade) : g.loose ? " red" : "") + '">' + esc(g.name) + '</span>' +
-      '<span class="muted">' + (g.loose ? "" : g.blocks.length + "반 · ") + Object.keys(uniq).length + '명</span></h3>' +
+      '<span class="muted">' + (g.loose ? "" : g.blocks.length + "반 · ") + Object.keys(uniq).length + '명</span>' +
+      ((g.gone || []).length ? '<span class="muted" title="이 반 학생은 모두 앞 반 블록에 한 번씩 떠 있다">· ' +
+        esc(g.gone.map(function (b) { return b.c.name + " " + b.away + "명"; }).join(", ")) + '은 모두 앞 반에</span>' : "") + '</h3>' +
       '<div class="bd-row-cls">' + g.blocks.map(function (b) {
         var k = Math.max(1, Math.ceil(b.xs.length / BOARD_PER_COL)), r = Math.min(b.xs.length, BOARD_PER_COL);
         return '<div class="bd-cb' + (b.mine ? " mine" : "") + '" data-n="' + b.xs.length + '" data-k="' + k + '" data-cid="' + esc(b.c.id) + '">' +
           '<div class="bd-ch" title="' + esc(b.c.name + (b.t ? " · " + b.t : "")) + '"><b>' + esc(b.c.name) + '</b><span class="muted">' +
-            (b.t ? esc(b.t) + " · " : "") + b.xs.length + '명</span></div>' +
+            (b.t ? esc(b.t) + " · " : "") + b.xs.length + '명' +
+            (b.away ? ' <span class="bd-away" title="이 반 학생인데 앞 반 블록에 한 번만 떠 있다">+' + b.away + '</span>' : "") + '</span></div>' +
           '<div class="bd-cg" style="--k:' + k + ';--r:' + r + '">' + b.xs.map(boardMiniHtml).join("") + '</div></div>';
       }).join("") + '</div></div>';
   }).join("") + '</div>';

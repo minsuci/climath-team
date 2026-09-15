@@ -163,7 +163,8 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   run("renderBoard()");
   const h = val("__BOX.innerHTML");
   // 9/15 «학생명단처럼 반별로» — 고1S 셋 · 개진반 박리안 둘 · 반 미배정 하나. 두 반 듣는 진유준은 두 블록에 다 뜬다
-  ok("반 블록마다 작은 카드 — 3 + 2 + 1", (h.match(/class="bd-mini/g) || []).length === 6 && h.indexOf('class="bd-card') < 0, String((h.match(/class="bd-mini/g) || []).length));
+  // 9/15 «두 반 듣는 학생은 한 번만» — 고1S 셋 · 개진반 박리안 하나(진유준은 정규반 고1S 에만) · 반 미배정 하나
+  ok("반 블록마다 작은 카드 — 3 + 1 + 1 (두 반 듣는 학생은 한 번)", (h.match(/class="bd-mini/g) || []).length === 5 && h.indexOf('class="bd-card') < 0, String((h.match(/class="bd-mini/g) || []).length));
   ok("위험 신호 칸은 아직 없다 (차차 정한다)", h.indexOf("위험") < 0);
   ok("머리 — 학생 수 · 보고 수(낸 것만) · 시작 날짜", /학생 5명 · 보고 3건 · 7\/24\([^)]*\)부터/.test(h), (h.match(/학생 \d[^<]*/) || [""])[0]);
   ok("제목과 거르기가 한 줄 (bd-head)", /<div class="bd-head"><h2>학생 한눈에[\s\S]*?<div class="bd-bar">/.test(h));
@@ -186,17 +187,32 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   setup(); run("renderBoard()");
   const hg = val("__BOX.innerHTML");
   const heads = (hg.match(/<h3 class="gh">.*?<\/h3>/g) || []).map((x) => x.replace(/<[^>]+>/g, ""));
-  ok("묶음 줄 순서 — 고1 · 개진반 · 반 미배정 (배치표와 같다)", JSON.stringify(heads) === JSON.stringify(["고11반 · 3명", "개진반1반 · 2명", "반 미배정1명"]), JSON.stringify(heads));
+  ok("묶음 줄 순서 — 고1 · 개진반 · 반 미배정 (배치표와 같다)", JSON.stringify(heads) === JSON.stringify(["고11반 · 3명", "개진반1반 · 1명", "반 미배정1명"]), JSON.stringify(heads));
   const block = (cid) => { const i = hg.indexOf('data-cid="' + cid + '"'); const j = hg.indexOf('<div class="bd-cb', i + 1); return hg.slice(i, j < 0 ? hg.indexOf('<h3', i) : j); };
   const opens = (b) => (b.match(/data-bd-open="([^"]+)"/g) || []).map((x) => x.slice(14, -1));
   ok("고1S 블록 — 이름순 (김서진 · 옛줄 · 진유준)", JSON.stringify(opens(block("c1"))) === '["p2","p3","p1"]', JSON.stringify(opens(block("c1"))));
-  ok("개진반 블록 — 그 반 학생만 (옛줄 p4 · 진유준)", JSON.stringify(opens(block("k1"))) === '["p4","p1"]', JSON.stringify(opens(block("k1"))));
+  ok("개진반 블록 — 정규반에도 있는 진유준은 빠지고 옛줄(p4)만", JSON.stringify(opens(block("k1"))) === '["p4"]', JSON.stringify(opens(block("k1"))));
+  ok("정규반 블록에 남는다 — 진유준은 고1S 에", opens(block("c1")).indexOf("p1") >= 0);
+  ok("빠진 수는 블록 머리에 «+1» — 반 인원이 줄어든 게 아니다", /<b>개진반 박리안<\/b><span class="muted">박리안 · 1명 <span class="bd-away" title="[^"]*">\+1<\/span><\/span>/.test(hg), (hg.match(/<b>개진반 박리안<\/b>.*?<\/div>/) || [""])[0]);
+  ok("안 빠진 반 머리에는 «+» 가 없다", !/<b>고1S<\/b>[^<]*<span class="muted">[^<]*<span class="bd-away"/.test(hg));
   ok("반 블록 머리 — 반 이름 · 담당 · 인원", /<div class="bd-ch" title="고1S · 한민수"><b>고1S<\/b><span class="muted">한민수 · 3명<\/span>/.test(hg));
   ok("반 블록 머리는 두 줄 — 좁은 블록에서 반 이름이 «고…» 로 안 잘린다 (9/15 실제 화면)", /\.bd-ch \{[^}]*flex-direction: column/.test(html));
-  ok("내가 담당인 반 블록은 파랗게 · 블록에 인원(data-n)", /<div class="bd-cb mine" data-n="3" data-k="1" data-cid="c1">/.test(hg) && /<div class="bd-cb" data-n="2" data-k="1" data-cid="k1">/.test(hg));
+  ok("내가 담당인 반 블록은 파랗게 · 블록에 인원(data-n)", /<div class="bd-cb mine" data-n="3" data-k="1" data-cid="c1">/.test(hg) && /<div class="bd-cb" data-n="1" data-k="1" data-cid="k1">/.test(hg));
   ok("묶음 전체를 한 상자로 (화면에 맞출 때 잰다)", /<div class="bd-groups"><div class="bd-grp">/.test(hg));
   ok("반 미배정은 빨간 머리 · 반 수 없이", /<span class="pill red">반 미배정<\/span><span class="muted">1명/.test(hg) && opens(block("_none")).join() === "p5");
   ok("묶음 머리 인원은 겹침 없이 (고1 3명)", heads[0] === "고11반 · 3명");
+  // 반 하나를 거르면 겹침을 안 뺀다 — 그 반 학생은 다 보여야 한다
+  run(`S.bdCls = "k1"; renderBoard()`);
+  ok("개진반을 거르면 정규반에도 있는 학생까지 다 (진유준 포함 둘)", JSON.stringify(opens(val("__BOX.innerHTML"))) === '["p4","p1"]' && val("__BOX.innerHTML").indexOf("bd-away") < 0, JSON.stringify(opens(val("__BOX.innerHTML"))));
+  // 학생이 전부 앞 반에 뜬 반 — 블록째 빠지고 묶음 머리에 이름
+  run(`S.bdCls = ""; S.classes[0].roster.push({ id:"r4", pid:"p4", name:"옛줄" }); renderBoard()`);
+  const hgone = val("__BOX.innerHTML");
+  ok("학생이 모두 앞 반에 뜬 반은 블록이 없다", hgone.indexOf('data-cid="k1"') < 0);
+  ok("대신 묶음 머리에 «개진반 박리안 2명은 모두 앞 반에»", /<span class="pill">개진반<\/span><span class="muted">0반 · 0명<\/span><span class="muted" title="[^"]*">· 개진반 박리안 2명은 모두 앞 반에<\/span>/.test(hgone), (hgone.match(/<span class="pill">개진반.*?<\/h3>/) || [""])[0]);
+  ok("묶음째 없어지는 것이 아니다 — 반이 조용히 사라지면 안 된다", /<span class="pill">개진반<\/span>/.test(hgone));
+  ok("학생 수는 그대로 5명 (카드도 다섯)", /학생 5명/.test(hgone) && (hgone.match(/class="bd-mini/g) || []).length === 5);
+  setup(); run("renderBoard()");
+
   // 재기 전 기본 모양 — 한 열에 8장 (화면에 맞추면 boardApplyFit 이 열·줄을 다시 입힌다)
   run(`for (var i = 0; i < 9; i++) { S.students.push({ pid:"z" + i, name:"학생" + String.fromCharCode(44032 + i), grade:"고1" });
          S.classes[0].roster.push({ id:"zz" + i, pid:"z" + i, name:"학생" + String.fromCharCode(44032 + i) }); }
@@ -252,7 +268,7 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
   ok("«반 없음» 으로 거른다", (hh.match(/class="bd-mini/g) || []).length === 1 && hh.indexOf('data-bd-open="p5"') >= 0);
   run(`S.bdCls = ""; S.bdQ = "보인고"; renderBoard()`);
   hh = val("__BOX.innerHTML");
-  ok("학교로 찾는다 — 한 명이 두 반 블록에 · 학생 수는 1", (hh.match(/data-bd-open="p1"/g) || []).length === 2 && (hh.match(/class="bd-mini/g) || []).length === 2 && /학생 1 \/ 5명/.test(hh));
+  ok("학교로 찾는다 — 두 반 듣는 학생도 한 번만", (hh.match(/data-bd-open="p1"/g) || []).length === 1 && (hh.match(/class="bd-mini/g) || []).length === 1 && /학생 1 \/ 5명/.test(hh));
   run(`S.bdQ = "없는사람"; renderBoard()`);
   ok("맞는 학생이 없으면 그렇게 적는다", val("__BOX.innerHTML").indexOf("맞는 학생이 없다") >= 0);
 
