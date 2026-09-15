@@ -78,6 +78,18 @@ ok("한 번 읽었으면 다시 열어도 안 읽는다", val("__CALLS") === 1);
 run(`S.board = null; S.ro = true; showPage("board"); S.ro = false;`);
 ok("선생님 계정은 주소로 들어와도 안 읽는다 (남의 보고를 부르면 규칙이 거절)", val("__CALLS") === 1);
 
+// ⚠ 9/15 배포 직후 실제로 난 것 — 주소 #board 로 바로 열면 선생님 명단보다 먼저 읽기가 돌아 «0건을 다 읽었다» 가 됐다
+run(`__CALLS = 0; S.board = null; S.boardLoading = false; S.boardErr = ""; __T = S.teachers; S.teachers = [];
+     __BOX.hidden = false; showPage("board");`);
+ok("선생님 명단이 비었으면 안 읽는다 — 빈 것을 «다 읽었다» 로 적지 않는다", val("__CALLS") === 0 && val("S.board") === null);
+run(`renderBoard()`);
+ok("그 사이 화면은 «기다리는 중» (기록 없음 카드가 아니다)", val("__BOX.innerHTML").indexOf("선생님 명단을 기다리는 중") >= 0 && val("__BOX.innerHTML").indexOf("bd-card") < 0);
+run(`S.teachers = __T; renderBoard();`);
+ok("명단이 오고 다시 그릴 때 읽는다 (renderAll → renderBoard)", val("__CALLS") === 1);
+run(`S.board = null; S.boardLoading = false; __BOX.hidden = true; renderBoard(); __BOX.hidden = false;`);
+ok("메뉴가 안 떠 있으면 다시 그려도 안 읽는다", val("__CALLS") === 1);
+run(`loadBoard = function () { __CALLS++; return Promise.reject(new Error("끊김")); }; S.board = null; S.boardLoading = false; S.boardErr = ""; renderBoard();`);
+
 // ---- 진짜 loadBoard: 선생님마다 부르고, 못 읽은 사람을 남긴다 ----
 run("loadBoard = __REAL_LOAD");    // 흉내 낸 loadBoard 를 걷는다
 setup();
@@ -86,6 +98,15 @@ run(`rpCol = function (tid) { return { where: function (f, op, v) { __FROM = v; 
         return Promise.resolve({ forEach: function (cb) { cb({ id: "2026-09-14", data: function () { return { date: "2026-09-14", submitted: 1, classes: [] }; } }); } });
       } }; } }; };`);
 (async () => {
+  // 위에서 실패하는 읽기를 걸어 두었다 — 실패는 적히고, 다시 그려도 저절로 또 부르지 않는다(끝없이 돌면 안 된다)
+  await new Promise((r) => setTimeout(r, 0));
+  ok("못 읽으면 오류가 적힌다", val("S.boardErr") === "끊김" && val("S.boardLoading") === false, val("S.boardErr"));
+  // setup() 이 그 사이 카드 자료를 채웠다(실패는 그 뒤 마이크로태스크에서 적혔다) — 못 읽은 상태로 되돌린다
+  run(`S.board = null; __FAILS = __CALLS; __KEEP = loadBoard; loadBoard = function () { __CALLS++; return Promise.reject(new Error("끊김")); }; renderBoard(); renderBoard();`);
+  ok("실패한 뒤 다시 그려도 저절로 또 안 부른다", val("__CALLS") === val("__FAILS"), val("__CALLS") + " vs " + val("__FAILS"));
+  ok("대신 «다시 읽기» 단추가 있다", /class="err">업무보고를 못 읽었다: 끊김 <button class="mini" data-bd-reload>다시 읽기/.test(val("__BOX.innerHTML")), val("__BOX.innerHTML").slice(0, 300));
+  run(`loadBoard = __KEEP; S.boardErr = ""; __BOX.hidden = false;`);
+
   await run(`return loadBoard()`);
   ok("8주 전부터 읽는다", val("__FROM") === "2026-07-24", val("__FROM"));
   ok("읽은 선생님 보고가 들어온다", !!val("S.board.reports.TH")["2026-09-14"]);

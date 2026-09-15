@@ -475,6 +475,7 @@
   .bd-dots i.no { background: var(--red); }
   .bd-dots i.no.called { background: #f4a3a3; }
   .bd-dots i.late { background: var(--yellow); }
+  .bd-note .bd-k { margin-right: 6px; }
   .bd-note { flex: 1; min-height: 0; overflow: hidden; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
   /* 개진반 — 열이 요일, 줄이 반 (9/15) */
   table.cgrid.ind thead th.wk { min-width: 92px; }
@@ -985,11 +986,7 @@ function showPage(id) {
       .catch(function (e) { S.devLoading = false; S.devErr = e.message; renderDev(); });
   }
   // 학생 한눈에는 8주치 업무보고를 **따로** 읽는다(배너가 쓰는 21일치 S.reports 와 안 섞는다). 그 메뉴를 열 때만.
-  if (id === "board" && S.board === null && !S.boardLoading) {
-    S.boardLoading = true; renderBoard();
-    loadBoard().then(function () { S.boardLoading = false; renderBoard(); })
-      .catch(function (e) { S.boardLoading = false; S.boardErr = e.message || String(e); renderBoard(); });
-  }
+  if (id === "board" && boardKick()) renderBoard();
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", function () { if (S.claims) showPage(currentPage()); });
@@ -1640,6 +1637,19 @@ async function loadReports(from) {
 // ⚠ 점수 빈 칸은 0점이 아니다(rpScoreVal). 막대에도 평균에도 안 넣는다.
 var BOARD_WEEKS = 8, BOARD_DOTS = 8, BOARD_SCORES = 8;
 var BOARD_ATT = { "출석": "", "결석": "no", "지각": "late", "조퇴": "late" };
+// 읽기를 시작한다 — 시작했으면 true.
+// ⚠ **선생님 명단이 차기 전에는 안 읽는다.** 9/15 배포 직후 주소 #board 로 바로 열었더니 명단보다 먼저 읽기가 돌아
+//   선생님 0명 × 보고 = 빈 것을 «다 읽었다» 로 적었다. 못 읽은 사람도 없으니 빨간 줄도 없이 108명 카드가 전부 «기록 없음».
+//   (배너용 S.reports 에는 보고 6건이 멀쩡히 있었다.) 명단이 오면 renderAll → renderBoard 가 다시 부른다.
+// 한 번 실패했으면 저절로 다시 부르지 않는다 — renderBoard 가 부르므로 그러면 끝없이 돈다. «다시 읽기» 단추로만.
+function boardKick() {
+  if (S.ro || S.board !== null || S.boardLoading || S.boardErr) return false;
+  if (!S.teachers || !S.teachers.some(function (t) { return t.tid; })) return false;
+  S.boardLoading = true;
+  loadBoard().then(function () { S.boardLoading = false; renderBoard(); })
+    .catch(function (e) { S.boardLoading = false; S.boardErr = e.message || String(e); renderBoard(); });
+  return true;
+}
 // 선생님마다 따로 부른다. 한 사람 것을 못 읽으면 **카드가 조용히 비지 않게** 이름을 남긴다 — 안 본 것은 없는 것이 아니다.
 async function loadBoard() {
   var from = addDays(TODAY, -7 * BOARD_WEEKS), got = {}, failed = [];
@@ -1724,10 +1734,12 @@ function boardHit(x) {
 function renderBoard() {
   var el = $("#sec-board"); if (!el) return;       // 선생님 화면에는 이 칸이 아예 없다
   if (S.ro) { el.innerHTML = ""; return; }
+  if (!el.hidden) boardKick();                    // 메뉴가 떠 있는데 아직 안 읽었으면(명단이 늦게 온 경우) 지금 읽는다
   var head = '<h2>학생 한눈에 <span class="n">최근 ' + BOARD_WEEKS + '주 업무보고</span></h2>';
   if (!S.board) {
-    el.innerHTML = head + (S.boardErr ? '<div class="err">업무보고를 못 읽었다: ' + esc(S.boardErr) + '</div>'
-      : '<div class="empty">' + (S.boardLoading ? "업무보고를 읽는 중…" : "아직 안 읽었다.") + '</div>');
+    el.innerHTML = head + (S.boardErr ? '<div class="err">업무보고를 못 읽었다: ' + esc(S.boardErr) + ' <button class="mini" data-bd-reload>다시 읽기</button></div>'
+      : '<div class="empty">' + (S.boardLoading ? "업무보고를 읽는 중…" : "선생님 명단을 기다리는 중…") + '</div>');
+    $$("[data-bd-reload]", el).forEach(function (b) { b.onclick = function () { S.boardErr = ""; if (boardKick()) renderBoard(); }; });
     return;
   }
   var all = boardCards(), shown = all.filter(boardHit);
@@ -1749,9 +1761,8 @@ function renderBoard() {
   $$("[data-bd-reload]", el).forEach(function (b) {
     b.onclick = function () {
       if (S.boardLoading) return;
-      S.boardLoading = true; S.boardErr = ""; renderBoard();
-      loadBoard().then(function () { S.boardLoading = false; renderBoard(); })
-        .catch(function (e) { S.boardLoading = false; S.boardErr = e.message || String(e); renderBoard(); });
+      S.board = null; S.boardErr = "";
+      if (boardKick()) renderBoard();
     };
   });
 }
