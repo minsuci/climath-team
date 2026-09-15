@@ -1558,6 +1558,108 @@ function rpApplyApp(rep, app) {
   });
   return rep;
 }
+// ---- 선생님 자기 출결 앱 (2026-09-15 — 이현우 선생님 앱부터) ----
+// 수업관리 앱이 아니라 **본인 앱에 출결을 찍는 선생님**이 있다. `/api/attend` 가 받아 온다(열쇠는 서버에만 — api/attend.js).
+// 연결은 팀 DB `secrets/attend_<tid>` 에 있고 `node tools/set-attend-feed.mjs` 로 넣는다. 코드에 선생님 이름이 없다.
+// ⚠ 연결이 있고 읽혔으면 **그 선생님 반의 수업관리 앱 출석은 안 쓴다.** 거기엔 안 찍으니 전원이 «결석» 으로 채워진다.
+//   못 읽었으면(오류) 전처럼 수업관리 앱 출석으로 채우고 띠로 알린다.
+async function attendApi(body) {
+  var u = teamAuth.currentUser;
+  if (!u) throw new Error("로그인이 필요합니다");
+  var r = await fetch("/api/attend", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ idToken: await u.getIdToken() }, body)) });
+  var j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || ("요청 실패 (" + r.status + ")"));
+  return j || {};
+}
+// 연결이 없는 선생님은 한 번 들으면 그 창에서는 다시 안 묻는다(대부분이 없다).
+async function rpLoadExt(tid, d) {
+  S.extNone = S.extNone || {};
+  if (S.extNone[tid]) return null;
+  try {
+    var j = await attendApi({ tid: tid, date: d });
+    if (j.none) { S.extNone[tid] = true; return null; }
+    var day = (j.days || []).filter(function (x) { return x.date === d; })[0];
+    return { source: j.source || "", students: day ? day.students : [] };
+  } catch (e) { return { err: e.message }; }
+}
+// 이름 맞추기. 그쪽 앱과 팀체크의 표기가 다르다 (9/15 실측):
+//   이서현a ↔ 이서현A (대소문자) · 박시현 ↔ 박시현A · 이윤서 ↔ 이윤서B (그쪽은 겹칠 때만 꼬리를 붙인다)
+// ⚠ **짐작하지 않는다.** 남의 출결이 붙는 것보다 비어 있는 게 낫다 — 빈 칸은 «안 고름» 경고로 드러나지만 잘못 붙은 건 아무도 모른다.
+//   1) 대소문자만 무시하고 같은 이름 — 그 날 명단에서
+//   2) 그쪽 이름에 꼬리 글자가 없을 때만, 꼬리를 뗀 이름으로 — 단 **내 반 전체에 그 이름인 사람이 하나뿐일 때.**
+//      이서현은 이서현A · 이서현 · 이서현B 셋이라 안 붙인다. 보강 온 이서현B 가 월요일 이서현A 줄에 붙으면 안 된다.
+//   같은 사람(pid)이 그 날 두 반에 있으면 둘 다 붙인다. 서로 다른 사람이 걸리면 안 붙인다.
+// all = 내 반 전체 명단(rpMyRoster) — 이름이 몇 사람인지 세는 데 쓴다.
+function rpNameKey(n) { return String(n || "").trim().toUpperCase(); }
+function rpNameBase(n) { return rpNameKey(n).replace(/([가-힣])[A-Z]$/, "$1"); }
+function rpExtMatch(rep, rows, all) {
+  var pool = [];
+  rep.classes.forEach(function (c, ci) { c.students.forEach(function (s, si) { pool.push({ ci: ci, si: si, s: s }); }); });
+  var who = function (s) { return s.pid || ("sid:" + s.sid); };
+  var hit = [], left = [];
+  (rows || []).forEach(function (row) {
+    var k = rpNameKey(row.name), b = rpNameBase(row.name);
+    var got = pool.filter(function (x) { return rpNameKey(x.s.name) === k; });
+    if (!got.length && b === k) {
+      var people = {};
+      (all || []).forEach(function (r) { if (rpNameBase(r.name) === b) people[r.pid || ("n:" + r.name)] = 1; });
+      if (Object.keys(people).length === 1) got = pool.filter(function (x) { return rpNameBase(x.s.name) === b; });
+    }
+    var ids = {}; got.forEach(function (x) { ids[who(x.s)] = 1; });
+    if (got.length && Object.keys(ids).length === 1) { hit.push({ row: row, at: got }); return; }
+    var near = pool.filter(function (x) { return rpNameBase(x.s.name) === b; }).map(function (x) { return x.s.name; });
+    var known = (all || []).some(function (r) { return rpNameBase(r.name) === b; });
+    left.push({ row: row, why: got.length ? "같은 이름이 여럿" :
+      near.length ? "이름이 달라 안 붙였다 — 이 날 명단: " + near.filter(function (v, i, a) { return a.indexOf(v) === i; }).join(", ") :
+      known ? "이 날 명단에 없다 (보강?)" : "팀체크 명단에 없는 이름" });
+  });
+  return { hit: hit, left: left };
+}
+// 받은 것을 판에 얹는다 — rpApplyApp 과 같은 원칙: **선생님이 고른 것은 안 덮는다.**
+//   출결: «미정» 은 안 얹는다(결석으로 읽으면 안 된다). 연락함은 켜기만 한다. 메모는 빈 특이사항에만. 점수는 앱 점수와 같은 규칙.
+function rpApplyExt(rep, ext, all) {
+  rep.ext = null;
+  if (!ext) return rep;
+  if (ext.err) { rep.ext = { err: ext.err }; return rep; }
+  var m = rpExtMatch(rep, ext.students, all);
+  rep.classes.forEach(function (c) { c.extRead = true; c.extN = 0; });
+  m.hit.forEach(function (h) {
+    var row = h.row;
+    h.at.forEach(function (x) {
+      var s = x.s;
+      rep.classes[x.ci].extN++;
+      if (row.attend === "출석" || row.attend === "결석") {
+        if (!s.att || (!s.attTouched && s.att === s.auto)) s.att = row.attend;
+        s.auto = row.attend;
+      }
+      if (row.contacted && s.att === "결석") s.called = true;
+      if (row.note) {
+        if (!String(s.note || "").trim() || s.note === s.autoNote) s.note = row.note;
+        s.autoNote = row.note;
+      }
+      if (row.score != null) {
+        var cur = rpScoreVal(s.score);
+        if (cur == null || (s.autoScore != null && cur === s.autoScore)) s.score = String(row.score);
+        s.autoScore = row.score;
+      }
+    });
+  });
+  rep.ext = { source: ext.source || "", left: m.left, n: (ext.students || []).length };
+  return rep;
+}
+// 수업 위에 뜨는 띠 — 못 읽었거나, 받았는데 표에 못 붙인 이름이 있을 때만.
+function rpExtNote(rep) {
+  var x = rep.ext;
+  if (!x) return "";
+  if (x.err) return '<div class="banner"><b>출결 앱을 못 읽었다</b> — ' + esc(x.err) + ' · 출결을 직접 확인해 주세요</div>';
+  if (!x.left.length) return "";
+  return '<div class="banner"><b>출결 앱에서 왔는데 표에 안 붙은 것 ' + x.left.length + '건</b> — 해당 학생 출결은 직접 골라 주세요<br>' +
+    x.left.map(function (l) {
+      return '<b>' + esc(l.row.name) + '</b> ' + esc(l.row.attend) + (l.row.contacted ? " · 연락함" : "") + (l.row.note ? " · " + esc(l.row.note) : "") +
+        ' <span class="muted">(' + esc(l.why) + ')</span>';
+    }).join("<br>") + '</div>';
+}
 // 한 반 «전체 출석» (9/14 마왕님 «출결 하나하나 누르기 귀찮다»).
 // 앱 출석을 안 찍은 반이면 전원이 «결석» 으로 채워져 온다 — 그걸 한 번에 푼다.
 // ⚠ 선생님이 손으로 고른 것은 안 덮는다: 앱 값과 다르게 고친 것(지각·조퇴) · «연락함» 체크한 결석 · 이 화면에서 직접 고른 출결.
@@ -2148,9 +2250,12 @@ function rpDrawMine(box, d) {
     S.rpEdit = { d: d, rep: rpDraft(me, d, saved), app: false };
     // 수업관리 앱의 출석·상담·보강은 판을 연 뒤에 읽어 얹는다 — 기다리느라 빈 화면을 두지 않는다
     var ed = S.rpEdit;
-    rpLoadApp(me, d).then(function (app) {
+    // 선생님 자기 출결 앱(rpLoadExt)도 같이 읽는다. 읽혔으면 그 반들의 수업관리 앱 출석은 버린다 — 거기엔 안 찍는다.
+    Promise.all([rpLoadApp(me, d), rpLoadExt(me, d)]).then(function (got) {
       if (S.rpEdit !== ed) return;
-      rpApplyApp(ed.rep, app); ed.app = true;
+      var app = got[0], ext = got[1];
+      if (ext && !ext.err) Object.keys(app).forEach(function (cid) { app[cid].att = null; });
+      rpApplyApp(ed.rep, app); rpApplyExt(ed.rep, ext, rpMyRoster(me, d)); ed.app = true;
       keepScrollIn("#sec-report", renderReport);
     }).catch(function () { ed.app = true; });
   }
@@ -2163,7 +2268,7 @@ function rpDrawMine(box, d) {
   var h = '<div class="rp-state">' + st + '</div>';
 
   // 수업 — 학생 단위
-  h += '<h3 class="rp-h">수업</h3>';
+  h += '<h3 class="rp-h">수업</h3>' + rpExtNote(rep);
   if (!rep.classes.length) h += '<p class="muted" style="font-size:13px">' +
     (holidayOf(d) ? "쉬는 날이다 (" + esc(holidayOf(d)) + ")." : "이 날은 들어간 수업이 없다.") +
     (rpExpected(me, d) ? ' 아래 <b>업무</b>에 이 날 하는 일이 있어 <b>내는 날</b>이다.'
@@ -2173,7 +2278,8 @@ function rpDrawMine(box, d) {
     var got = c.students.filter(function (s) { return s.autoScore != null; }).length;
     h += '<div class="rp-cls"><div class="row"><b>' + esc(c.name) + '</b>' +
       '<span class="muted" style="font-size:12px">학생 ' + c.students.length + '명 · ' +
-      (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명"
+      (!S.rpEdit.app ? "앱 출석 읽는 중…" : c.extRead ? "출결 앱에서 받은 학생 " + (c.extN || 0) + "명"
+        : c.attRead ? "앱에 출석 찍힌 학생 " + come + "명"
         : "앱 출석을 못 읽었다") +
       (S.rpEdit.app && c.scoreRead && got ? " · 앱에 점수 낸 학생 " + got + "명" : "") + '</span>' +
       rpAllBtns(c, ci) + '</div>' +
