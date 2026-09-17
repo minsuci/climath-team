@@ -114,13 +114,23 @@ ok("휴무 요일은 «안 낸 선생님» 알림에 안 든다",
 ok("휴무라고 못 내는 것은 아니다 (판은 그대로 열린다)", run(`return rpDraft("T1","2026-09-16",null).date`) === "2026-09-16");
 // 9/17 받은 요일표가 그대로 들어 있나 — 이름 한 글자(이창혁A)만 틀려도 그 사람은 매일 출근으로 남는다
 const WORK = JSON.parse(run(`return JSON.stringify(RP_WORK_DOWS_REAL)`));
-ok("받은 요일표 그대로 — 정찬준·이창혁A 월~금 · 박준성 월금 · 이승엽 화목 · 이현우 매일 · 한민수 수일 휴무",
-  JSON.stringify(WORK) === JSON.stringify({ "한민수": [1,2,4,5,6], "정찬준": [1,2,3,4,5], "이창혁A": [1,2,3,4,5], "박준성": [1,5], "이승엽": [2,4], "이현우": [0,1,2,3,4,5,6] }), JSON.stringify(WORK));
+ok("받은 요일표 그대로 — 한민수 수일 휴무 · 정찬준 월~금 · 이창혁A 월~금+일 · 이현우 매일",
+  JSON.stringify(WORK) === JSON.stringify({ "한민수": [1,2,4,5,6], "정찬준": [1,2,3,4,5], "이창혁A": [0,1,2,3,4,5], "이현우": [0,1,2,3,4,5,6] }), JSON.stringify(WORK));
+// 중등관으로 내는 두 분은 요일표에 없다 — 있으면 «요일만 빼면 되는 사람» 으로 잘못 읽힌다
+ok("박준성·이승엽은 요일표에 없다 (보고 자체를 안 받는다)", !("박준성" in WORK) && !("이승엽" in WORK), JSON.stringify(Object.keys(WORK)));
+ok("빠지는 사람 넷 — 원장님 · 서초 실장 · 중등관 둘",
+  run(`return JSON.stringify(RP_SKIP_NAMES)`) === JSON.stringify(["박리안", "김재헌", "박준성", "이승엽"]), run(`return JSON.stringify(RP_SKIP_NAMES)`));
 run(`RP_WORK_DOWS = {}`);
 
 // ---- 서초 실장은 고등부 보고를 안 낸다 (9/17 «김재헌은 서초 실장이라서 내가 안 받음») ----
 // ⚠ 담당 반이 없으면 저절로 빠지는 게 아니다 — «전원» 반복 할 일이 반 없는 사람까지 끌어온다.
 run(`S.teachers.push({ tid:"TK", name:"김재헌", role:"teacher", classIds:[] })`);
+// 중등관으로 내는 분은 **반이 있어도** 빠진다 (9/17) — 반이 없어 빠지는 김재헌과 다른 경우다
+run(`S.teachers.push({ tid:"TJ", name:"박준성", role:"teacher", classIds:["c2"] })`);
+ok("중등관으로 내는 선생님은 반이 있어도 보고할 날이 없다 (월 9/14 · 고2A)",
+  run(`return rpExpected("TJ", "2026-09-14")`) === false && run(`return rpClassesOn("TJ", "2026-09-14").length`) === 1);
+ok("그 반 학생은 어느 보고에도 안 든다 — 받은 보고의 «수업한 사람» 에 없다", run(`return rpSummary("2026-09-14").expect.indexOf("TJ")`) === -1);
+run(`S.teachers = S.teachers.filter(function (t) { return t.tid !== "TJ"; })`);
 ok("반이 없어도 «전원» 일이 걸린 날은 보고할 날이 된다 (제외 전이라면)", run(`return rpRepeatOn("TK", "2026-09-16")`) === true);
 ok("그래도 김재헌은 보고할 날이 없다 (수 9/16 · 일 9/20)",
   run(`return rpExpected("TK", "2026-09-16")`) === false && run(`return rpExpected("TK", "2026-09-20")`) === false);
