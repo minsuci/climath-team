@@ -1370,9 +1370,20 @@ function rpRepeatOn(tid, d) {
 // 보고할 날로 안 세고, «안 낸 선생님» 알림에도, 받은 보고의 «수업한 사람·안 낸 사람» 에도 안 든다.
 // 이름으로 가른다 — 할 일의 «누구» 칸도 이름이다(taskIsFor). 그래서 «전원» 반복 할 일이 걸린 날도 안 센다.
 // ⚠ 원장님 개진반 학생은 그래서 **어느 업무보고에도 안 뜬다.** 학생 한눈에 카드도 그 반 기록은 비어 있다.
-var RP_SKIP_NAMES = ["박리안"];
+// 9/17 «김재헌은 서초 실장이라서 내가 안 받음» — 담당 반이 하나도 없는데도 «전원» 반복 할 일(교재 업로드 · 일·수)에 걸려
+//   보고할 사람으로 잡혔다. 반이 없다고 빠지는 게 아니다 — 이름으로 빼야 한다.
+var RP_SKIP_NAMES = ["박리안", "김재헌"];
 function rpSkip(tid) { return RP_SKIP_NAMES.indexOf(teacherName(tid)) >= 0; }
-function rpExpected(tid, d) { return d >= RP_START && !rpSkip(tid) && (rpClassesOn(tid, d).length > 0 || rpRepeatOn(tid, d)); }
+// ---- 휴무 요일 (9/17 마왕님 «업무보고 출근 안 하는 날은 안 뜨도록 하자. 일단 한민수는 수 일 휴무») ----
+// 이름으로 적는다 — RP_SKIP_NAMES 와 같은 규칙이다(tid 는 사람이 못 읽고, 선생님 명단을 다시 깔아도 살아남는다).
+// 0=일 … 6=토. 그 요일은 **수업이 잡혀 있어도** 보고할 날로 안 센다 — «출근 안 하는 날» 이 먼저다.
+// 막지는 않는다. 보강으로 나온 날은 그 날을 열어 그냥 내면 저장된다.
+var RP_OFF_DOWS = { "한민수": [0, 3] };
+function rpOffDow(tid, d) {
+  var a = RP_OFF_DOWS[teacherName(tid)];
+  return !!a && a.indexOf(parseYmd(d).getDay()) >= 0;
+}
+function rpExpected(tid, d) { return d >= RP_START && !rpSkip(tid) && !rpOffDow(tid, d) && (rpClassesOn(tid, d).length > 0 || rpRepeatOn(tid, d)); }
 // ---- 이번 주 우리 반 (2026-09-12) — 한 주에 한 번만 묻는 세 줄 ----
 // 진도·출결·과제는 매일 이미 낸다. 주간으로만 필요한 것은 저조자 · 신경 쓰이는 학생 · 막힌 것 셋이다.
 // ⚠ **«금요일에만» 으로 못 박으면 화·목 반은 영영 안 뜬다.** 반마다 요일이 달라 «주의 끝»도 반마다 다르다.
@@ -1414,12 +1425,13 @@ function rpOverdueAll(now) {
 // ---- 보고에 뜨는 할 일 — 그 날까지 기한인 내 할 일 + 그 날 끝낸 것 ----
 // 월요일 간부회의에서 나온 일은 금요일에 빠짐없이 답이 있어야 한다(9/11). 보고가 그 답이 된다.
 function rpTasksFor(tid, d) {
-  var name = teacherName(tid), dow = parseYmd(d).getDay();
+  var name = teacherName(tid), dow = parseYmd(d).getDay(), off = rpOffDow(tid, d);
   return (S.tasks || []).filter(function (t) {
     if (!taskIsFor(t, name)) return false;
     var md = markDate(tid, t.id);
     if (md === d) return true;                               // 그 날 끝낸 것
-    if (t.repeat && t.repeat.dow) return t.repeat.dow.indexOf(dow) >= 0 && !(t.doneOn && t.doneOn[d]);
+    // 휴무 요일에는 매주 하는 일도 안 걸린다 — 안 나오는 날에 «교재 업로드» 만 뜬 빈 보고가 된다
+    if (t.repeat && t.repeat.dow) return !off && t.repeat.dow.indexOf(dow) >= 0 && !(t.doneOn && t.doneOn[d]);
     if (md || t.status === "done") return false;
     return !!t.due && t.due <= d;                            // 기한이 그 날까지(지난 것 포함)
   });
@@ -2276,7 +2288,8 @@ function renderReport() {
   el.innerHTML = '<h2>업무보고 <span class="sp"></span>' +
     '<button class="mini" data-rpd="-1"' + RPK + '>‹</button><b style="font-size:14px">' + esc(fmtMD(d)) + '</b>' +
     '<button class="mini" data-rpd="1"' + RPK + '>›</button>' +
-    (d !== TODAY ? '<button class="mini" data-rpd="0"' + RPK + '>오늘로</button>' : "") + '</h2>' +
+    (d !== TODAY ? '<button class="mini" data-rpd="0"' + RPK + '>오늘로</button>' : "") +
+    (rpOffDow(me, d) ? ' <span class="pill" title="휴무 요일이다 — 안 내도 «안 냈다» 로 안 센다">휴무</span>' : "") + '</h2>' +
     (S.ro ? "" : '<div class="chips">' +
       '<button class="mini' + (tab === "mine" ? " on" : "") + '" data-rpt="mine">내 보고</button>' +
       '<button class="mini' + (tab === "all" ? " on" : "") + '" data-rpt="all">받은 보고 ' + sm.got.length + '/' + sm.expect.length + '</button></div>') +

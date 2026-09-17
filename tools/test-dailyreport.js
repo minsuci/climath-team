@@ -57,6 +57,9 @@ ok("쉬는 날은 수업이 없다 (추석 9/25 금)", cls("T2", "2026-09-25") =
 ok("반이 없는 선생님은 보고할 날이 없다", run(`return rpExpected("T3", "2026-09-14")`) === false);
 ok("기능을 올리기 전 날은 «안 냈다» 로 안 센다", run(`return rpExpected("T2", "2026-09-11")`) === false);
 
+// 휴무 요일(RP_OFF_DOWS)은 아래 제 구역에서만 켠다 — 여기 시험들은 «휴무 없음» 이 전제다
+run(`RP_OFF_DOWS = {}`);
+
 // ---- 매주 하는 일이 걸린 날도 보고하는 날 (2026-09-12) ----
 // 교재 업로드는 수업 없는 일·수에 한다. 줄만 떠서는 아무도 안 쫓는다.
 run(`__tk = S.tasks; S.tasks = [ { id:"up", text:"교재 업로드", who:"전원", repeat:{ dow:[0,3] }, doneOn:{} },
@@ -92,6 +95,32 @@ ok("남 이름으로 걸린 반복은 안 센다",
 const upTasks = (tid, d) => run(`return rpTasksFor("${tid}", "${d}").map(function(t){return t.text;}).join(",")`);
 ok("보고의 업무 칸에 그 줄이 뜬다 (수)", upTasks("T1", "2026-09-16") === "교재 업로드", upTasks("T1", "2026-09-16"));
 ok("걸리지 않은 날에는 안 뜬다 (화)", upTasks("T1", "2026-09-15") === "", upTasks("T1", "2026-09-15"));
+// ---- 휴무 요일 (9/17 마왕님 «업무보고 출근 안 하는 날은 안 뜨도록. 일단 한민수는 수 일 휴무») ----
+// 한민수(T1)는 화·목 반 하나뿐이라 수·일은 원래 «매주 하는 일» 때문에 보고하는 날이었다. 휴무면 그것도 아니다.
+run(`RP_OFF_DOWS = { "한민수": [0, 3] }`);
+ok("휴무 요일은 보고할 날이 아니다 (수 9/16 · 매주 하는 일이 걸려 있어도)", run(`return rpExpected("T1", "2026-09-16")`) === false);
+ok("휴무 일요일도 (9/20)", run(`return rpExpected("T1", "2026-09-20")`) === false);
+ok("휴무가 아닌 날은 그대로 (화 9/15 · 고1S)", run(`return rpExpected("T1", "2026-09-15")`) === true);
+ok("남의 휴무가 아니다 (이현우는 수요일에도 «전원» 일이 걸린다)", run(`return rpExpected("T2", "2026-09-16")`) === true);
+ok("휴무 요일엔 매주 하는 일도 안 뜬다 (빈 보고가 된다)", run(`return rpTasksFor("T1", "2026-09-16").length`) === 0, run(`return JSON.stringify(rpTasksFor("T1","2026-09-16").map(function(t){return t.id;}))`));
+ok("그 날 끝낸 것은 휴무여도 남는다 (일한 것은 일한 것)",
+  run(`S.marks["T1"] = { done: { up: "2026-09-16" } }; var n = rpTasksFor("T1","2026-09-16").length; S.marks = {}; return n;`) === 1);
+ok("휴무 요일은 «안 낸 선생님» 알림에 안 든다",
+  !JSON.parse(run(`return JSON.stringify(rpOverdueAll(new Date("2026-09-17T09:00:00")))`)).some((x) => x.tid === "T1" && x.days.indexOf("2026-09-16") >= 0),
+  run(`return JSON.stringify(rpOverdueAll(new Date("2026-09-17T09:00:00")))`));
+ok("휴무라고 못 내는 것은 아니다 (판은 그대로 열린다)", run(`return rpDraft("T1","2026-09-16",null).date`) === "2026-09-16");
+run(`RP_OFF_DOWS = {}`);
+
+// ---- 서초 실장은 고등부 보고를 안 낸다 (9/17 «김재헌은 서초 실장이라서 내가 안 받음») ----
+// ⚠ 담당 반이 없으면 저절로 빠지는 게 아니다 — «전원» 반복 할 일이 반 없는 사람까지 끌어온다.
+run(`S.teachers.push({ tid:"TK", name:"김재헌", role:"teacher", classIds:[] })`);
+ok("반이 없어도 «전원» 일이 걸린 날은 보고할 날이 된다 (제외 전이라면)", run(`return rpRepeatOn("TK", "2026-09-16")`) === true);
+ok("그래도 김재헌은 보고할 날이 없다 (수 9/16 · 일 9/20)",
+  run(`return rpExpected("TK", "2026-09-16")`) === false && run(`return rpExpected("TK", "2026-09-20")`) === false);
+ok("«안 낸 선생님» 알림에도 안 뜬다", !JSON.parse(run(`return JSON.stringify(rpOverdueAll(new Date("2026-09-21T09:00:00")))`)).some((x) => x.tid === "TK"));
+ok("받은 보고의 «수업한 사람» 에도 안 든다", run(`return rpSummary("2026-09-16").expect.indexOf("TK")`) === -1);
+run(`S.teachers = S.teachers.filter(function (t) { return t.tid !== "TK"; })`);
+
 run(`S.tasks = __tk;`);
 
 // ---- 8시 알림 ----
