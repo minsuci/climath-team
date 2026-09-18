@@ -430,6 +430,10 @@
   .rp-sum .bad b { color: var(--red); }
   .rp-asks { border: 1px solid #c7d6ee; background: #eef3fb; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
   .rp-asks div { margin-top: 3px; }
+  .rp-notes { border: 1px solid #f0d9a8; background: #fff8e8; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin: 8px 0; }
+  .rp-notes .rn { margin-top: 4px; white-space: pre-wrap; }
+  .rp-notes .rn.new b { color: var(--red); }
+  .rp-notes textarea { width: 100%; margin-top: 6px; box-sizing: border-box; }
   .rp-dig { width: 100%; box-sizing: border-box; font: 12px/1.5 ui-monospace, Consolas, monospace; }
   .rp-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 10px 0; background: #fafbfc; }
   .rp-card.miss { border-color: #f0a8a8; background: #fff8f8; }
@@ -1850,7 +1854,10 @@ async function saveDailyReport(rep) {
   if (chk.stop.length) throw new Error(chk.stop.join(" · "));
   var now = Date.now(), prev = ((S.reports || {})[tid] || {})[rep.date];
   var doc = Object.assign(rpClean(rep), { submitted: (prev && prev.submitted) || now, updated: now });
-  await passWrite(function () { return rpCol(tid).doc(rep.date).set(doc); });
+  // ⚠ merge — 팀장 코멘트(leadNotes)·읽은 때(leadSeen)는 **서버가 따로 쓴다.** 통째로 덮으면
+  //   다시 낼 때마다 코멘트가 지워진다. rpClean 은 늘 같은 칸을 다 채우므로 merge 로도 옛 칸이 안 남는다.
+  await passWrite(function () { return rpCol(tid).doc(rep.date).set(doc, { merge: true }); });
+  if (prev && prev.leadNotes) { doc.leadNotes = prev.leadNotes; if (prev.leadSeen) doc.leadSeen = prev.leadSeen; }
   S.reports = S.reports || {}; S.reports[tid] = S.reports[tid] || {}; S.reports[tid][rep.date] = doc;
   // 낸 출석을 수업관리 앱에도 (rpSyncAppAtt) — 못 옮겨도 보고는 낸 것이다
   try { S.rpAttSync = Object.assign({ tid: tid, date: rep.date }, await rpSyncAppAtt(doc)); }
@@ -2323,6 +2330,90 @@ function rpBannerWire(el) {
   });
 }
 
+// ---------- 팀장 코멘트 (2026-09-18) ----------
+//
+// 마왕님 — "선생님들이 업무보고 올린거 보고 내가 코멘트를 달면 선생님들이 볼 수 있도록. 알림에 코멘트 달렸다고 뜨게."
+// 보고 문서에 `leadNotes: [{id,text,at,by}]` 를 붙인다. **쓰는 것은 서버(api/push.js want=comment)** —
+// 보고 문서는 그 선생님만 쓸 수 있어서(규칙) 팀장 브라우저로는 못 붙인다. 규칙을 넓히지 않으려고 이 길로 갔다.
+// 선생님이 그 날 보고를 **열면** `leadSeen` 을 적어 «읽음» 이 된다 — 종도 그때 꺼진다.
+//   (할 일 종은 종을 누르면 꺼지지만 이건 다르다. 종만 누르고 코멘트를 안 읽으면 팀장 쪽에 «읽음» 이 거짓으로 뜬다.)
+function rpNotesOf(rep) { return rep && Array.isArray(rep.leadNotes) ? rep.leadNotes : []; }
+function rpNotesUnseen(rep) {
+  var seen = (rep && rep.leadSeen) || 0;
+  return rpNotesOf(rep).filter(function (n) { return (n.at || 0) > seen; });
+}
+// 내 보고들 가운데 안 읽은 코멘트가 있는 날 — 최근 것부터
+function rpNoteDates() {
+  var mine = (S.reports || {})[myTid()] || {};
+  return Object.keys(mine).filter(function (d) { return rpNotesUnseen(mine[d]).length; }).sort().reverse();
+}
+function rpNoteBellN() {
+  var mine = (S.reports || {})[myTid()] || {};
+  return rpNoteDates().reduce(function (a, d) { return a + rpNotesUnseen(mine[d]).length; }, 0);
+}
+function rpNoteHM(ts) { var t = new Date(ts); return (t.getMonth() + 1) + "/" + t.getDate() + " " + rpHM(ts); }
+// 선생님 화면 — 읽기만
+function rpNotesMineHtml(rep) {
+  var ns = rpNotesOf(rep); if (!ns.length) return "";
+  var seen = (rep && rep.leadSeen) || 0;
+  return '<div class="rp-notes"><b>팀장 코멘트</b>' + ns.map(function (n) {
+    var fresh = (n.at || 0) > seen;
+    return '<div class="rn' + (fresh ? " new" : "") + '">' + (fresh ? "<b>새</b> " : "") + esc(n.text) +
+      ' <span class="muted" style="font-size:12px">— ' + esc(n.by || "팀장") + ' · ' + esc(rpNoteHM(n.at)) + '</span></div>';
+  }).join("") + '</div>';
+}
+// 읽었다고 적는다. 내 문서의 leadSeen 한 칸만 — 보고 내용은 안 건드린다.
+function rpMarkNotesSeen(d) {
+  var me = myTid(), rep = ((S.reports || {})[me] || {})[d];
+  if (!rep || !rpNotesUnseen(rep).length) return;
+  var ts = Math.max.apply(null, rpNotesOf(rep).map(function (n) { return n.at || 0; }));
+  rep.leadSeen = ts;
+  renderBell();
+  passWrite(function () { return rpCol(me).doc(d).set({ leadSeen: ts }, { merge: true }); }).catch(function () {});
+}
+// 팀장 화면 — 받은 보고 카드 밑
+function rpNotesLeadHtml(tid, d, rep) {
+  if (tid === myTid()) return "";
+  var ns = rpNotesOf(rep), seen = (rep && rep.leadSeen) || 0, msg = (S.rpNoteMsg || {})[tid + "|" + d];
+  return '<div class="rp-notes"><b>코멘트</b> <span class="muted" style="font-size:12px">이 선생님만 본다 · 달면 그 선생님 종과 폰에 뜬다</span>' +
+    ns.map(function (n) {
+      return '<div class="rn">' + esc(n.text) + ' <span class="muted" style="font-size:12px">' + esc(rpNoteHM(n.at)) + '</span> ' +
+        ((n.at || 0) <= seen ? '<span class="pill green">읽음</span>' : '<span class="pill">안 읽음</span>') +
+        ' <button class="mini" data-rpndel="' + esc(tid) + '|' + esc(n.id) + '" title="지우기">×</button></div>';
+    }).join("") +
+    '<textarea rows="2" data-rpnt="' + esc(tid) + '" placeholder="이 보고에 한마디"></textarea>' +
+    '<div class="row"><button class="mini plus" data-rpnadd="' + esc(tid) + '">코멘트 달기</button>' +
+    (msg ? '<span class="muted" style="font-size:12px">' + esc(msg) + '</span>' : "") + '</div></div>';
+}
+function rpNotesWire(box, d) {
+  var put = function (tid, j, msg) {
+    var r = ((S.reports || {})[tid] || {})[d]; if (r) r.leadNotes = j.leadNotes || [];
+    S.rpNoteMsg = S.rpNoteMsg || {}; S.rpNoteMsg[tid + "|" + d] = msg;
+    keepScrollIn("#sec-report", renderReport);
+  };
+  $$("[data-rpnadd]", box).forEach(function (b) {
+    b.onclick = async function () {
+      var tid = b.getAttribute("data-rpnadd"), ta = $('[data-rpnt="' + tid + '"]', box);
+      var text = String((ta && ta.value) || "").trim();
+      if (!text) { if (ta) ta.focus(); return; }
+      b.disabled = true; b.textContent = "다는 중…";
+      try {
+        var j = await pushApi("comment", { tid: tid, date: d, text: text });
+        var p = j.push || {};
+        put(tid, j, p.sent ? "달았다 · 폰에도 보냈다" : p.none ? "달았다 · 이 선생님은 폰 알림을 안 켜서 앱 종에만 뜬다" : "달았다 · 폰 알림은 못 보냈다(앱 종에는 뜬다)");
+      } catch (e) { alert("코멘트를 못 달았다: " + e.message); b.disabled = false; b.textContent = "코멘트 달기"; }
+    };
+  });
+  $$("[data-rpndel]", box).forEach(function (b) {
+    b.onclick = async function () {
+      var v = b.getAttribute("data-rpndel").split("|");
+      if (!confirm("이 코멘트를 지울까요? 선생님 화면에서도 없어집니다.")) return;
+      b.disabled = true;
+      try { put(v[0], await pushApi("comment", { tid: v[0], date: d, del: v[1] }), "지웠다"); }
+      catch (e) { alert("못 지웠다: " + e.message); b.disabled = false; }
+    };
+  });
+}
 function renderReport() {
   var el = $("#sec-report");
   if (!el) return;
@@ -2373,7 +2464,11 @@ function rpDrawMine(box, d) {
     : (rpExpected(me, d) && rpDeadline(d) <= Date.now()
         ? '<span class="pill red">안 냈다 — 다음 날 아침 8시가 지났다</span>'
         : '<span class="pill">아직 안 냈다</span> <span class="muted">다음 날 아침 8시까지 내면 된다</span>');
-  var h = '<div class="rp-state">' + st + '</div>';
+  var h = '<div class="rp-state">' + st + '</div>' + rpNotesMineHtml(saved);
+  var others = rpNoteDates().filter(function (x) { return x !== d; });
+  if (others.length) h += '<div class="rp-notes">새 코멘트가 달린 날 ' + others.map(function (x) {
+    return '<button class="mini" data-rpngo="' + x + '"' + RPK + '>' + esc(fmtMD(x)) + '</button>'; }).join(" ") + '</div>';
+  rpMarkNotesSeen(d);
 
   // 수업 — 학생 단위
   h += '<h3 class="rp-h">수업</h3>' + rpExtNote(rep);
@@ -2482,6 +2577,9 @@ function rpDrawMine(box, d) {
     '<div class="row" style="margin-top:10px"><button class="btn send" data-rpsave' + RPK + '>' + (saved && saved.submitted ? "다시 내기" : "제출") + '</button>' +
     '<span class="muted" style="font-size:12px">' + (S.ro ? "팀장만 본다. 다른 선생님은 못 본다." : "팀장 것도 같은 칸에 적는다.") + '</span></div>';
   box.innerHTML = h;
+  $$("[data-rpngo]", box).forEach(function (b) {
+    b.onclick = function () { S.rpDate = b.getAttribute("data-rpngo"); S.rpEdit = null; renderReport(); };
+  });
   rpWireMine(box);
 }
 function rpWireMine(box) {
@@ -2647,9 +2745,10 @@ function rpDrawAll(box, d, sm) {
       return '<div><span class="pill ' + (m.kind === "leave" ? "red" : "blue") + '">' + RP_MOVE[m.kind] + '</span> ' + esc(m.name) + ' ' + esc(rpMoveText(m)) +
         (m.note ? ' <span class="muted">— ' + esc(m.note) + '</span>' : "") + '</div>';
     }).join("") + '</div>';
-    h += (rep.toLead ? '<div class="rp-sub"><b>팀장에게</b> ' + esc(rep.toLead) + '</div>' : "") + '</div>';
+    h += (rep.toLead ? '<div class="rp-sub"><b>팀장에게</b> ' + esc(rep.toLead) + '</div>' : "") + rpNotesLeadHtml(tid, d, rep) + '</div>';
   });
   box.innerHTML = h;
+  rpNotesWire(box, d);
   $$("[data-rpmv]", box).forEach(function (b) {
     b.onclick = async function () {
       var m = sm.moves[+b.getAttribute("data-rpmv")].m;
@@ -4805,15 +4904,22 @@ function pushRowWire() {
 
 function renderBell() {
   var el = $("#bell-wrap"); if (!el) return;
-  var n = (S.newSeen ? 0 : S.newIds.length) + (diffUnseen() ? 1 : 0);
+  var rpn = rpNoteDates(), mineR = (S.reports || {})[myTid()] || {};
+  var n = (S.newSeen ? 0 : S.newIds.length) + (diffUnseen() ? 1 : 0) + rpNoteBellN();
   var list = S.tasks.filter(isNewTask);
+  // 업무보고 코멘트 — 그 날 보고를 열어야 꺼진다(rpMarkNotesSeen). 종을 연다고 꺼지지 않는다.
+  var noteLine = rpn.map(function (d) {
+    var ns = rpNotesUnseen(mineR[d]);
+    return '<div class="bi" data-bell-rpn="' + d + '"><b>업무보고 코멘트 — ' + esc(fmtMD(d)) + (ns.length > 1 ? " (" + ns.length + ")" : "") + '</b>' +
+      '<div class="muted" style="font-size:12px">' + esc(String(ns[ns.length - 1].text).slice(0, 60)) + '</div></div>';
+  }).join("");
   // 명단이 시트와 다르면 종에 한 줄 더 — 누르면 학생 명단으로 간다
   var diffLine = (!S.ro && S.diffSig) ? '<div class="bi" data-bell-diff="1"><b>명단이 시트와 다르다 ' + S.diffN + '건</b>' +
     '<div class="muted" style="font-size:12px">' + esc(S.diffTab || "") + ' · 학생 명단에서 한 줄씩 정한다</div></div>' : "";
   el.innerHTML =
     '<button class="bell" id="bell-btn" title="새로 온 할 일">🔔' +
       (n ? '<span class="bn">' + (n > 99 ? "99+" : n) + '</span>' : "") + '</button>' +
-    (S.bellOpen ? '<div class="bellbox" id="bell-box">' + diffLine + '<h4>새로 온 할 일 ' + list.length + '</h4>' +
+    (S.bellOpen ? '<div class="bellbox" id="bell-box">' + noteLine + diffLine + '<h4>새로 온 할 일 ' + list.length + '</h4>' +
       (list.length ? list.slice(0, 8).map(function (t) {
         return '<div class="bi" data-bell="1"><b>' + esc(t.text) + '</b>' +
           '<div class="muted" style="font-size:12px">' + esc(t.who || "담당 없음") +
@@ -4828,6 +4934,12 @@ function renderBell() {
   };
   $$("[data-bell]", el).forEach(function (b) {
     b.onclick = function () { markTasksSeen(); S.bellOpen = false; showPage("tasks"); renderBell(); };
+  });
+  $$("[data-bell-rpn]", el).forEach(function (b) {
+    b.onclick = function () {
+      S.bellOpen = false; S.rpDate = b.getAttribute("data-bell-rpn"); S.rpTab = "mine"; S.rpEdit = null;
+      showPage("report"); renderReport(); renderBell();
+    };
   });
   $$("[data-bell-diff]", el).forEach(function (b) {
     b.onclick = function () { markTasksSeen(); S.bellOpen = false; S.stDiffOpen = true; showPage("students"); renderStudents(); renderBell(); };
@@ -4893,6 +5005,18 @@ function watchTasks() {
     if ($("#sec-cal")) renderCal();
     if ($("#sec-plan")) renderPlan();     // 쉬는 날을 같이 쓴다
   });
+  // 내 업무보고 — 팀장 코멘트가 달리면 앱을 연 채로도 종이 울리게. **내 칸만** 본다(선생님은 남의 칸을 못 읽는다).
+  // ⚠ 보고를 적는 중이면 다시 그리지 않는다 — 종만 갱신한다.
+  try {
+    var myRp = rpCol(myTid()).where("date", ">=", addDays(TODAY, -21));
+    if (typeof myRp.onSnapshot === "function") on(myRp, function (qs) {
+      var m = {}; qs.forEach(function (x) { m[x.id] = x.data(); });
+      S.reports = S.reports || {}; S.reports[myTid()] = m;
+      renderBell();
+      var a = document.activeElement, root = $("#sec-report");
+      if (root && !(a && root.contains(a) && /^(input|textarea)$/i.test(a.tagName || ""))) keepScrollIn("#sec-report", renderReport);
+    });
+  } catch (e) {}
   // 월간계획. 고치는 중(폼이 열림)이면 다시 그리지 않는다 — 치던 칸이 날아간다.
   on(tdb.collection("dash").doc("monthPlan"), function (d) {
     S.plan = d.exists ? d.data() : { months: {} };

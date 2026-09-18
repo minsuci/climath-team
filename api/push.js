@@ -60,6 +60,20 @@ export async function sendTo(tid, payload, keys) {
   return { tid, sent, dropped: dead.length, errors: errs };
 }
 
+// 업무보고 코멘트 (2026-09-18). 팀장이 선생님 보고에 다는 말.
+// ⚠ 보고 문서는 **그 선생님만** 쓸 수 있다(규칙 tid == myTid()). 팀장 브라우저로는 못 쓴다 —
+//   그래서 여기서 서비스 계정으로 `leadNotes` 칸 **하나만** 고친다. 선생님이 쓴 칸은 안 건드린다.
+// 순수 함수로 뺐다 — 시험(test-rpnotes)이 서버 없이 부른다.
+export function applyLeadNote(notes, op, now, by) {
+  const list = (Array.isArray(notes) ? notes : []).filter((n) => n && n.id && n.text);
+  if (op.del) return list.filter((n) => n.id !== String(op.del));
+  const text = String(op.text || "").trim().slice(0, 1000);
+  if (!text) throw new Error("코멘트가 비었습니다");
+  if (list.length >= 30) throw new Error("한 보고에 코멘트는 30개까지입니다");
+  const id = "n" + now.toString(36) + Math.random().toString(36).slice(2, 6);
+  return list.concat([{ id, text, at: now, by: String(by || "") }]);
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "POST만 받습니다" }); return; }
   try {
@@ -146,6 +160,28 @@ export default async function handler(req, res) {
       const out = [];
       for (const tid of leads) { if (tid === me) continue; out.push(await sendTo(tid, p, keys)); }
       res.status(200).json({ ok: true, each: out }); return;
+    }
+
+    // (8) 팀장이 업무보고에 코멘트 — 적고 그 선생님 폰을 울린다. 지울 때는 안 울린다.
+    if (want === "comment") {
+      if (role !== "owner") { res.status(403).json({ error: "코멘트는 팀장만 답니다" }); return; }
+      const tid = String(body.tid || ""), date = String(body.date || "");
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(tid) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "어느 보고인지 모르겠습니다" }); return; }
+      const path = "dailyReports/" + tid + "/days/" + date;
+      const rep = await getDoc(path);
+      if (!rep || !rep.submitted) { res.status(404).json({ error: "아직 안 낸 보고입니다" }); return; }
+      let notes;
+      try { notes = applyLeadNote(rep.leadNotes, { text: body.text, del: body.del }, Date.now(), claims.name || me); }
+      catch (e) { res.status(400).json({ error: e.message }); return; }
+      await patchDoc(path, { leadNotes: notes }, ["leadNotes"]);
+      let push = null;
+      if (!body.del && tid !== me) {
+        const t = notes[notes.length - 1].text;
+        const md = Number(date.slice(5, 7)) + "/" + Number(date.slice(8, 10));
+        push = await sendTo(tid, { title: "업무보고에 코멘트", body: md + " 보고 — " + (t.length > 80 ? t.slice(0, 80) + "…" : t),
+                                   url: "/#report", tag: "rpnote-" + date }, await vapidKeys()).catch((e) => ({ error: e.message }));
+      }
+      res.status(200).json({ ok: true, leadNotes: notes, push }); return;
     }
 
     res.status(400).json({ error: "무엇을 할지 모르겠습니다" });
