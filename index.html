@@ -404,6 +404,11 @@
   #sec-report .mini.go:disabled { background: #fff; border-color: var(--line); color: #9aa3af; font-weight: 400; }
   #sec-report .mini.plus { border-color: var(--blue); color: var(--blue); background: #eef3fb; font-weight: 600; }
   #sec-report .mini.plus.leave { border-color: var(--red); color: #b42318; background: #fdecec; }
+  /* 특이사항 옆 «주의» (9/18) — 켜면 빨갛게. 학생 한눈에서 빨간 점이 된다 */
+  .rp-notec { display: flex; gap: 6px; align-items: center; }
+  .rp-notec input[type=text] { flex: 1; min-width: 0; }
+  .rp-flag { font-size: 12px; white-space: nowrap; color: var(--muted); cursor: pointer; }
+  .rp-flag.on { color: var(--red); font-weight: 700; }
   #sec-report .rp-seg .mini.st-done.on { background: var(--green); border-color: var(--green); }
   #sec-report .rp-seg .mini.st-doing.on { background: var(--blue); border-color: var(--blue); }
   #sec-report .rp-seg .mini.st-hold.on { background: var(--yellow); border-color: var(--yellow); color: #5a3d00; }
@@ -508,7 +513,10 @@
   .bd-mini .bm { display: flex; gap: 4px; align-items: center; white-space: nowrap; overflow: hidden; min-height: 12px; }
   .bd-mini .bm .ab { color: var(--red); font-weight: 700; }
   .bd-mini .bm .sc { font-weight: 700; }
-  .bd-mini .bm .nt { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--orange); flex: none; }
+  .bd-mini .bm .nt { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); opacity: .6; flex: none; }
+  /* «주의» 가 붙은 특이사항이 있으면 빨간 점 — 그냥 적어 둔 것(회색)과 가른다 (9/18) */
+  .bd-mini .bm .nt.w { width: 8px; height: 8px; background: var(--red); opacity: 1; }
+  .bd-wn { color: var(--red); font-weight: 700; margin-right: 4px; }
   .bd-pop { position: fixed; inset: 0; z-index: 50; background: rgba(15,23,42,.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
   .bd-popin { position: relative; width: min(440px, 100%); }
   .bd-popin .bd-card { font-size: 13px; box-shadow: 0 12px 32px rgba(0,0,0,.25); }
@@ -1465,7 +1473,7 @@ function rpDraft(tid, d, prev) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
         return { sid: r.id, pid: r.pid || "", name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
           called: ps ? !!ps.called : false, score: ps && ps.score != null ? ps.score : "", autoScore: ps && ps.autoScore != null ? ps.autoScore : null,
-          note: ps ? (ps.note || "") : "",
+          note: ps ? (ps.note || "") : "", warn: ps ? !!ps.warn : false,
           consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
       }) };
   });
@@ -1736,6 +1744,10 @@ function rpCheck(rep) {
     if (!m.name || m.kind !== "move") return;
     if (!m.toCid && !String(m.toName || "").trim()) stop.push("반 이동 — " + m.name + ": 어느 반으로 가는지 골라야 낼 수 있다");
   });
+  // «주의» 만 켜고 무엇인지 안 적으면 받는 쪽이 할 것이 없다 — 알려만 준다(막지 않는다)
+  var wEmpty = [];
+  rep.classes.forEach(function (c) { c.students.forEach(function (s) { if (s.warn && !String(s.note || "").trim()) wEmpty.push(s.name); }); });
+  if (wEmpty.length) warn.push("«주의» 만 켜고 특이사항을 안 적은 학생 " + wEmpty.length + "명 — " + wEmpty.join(", ") + " (무엇이 걱정인지 한 줄)");
   return { stop: stop, warn: warn };
 }
 // 저장할 모양. 화면에만 쓰는 칸(attRead · due)은 뗀다.
@@ -1749,7 +1761,7 @@ function rpClean(rep) {
         students: c.students.map(function (s) {
           return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
                    score: rpScoreVal(s.score), autoScore: s.autoScore == null ? null : s.autoScore,
-                   note: String(s.note || "").trim(), consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
+                   note: String(s.note || "").trim(), warn: !!s.warn, consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
         }) };
     }),
     tasks: rep.tasks.filter(function (t) { return t.state || String(t.note || "").trim(); })
@@ -1894,7 +1906,7 @@ function boardEntries(reports) {
         (c.students || []).forEach(function (st) {
           var sc = rpScoreVal(st.score);
           var e = { date: rep.date || d, tid: tid, cid: c.cid || "", cname: c.name || "", att: st.att || "", called: !!st.called,
-                    score: sc == null || isNaN(sc) ? null : sc, note: String(st.note || "").trim() };
+                    score: sc == null || isNaN(sc) ? null : sc, note: String(st.note || "").trim(), warn: !!st.warn };
           if (st.pid) (byPid[st.pid] = byPid[st.pid] || []).push(e);
           else { var k = e.cid + "|" + st.name; (byKey[k] = byKey[k] || []).push(e); }
         });
@@ -1923,7 +1935,10 @@ function boardSum(x) {
   var scores = x.list.filter(function (e) { return e.score != null; }).slice(-BOARD_SCORES);
   var atts = x.list.filter(function (e) { return e.att; }).slice(-BOARD_DOTS);
   var notes = x.list.filter(function (e) { return e.note; });
+  // «주의» 가 붙은 것 (9/18) — 선생님이 걱정된다고 표시한 특이사항. 그냥 적어 둔 것과 가른다
+  var warns = x.list.filter(function (e) { return e.warn; });
   return { scores: scores, atts: atts, notes: notes, last: notes[notes.length - 1] || null,
+    warns: warns, lastWarn: warns[warns.length - 1] || null,
     avg: scores.length ? Math.round(scores.reduce(function (m, e) { return m + e.score; }, 0) / scores.length) : null,
     lastScore: scores.length ? scores[scores.length - 1].score : null,
     absent: atts.filter(function (e) { return e.att === "결석"; }).length };
@@ -1947,8 +1962,11 @@ function boardCardHtml(x) {
           return '<i class="' + k + (e.called ? " called" : "") + '" title="' + esc(fmtMD(e.date) + " " + e.cname + " " + e.att + (e.called ? " · 연락함" : "")) + '"></i>';
         }).join("") + '</span>' + (m.absent ? '<span class="red">결석 ' + m.absent + '</span>' : "")
       : none) + '</div>' +
+    // «주의» 가 있으면 그것을 먼저 보인다 — 더 새 특이사항이 있어도 걱정되는 한 줄이 가려지면 안 된다
     '<div class="bd-note"><span class="bd-k">특이사항' + (m.notes.length ? " " + m.notes.length : "") + '</span>' +
-      (m.last ? '<span class="muted">' + esc(fmtMD(m.last.date)) + '</span> ' + esc(m.last.note) : '<span class="muted">없음</span>') + '</div>' +
+      (m.warns.length ? '<span class="bd-wn">주의 ' + m.warns.length + '</span>' : "") +
+      ((m.lastWarn || m.last) ? '<span class="muted">' + esc(fmtMD((m.lastWarn || m.last).date)) + '</span> ' + esc((m.lastWarn || m.last).note || "(내용 없음)")
+        : '<span class="muted">없음</span>') + '</div>' +
   '</div>';
 }
 // 작은 카드 — 이름·학년 / 결석 수 · 마지막 점수 · 특이사항 점. 한 화면에 전원을 담는 크기라 이 넷만 (9/15 «3번»)
@@ -1959,7 +1977,8 @@ function boardMiniHtml(x) {
     '<span class="nm ' + gradeCls(g) + '">' + esc(p.name) + (GRADE_NUM[g] ? '<i>' + GRADE_NUM[g] + '</i>' : "") + '</span>' +
     '<span class="bm">' + (m.absent ? '<span class="ab">결' + m.absent + '</span>' : "") +
       (m.lastScore != null ? '<span class="sc">' + m.lastScore + '점</span>' : "") +
-      (m.notes.length ? '<i class="nt" title="특이사항 ' + m.notes.length + '"></i>' : "") + '</span></div>';
+      ((m.notes.length || m.warns.length) ? '<i class="nt' + (m.warns.length ? " w" : "") + '" title="' +
+        (m.warns.length ? "주의 " + m.warns.length + " · " : "") + '특이사항 ' + m.notes.length + '"></i>' : "") + '</span></div>';
 }
 // ---- 반별로 묶기 (9/15 마왕님 «학생명단처럼 반별로 묶여있으면 좋을 듯») ----
 // 학생 명단 배치표와 같은 묶음: 고3·고2·고1·예비고1 줄(GRID_GROUPS) → 개진반 → 그 밖 → 반 미배정.
@@ -2183,7 +2202,7 @@ function rpSummary(d) {
     (rep.classes || []).forEach(function (c) {
       (c.students || []).forEach(function (s) {
         if (s.att === "결석" && !s.called) sm.noCall.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name });
-        if (s.note || (s.att && s.att !== "출석")) sm.notes.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name, att: s.att, note: s.note, called: s.called });
+        if (s.note || s.warn || (s.att && s.att !== "출석")) sm.notes.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name, att: s.att, note: s.note, called: s.called, warn: !!s.warn });
       });
     });
     (rep.moves || []).forEach(function (m) { sm.moves.push({ tid: t.tid, who: t.name, m: m }); });
@@ -2213,8 +2232,8 @@ function rpDigest(d) {
       var av = rpScoreAvg(st);
       L.push("**" + c.name + "** · 출석 " + come + "/" + st.length + (av ? " · 테스트 평균 " + av.avg + "점(" + av.n + "명)" : "") +
         (c.progress ? " · 진도: " + c.progress : "") + (c.homework ? " · 과제: " + c.homework : ""));
-      st.filter(function (s) { return s.note || (s.att && s.att !== "출석"); }).forEach(function (s) {
-        L.push("- " + s.name + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") +
+      st.filter(function (s) { return s.note || s.warn || (s.att && s.att !== "출석"); }).forEach(function (s) {
+        L.push("- " + s.name + (s.warn ? " **(주의)**" : "") + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") +
           (s.score != null ? s.score + "점" + (s.note ? " · " : "") : "") + (s.note || ""));
       });
       // 이번 주 우리 반 — **«없음» 은 안 싣는다.** 여섯 반 × 세 줄이 «없음» 이면 읽을 것이 묻힌다.
@@ -2374,8 +2393,11 @@ function rpDrawMine(box, d) {
             (s.makeup ? '<span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td>' +
           '<td style="white-space:nowrap"><input type="text" inputmode="decimal" class="rp-score" data-rps="' + k + '|score" value="' + esc(s.score == null ? "" : s.score) + '" placeholder="—"' + RPK + '>' +
             (s.autoScore != null && rpScoreVal(s.score) !== s.autoScore ? ' <span class="rp-auto">앱: ' + esc(s.autoScore) + '</span>' : "") + '</td>' +
-          '<td><input type="text" data-rps="' + k + '|note" value="' + esc(s.note) + '" placeholder="' +
-            (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '></td></tr>';
+          '<td><div class="rp-notec"><input type="text" data-rps="' + k + '|note" value="' + esc(s.note) + '" placeholder="' +
+            (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '>' +
+            // 걱정되는 내용일 때만 켠다 — 학생 한눈에서 빨간 점. 안 켜면 그냥 적어 둔 것(회색 점)
+            '<label class="rp-flag' + (s.warn ? " on" : "") + '" title="걱정되는 내용이면 켠다 — 학생 한눈에서 빨간 점으로 뜬다">' +
+            '<input type="checkbox" data-rps="' + k + '|warn"' + (s.warn ? " checked" : "") + RPK + '> 주의</label></div></td></tr>';
       }).join("") + '</tbody></table></div>' +
       // 이번 주 우리 반 — 그 반의 그 주 마지막 수업일에만 뜬다 (월금 반은 금, 화목 반은 목)
       (c.week ? '<div class="rp-week"><b>이번 주 ' + esc(c.name) + '</b> ' +
@@ -2463,6 +2485,7 @@ function rpWireMine(box) {
     if (k[2] === "note") i.oninput = function () { s.note = i.value; };
     else if (k[2] === "score") i.oninput = function () { s.score = i.value; };   // 글자 칸 — 다시 그리지 않는다
     else if (k[2] === "called") i.onchange = function () { s.called = i.checked; rep.classes[+k[0]].allUndo = null; re(); };
+    else if (k[2] === "warn") i.onchange = function () { s.warn = i.checked; re(); };
     // 손으로 고르면 «전체 출석» 이 이 학생을 안 건드리고, «되돌리기» 도 거둔다 — 되돌리기가 방금 고른 값을 덮으면 안 된다
     else i.onchange = function () { s.att = i.value; s.attTouched = true; rep.classes[+k[0]].allUndo = null; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
   });
@@ -2587,7 +2610,7 @@ function rpDrawAll(box, d, sm) {
             '<td style="width:90px"><b>' + esc(s.name) + '</b></td><td style="width:90px">' + esc(s.att || "—") +
             (s.att === "결석" ? (s.called ? ' <span class="muted">연락함</span>' : ' <span class="red">연락 안 함</span>') : "") + '</td>' +
             '<td style="width:56px">' + (s.score != null ? esc(s.score) + '점' : "") + '</td>' +
-            '<td>' + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
+            '<td>' + (s.warn ? '<span class="pill red">주의</span> ' : "") + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
             (s.makeup ? ' <span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td></tr>';
         }).join("") + '</tbody></table></div>' +
         // 이번 주 우리 반 — «없음» 도 그대로 둔다. 여기서는 그게 **확인했다는 표시**다.
