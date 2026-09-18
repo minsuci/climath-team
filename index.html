@@ -2351,7 +2351,7 @@ function rpNoteBellN() {
   var mine = (S.reports || {})[myTid()] || {};
   return rpNoteDates().reduce(function (a, d) { return a + rpNotesUnseen(mine[d]).length; }, 0);
 }
-function rpNoteHM(ts) { var t = new Date(ts); return (t.getMonth() + 1) + "/" + t.getDate() + " " + rpHM(ts); }
+function rpNoteHM(ts) { return rpHM(ts); }   // rpHM 이 이미 «9/18(금) 23:05» 라 날짜를 또 붙이지 않는다
 // 선생님 화면 — 읽기만
 function rpNotesMineHtml(rep) {
   var ns = rpNotesOf(rep); if (!ns.length) return "";
