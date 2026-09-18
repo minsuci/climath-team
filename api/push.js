@@ -153,6 +153,7 @@ export default async function handler(req, res) {
       const TEXT = {
         report: { title: "업무보고 도착", body: who + " 선생님이 업무보고를 올렸습니다", url: "/#report", tag: "report" },
         done:   { title: "한 줄 보고 도착", body: who + " 선생님이 할 일에 보고를 남겼습니다", url: "/#tasks", tag: "done" },
+        reply:  { title: "코멘트에 답글", body: who + " 선생님이 업무보고 코멘트에 답글을 달았습니다", url: "/#report", tag: "reply" },
       };
       const p = TEXT[kind];
       if (!p) { res.status(400).json({ error: "무엇을 알릴지 모르겠습니다" }); return; }

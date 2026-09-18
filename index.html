@@ -433,6 +433,7 @@
   .rp-notes { border: 1px solid #f0d9a8; background: #fff8e8; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin: 8px 0; }
   .rp-notes .rn { margin-top: 4px; white-space: pre-wrap; }
   .rp-notes .rn.new b { color: var(--red); }
+  .rp-notes .rn.rr { margin-left: 14px; }
   .rp-notes textarea { width: 100%; margin-top: 6px; box-sizing: border-box; }
   .rp-dig { width: 100%; box-sizing: border-box; font: 12px/1.5 ui-monospace, Consolas, monospace; }
   .rp-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 10px 0; background: #fafbfc; }
@@ -958,6 +959,17 @@ async function boot() {
   watchTasks();
   renderAll();
   loadReports(addDays(TODAY, -21)).then(function () { renderBanner(); renderReport(); });
+  // 팀장은 선생님 보고를 한 번만 읽는다 — 답글이 와도 켜 둔 화면엔 안 뜬다. 앱으로 돌아올 때 다시 읽는다(1분에 한 번까지).
+  // ⚠ 적는 중이면 보고 판은 다시 안 그린다 — 종만.
+  if (!S.ro && !RP_VIS_ON && typeof document.addEventListener === "function") { RP_VIS_ON = true; document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible" || !S.claims || Date.now() - (S.rpReloadAt || 0) < 60000) return;
+    S.rpReloadAt = Date.now();
+    loadReports(addDays(TODAY, -21)).then(function () {
+      renderBell();
+      var a = document.activeElement, root = $("#sec-report");
+      if (root && !(a && root.contains(a) && /^(input|textarea)$/i.test(a.tagName || ""))) keepScrollIn("#sec-report", renderReport);
+    }).catch(function () {});
+  }); }
   loadExams().then(renderExams);
   loadScores().then(renderScores);
   loadSheetsAll();
@@ -1858,6 +1870,7 @@ async function saveDailyReport(rep) {
   //   다시 낼 때마다 코멘트가 지워진다. rpClean 은 늘 같은 칸을 다 채우므로 merge 로도 옛 칸이 안 남는다.
   await passWrite(function () { return rpCol(tid).doc(rep.date).set(doc, { merge: true }); });
   if (prev && prev.leadNotes) { doc.leadNotes = prev.leadNotes; if (prev.leadSeen) doc.leadSeen = prev.leadSeen; }
+  if (prev && prev.replies) doc.replies = prev.replies;
   S.reports = S.reports || {}; S.reports[tid] = S.reports[tid] || {}; S.reports[tid][rep.date] = doc;
   // 낸 출석을 수업관리 앱에도 (rpSyncAppAtt) — 못 옮겨도 보고는 낸 것이다
   try { S.rpAttSync = Object.assign({ tid: tid, date: rep.date }, await rpSyncAppAtt(doc)); }
@@ -2352,15 +2365,112 @@ function rpNoteBellN() {
   return rpNoteDates().reduce(function (a, d) { return a + rpNotesUnseen(mine[d]).length; }, 0);
 }
 function rpNoteHM(ts) { return rpHM(ts); }   // rpHM 이 이미 «9/18(금) 23:05» 라 날짜를 또 붙이지 않는다
-// 선생님 화면 — 읽기만
+// ---- 선생님 답글 (2026-09-19 «코멘트 받은 선생님이 다시 답글 달 수 있게») ----
+// 답글은 **선생님 자기 문서**의 `replies: [{id,text,at}]` — 자기 칸이라 규칙 그대로 쓴다(서버 안 거친다).
+// leadNotes 는 서버가, replies 는 선생님이 쓴다. **한 배열을 둘이 쓰지 않게** 칸을 갈랐다 — 같이 쓰면 늦게 쓴 쪽이 앞의 것을 지운다.
+// 화면에서는 둘을 시각 순으로 한 줄기로 보여 준다.
+function rpRepliesOf(rep) { return rep && Array.isArray(rep.replies) ? rep.replies : []; }
+function rpThread(rep) {
+  return rpNotesOf(rep).map(function (n) { return { k: "lead", n: n }; })
+    .concat(rpRepliesOf(rep).map(function (n) { return { k: "reply", n: n }; }))
+    .sort(function (a, b) { return (a.n.at || 0) - (b.n.at || 0); });
+}
+// 선생님 화면 — 코멘트는 읽기, 답글은 달고 지운다
 function rpNotesMineHtml(rep) {
   var ns = rpNotesOf(rep); if (!ns.length) return "";
-  var seen = (rep && rep.leadSeen) || 0;
-  return '<div class="rp-notes"><b>팀장 코멘트</b>' + ns.map(function (n) {
+  var seen = (rep && rep.leadSeen) || 0, msg = (S.rpNoteMsg || {})["reply|" + (rep.date || "")];
+  return '<div class="rp-notes"><b>팀장 코멘트</b>' + rpThread(rep).map(function (x) {
+    var n = x.n;
+    if (x.k === "reply") return '<div class="rn rr">↳ <b>나</b> ' + esc(n.text) +
+      ' <span class="muted" style="font-size:12px">' + esc(rpNoteHM(n.at)) + '</span>' +
+      ' <button class="mini" data-rprdel="' + esc(n.id) + '"' + RPK + ' title="지우기">×</button></div>';
     var fresh = (n.at || 0) > seen;
     return '<div class="rn' + (fresh ? " new" : "") + '">' + (fresh ? "<b>새</b> " : "") + esc(n.text) +
       ' <span class="muted" style="font-size:12px">— ' + esc(n.by || "팀장") + ' · ' + esc(rpNoteHM(n.at)) + '</span></div>';
-  }).join("") + '</div>';
+  }).join("") +
+    '<textarea rows="2" data-rprt placeholder="답글 (팀장만 본다)"' + RPK + '></textarea>' +
+    '<div class="row"><button class="mini plus" data-rpradd' + RPK + '>답글 달기</button>' +
+    (msg ? '<span class="muted" style="font-size:12px">' + esc(msg) + '</span>' : "") + '</div></div>';
+}
+// 내 문서의 replies 한 칸만 고친다 (merge) — 보고 내용·코멘트는 안 건드린다
+function rpReplyEdit(d, op) {
+  var me = myTid(), rep = ((S.reports || {})[me] || {})[d];
+  if (!rep || !rep.submitted) return Promise.reject(new Error("낸 보고에만 답글을 단다"));
+  var list = rpRepliesOf(rep).slice();
+  if (op.del) list = list.filter(function (n) { return n.id !== op.del; });
+  else {
+    var text = String(op.text || "").trim().slice(0, 1000);
+    if (!text) return Promise.reject(new Error("답글이 비었다"));
+    if (list.length >= 30) return Promise.reject(new Error("한 보고에 답글은 30개까지"));
+    var now = Date.now();
+    list.push({ id: "r" + now.toString(36) + Math.random().toString(36).slice(2, 6), text: text, at: now });
+  }
+  return passWrite(function () { return rpCol(me).doc(d).set({ replies: list }, { merge: true }); })
+    .then(function () { rep.replies = list; return list; });
+}
+function rpReplyWire(box, d) {
+  var b = $("[data-rpradd]", box);
+  if (b) b.onclick = async function () {
+    var ta = $("[data-rprt]", box), text = String((ta && ta.value) || "").trim();
+    if (!text) { if (ta) ta.focus(); return; }
+    b.disabled = true; b.textContent = "다는 중…";
+    try {
+      await rpReplyEdit(d, { text: text });
+      pingLead("reply");
+      S.rpNoteMsg = S.rpNoteMsg || {}; S.rpNoteMsg["reply|" + d] = "달았다 · 팀장님께 알림이 갔다";
+      keepScrollIn("#sec-report", renderReport);
+    } catch (e) { alert("답글을 못 달았다: " + e.message); b.disabled = false; b.textContent = "답글 달기"; }
+  };
+  $$("[data-rprdel]", box).forEach(function (x) {
+    x.onclick = async function () {
+      if (!confirm("이 답글을 지울까요?")) return;
+      x.disabled = true;
+      try { await rpReplyEdit(d, { del: x.getAttribute("data-rprdel") }); keepScrollIn("#sec-report", renderReport); }
+      catch (e) { alert("못 지웠다: " + e.message); x.disabled = false; }
+    };
+  });
+}
+// ---- 팀장 쪽 «새 답글» ----
+// 어디까지 봤나는 «선생님|날짜 → 본 시각» 지도. 이 기기(localStorage)와 팀 DB(marks/<내 tid>.rpReplySeen) 둘 다 —
+// 할 일 종(saveSeen)과 같은 이유다: 기기가 바뀌어도 따라오고, 오프라인에서 봐도 살아남는다.
+var RP_REPLY_KEY = "dash.rpReplySeen.";
+var RP_VIS_ON = false;   // 로그인을 다시 해도 듣는 것은 하나만
+function rpReplySeenMap() {
+  var me = myTid(), m = {}, a = ((S.marks || {})[me] || {}).rpReplySeen || {}, b = {};
+  try { b = JSON.parse(localStorage.getItem(RP_REPLY_KEY + me) || "{}") || {}; } catch (e) {}
+  [a, b].forEach(function (x) { Object.keys(x).forEach(function (k) { m[k] = Math.max(m[k] || 0, x[k] || 0); }); });
+  return m;
+}
+// 새 답글: [{tid, date, n}] — 최근 날짜부터. 내 보고에 단 답글(있을 리 없지만)은 뺀다
+function rpReplyNew() {
+  if (S.ro) return [];
+  var me = myTid(), seen = rpReplySeenMap(), out = [];
+  Object.keys(S.reports || {}).forEach(function (tid) {
+    if (tid === me) return;
+    var m = S.reports[tid] || {};
+    Object.keys(m).forEach(function (d) {
+      var s = seen[tid + "|" + d] || 0, rs = rpRepliesOf(m[d]).filter(function (n) { return (n.at || 0) > s; });
+      if (rs.length) out.push({ tid: tid, date: d, n: rs.length, last: rs[rs.length - 1] });
+    });
+  });
+  return out.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+}
+// 받은 보고에서 그 날을 열면 본 것으로 친다
+function rpMarkRepliesSeen(d) {
+  if (S.ro) return;
+  var me = myTid(), seen = rpReplySeenMap(), changed = false;
+  Object.keys(S.reports || {}).forEach(function (tid) {
+    if (tid === me) return;
+    var rs = rpRepliesOf(((S.reports[tid] || {})[d]));
+    if (!rs.length) return;
+    var ts = Math.max.apply(null, rs.map(function (n) { return n.at || 0; }));
+    if ((seen[tid + "|" + d] || 0) < ts) { seen[tid + "|" + d] = ts; changed = true; }
+  });
+  if (!changed) return;
+  try { localStorage.setItem(RP_REPLY_KEY + me, JSON.stringify(seen)); } catch (e) {}
+  S.marks = S.marks || {}; S.marks[me] = Object.assign({}, S.marks[me] || {}, { rpReplySeen: seen });
+  renderBell();
+  if (S.teamOk) passWrite(function () { return tdb.collection("marks").doc(me).set({ rpReplySeen: seen }, { merge: true }); }).catch(function () {});
 }
 // 읽었다고 적는다. 내 문서의 leadSeen 한 칸만 — 보고 내용은 안 건드린다.
 function rpMarkNotesSeen(d) {
@@ -2374,9 +2484,13 @@ function rpMarkNotesSeen(d) {
 // 팀장 화면 — 받은 보고 카드 밑
 function rpNotesLeadHtml(tid, d, rep) {
   if (tid === myTid()) return "";
-  var ns = rpNotesOf(rep), seen = (rep && rep.leadSeen) || 0, msg = (S.rpNoteMsg || {})[tid + "|" + d];
+  var seen = (rep && rep.leadSeen) || 0, msg = (S.rpNoteMsg || {})[tid + "|" + d];
+  var rseen = rpReplySeenMap()[tid + "|" + d] || 0, who = (rep && rep.name) || teacherName(tid);
   return '<div class="rp-notes"><b>코멘트</b> <span class="muted" style="font-size:12px">이 선생님만 본다 · 달면 그 선생님 종과 폰에 뜬다</span>' +
-    ns.map(function (n) {
+    rpThread(rep).map(function (x) {
+      var n = x.n;
+      if (x.k === "reply") return '<div class="rn rr' + ((n.at || 0) > rseen ? " new" : "") + '">↳ <b>' + ((n.at || 0) > rseen ? "새 " : "") + esc(who) + '</b> ' + esc(n.text) +
+        ' <span class="muted" style="font-size:12px">' + esc(rpNoteHM(n.at)) + '</span></div>';
       return '<div class="rn">' + esc(n.text) + ' <span class="muted" style="font-size:12px">' + esc(rpNoteHM(n.at)) + '</span> ' +
         ((n.at || 0) <= seen ? '<span class="pill green">읽음</span>' : '<span class="pill">안 읽음</span>') +
         ' <button class="mini" data-rpndel="' + esc(tid) + '|' + esc(n.id) + '" title="지우기">×</button></div>';
@@ -2577,6 +2691,7 @@ function rpDrawMine(box, d) {
     '<div class="row" style="margin-top:10px"><button class="btn send" data-rpsave' + RPK + '>' + (saved && saved.submitted ? "다시 내기" : "제출") + '</button>' +
     '<span class="muted" style="font-size:12px">' + (S.ro ? "팀장만 본다. 다른 선생님은 못 본다." : "팀장 것도 같은 칸에 적는다.") + '</span></div>';
   box.innerHTML = h;
+  rpReplyWire(box, d);
   $$("[data-rpngo]", box).forEach(function (b) {
     b.onclick = function () { S.rpDate = b.getAttribute("data-rpngo"); S.rpEdit = null; renderReport(); };
   });
@@ -2749,6 +2864,7 @@ function rpDrawAll(box, d, sm) {
   });
   box.innerHTML = h;
   rpNotesWire(box, d);
+  rpMarkRepliesSeen(d);
   $$("[data-rpmv]", box).forEach(function (b) {
     b.onclick = async function () {
       var m = sm.moves[+b.getAttribute("data-rpmv")].m;
@@ -4905,13 +5021,18 @@ function pushRowWire() {
 function renderBell() {
   var el = $("#bell-wrap"); if (!el) return;
   var rpn = rpNoteDates(), mineR = (S.reports || {})[myTid()] || {};
-  var n = (S.newSeen ? 0 : S.newIds.length) + (diffUnseen() ? 1 : 0) + rpNoteBellN();
+  var rpr = rpReplyNew();
+  var n = (S.newSeen ? 0 : S.newIds.length) + (diffUnseen() ? 1 : 0) + rpNoteBellN() +
+    rpr.reduce(function (a, x) { return a + x.n; }, 0);
   var list = S.tasks.filter(isNewTask);
   // 업무보고 코멘트 — 그 날 보고를 열어야 꺼진다(rpMarkNotesSeen). 종을 연다고 꺼지지 않는다.
   var noteLine = rpn.map(function (d) {
     var ns = rpNotesUnseen(mineR[d]);
     return '<div class="bi" data-bell-rpn="' + d + '"><b>업무보고 코멘트 — ' + esc(fmtMD(d)) + (ns.length > 1 ? " (" + ns.length + ")" : "") + '</b>' +
       '<div class="muted" style="font-size:12px">' + esc(String(ns[ns.length - 1].text).slice(0, 60)) + '</div></div>';
+  }).join("") + rpr.map(function (x) {
+    return '<div class="bi" data-bell-rpr="' + x.date + '"><b>코멘트 답글 — ' + esc(teacherName(x.tid)) + ' ' + esc(fmtMD(x.date)) + (x.n > 1 ? " (" + x.n + ")" : "") + '</b>' +
+      '<div class="muted" style="font-size:12px">' + esc(String(x.last.text).slice(0, 60)) + '</div></div>';
   }).join("");
   // 명단이 시트와 다르면 종에 한 줄 더 — 누르면 학생 명단으로 간다
   var diffLine = (!S.ro && S.diffSig) ? '<div class="bi" data-bell-diff="1"><b>명단이 시트와 다르다 ' + S.diffN + '건</b>' +
@@ -4938,6 +5059,12 @@ function renderBell() {
   $$("[data-bell-rpn]", el).forEach(function (b) {
     b.onclick = function () {
       S.bellOpen = false; S.rpDate = b.getAttribute("data-bell-rpn"); S.rpTab = "mine"; S.rpEdit = null;
+      showPage("report"); renderReport(); renderBell();
+    };
+  });
+  $$("[data-bell-rpr]", el).forEach(function (b) {
+    b.onclick = function () {
+      S.bellOpen = false; S.rpDate = b.getAttribute("data-bell-rpr"); S.rpTab = "all"; S.rpEdit = null;
       showPage("report"); renderReport(); renderBell();
     };
   });

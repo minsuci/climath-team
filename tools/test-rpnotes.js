@@ -77,7 +77,7 @@ ok("내 보고 화면 머리에 코멘트 · 열면 읽음으로", /rpNotesMineH
 ok("다른 날 새 코멘트로 가는 단추 (읽기 계정에서도 눌리게 data-keep)", /data-rpngo="' \+ x \+ '"' \+ RPK/.test(src));
 
 // ---- 종 ----
-ok("종 숫자에 코멘트가 더해진다", /\+ \(diffUnseen\(\) \? 1 : 0\) \+ rpNoteBellN\(\);/.test(src));
+ok("종 숫자에 코멘트가 더해진다", /\(diffUnseen\(\) \? 1 : 0\) \+ rpNoteBellN\(\) \+/.test(src));
 ok("종 줄을 누르면 그 날 내 보고로", /data-bell-rpn[\s\S]{0,300}S\.rpDate = b\.getAttribute\("data-bell-rpn"\); S\.rpTab = "mine"[\s\S]{0,80}showPage\("report"\)/.test(src));
 ok("종을 여는 것(markTasksSeen)으로는 코멘트가 안 꺼진다", !/leadSeen/.test(/function markTasksSeen[\s\S]*?\n\}/.exec(src)[0]));
 ok("앱을 연 채로도 — 내 보고 칸을 지켜본다", /rpCol\(myTid\(\)\)\.where\("date", ">=", addDays\(TODAY, -21\)\)[\s\S]{0,120}on\(myRp,/.test(src));
@@ -91,7 +91,58 @@ ok("내 보고 카드엔 코멘트 칸이 없다", run(`return rpNotesLeadHtml("
 ok("받은 보고 카드 끝에 붙고, 그린 뒤 단추를 잇는다", /\+ rpNotesLeadHtml\(tid, d, rep\) \+ '<\/div>';\s*\}\);\s*box\.innerHTML = h;\s*rpNotesWire\(box, d\);/.test(src));
 ok("달기 — 서버로 (브라우저로는 남의 보고를 못 쓴다)", /pushApi\("comment", \{ tid: tid, date: d, text: text \}\)/.test(src));
 
+// ---- 선생님 답글 (2026-09-19) ----
+run(`S.claims = { role:"teacher", tid:"T2", name:"이현우" }; S.ro = true;
+  S.reports.T2["2026-09-17"].date = "2026-09-17";
+  S.reports.T2["2026-09-17"].replies = [ { id:"r1", text:"네 확인했습니다", at:550 } ];`);
+const th = run(`return rpThread(S.reports.T2["2026-09-17"]).map(function(x){return x.k+":"+x.n.id;}).join(",")`);
+ok("코멘트와 답글이 시각 순 한 줄기", th === "lead:b,reply:r1,lead:c", th);
+const mh = run(`return rpNotesMineHtml(S.reports.T2["2026-09-17"])`);
+ok("선생님 화면 — 내 답글 «↳ 나» · 지우기 · 답글 칸 (읽기 계정에서도 살아 있게 data-keep)",
+  /↳ <b>나<\/b> 네 확인했습니다/.test(mh) && /data-rprdel="r1" data-keep/.test(mh) && /data-rprt placeholder="[^"]*" data-keep/.test(mh) && /data-rpradd data-keep/.test(mh), mh);
+run(`__writes.length = 0; __p = rpReplyEdit("2026-09-17", { text: "  내일 다시 볼게요 " });`);
+const rw = JSON.parse(run(`return JSON.stringify(__writes)`));
+ok("답글은 내 문서의 replies 한 칸만 (merge) — 코멘트 칸은 안 건드린다",
+  rw.length === 1 && /dailyReports\/T2\/days\/2026-09-17$/.test(rw[0].path) && Object.keys(rw[0].d).join() === "replies" &&
+  rw[0].d.replies.length === 2 && rw[0].d.replies[1].text === "내일 다시 볼게요" && rw[0].o.merge === true, JSON.stringify(rw));
+(async () => {
+  await run(`return __p`);
+  ok("적고 나면 화면 자료에도 붙는다", run(`return S.reports.T2["2026-09-17"].replies.length`) === 2);
+  let e1 = ""; await run(`return rpReplyEdit("2026-09-17", { text: "  " })`).catch((e) => { e1 = e.message; });
+  ok("빈 답글은 안 적는다", /비었/.test(e1));
+  let e2 = ""; await run(`return rpReplyEdit("2026-09-13", { text: "x" })`).catch((e) => { e2 = e.message; });
+  ok("안 낸 보고엔 답글 없음", /낸 보고/.test(e2));
+  await run(`return rpReplyEdit("2026-09-17", { del: "r1" })`);
+  ok("지우기 — 그 답글만", run(`return S.reports.T2["2026-09-17"].replies.map(function(n){return n.text;}).join()`) === "내일 다시 볼게요");
+  ok("달면 팀장 폰을 울린다", /await rpReplyEdit\(d, \{ text: text \}\);\s*pingLead\("reply"\);/.test(src));
+  ok("서버 — 답글 알림 글", /reply:\s*\{ title: "코멘트에 답글", body: who \+ " 선생님이 업무보고 코멘트에 답글을 달았습니다"/.test(api));
+  ok("다시 내도 답글이 남는다 (로컬에도 이어 둔다)", /if \(prev && prev\.replies\) doc\.replies = prev\.replies;/.test(src));
+
+  // 팀장 쪽
+  run(`S.claims = { role:"owner", tid:"T1", name:"한민수" }; S.ro = false; S.marks = {};
+    S.reports.T2["2026-09-17"].replies = [ { id:"r2", text:"내일 다시 볼게요", at:800 } ];
+    S.reports.T2["2026-09-16"].replies = [ { id:"r3", text:"옛 답글", at:150 } ];
+    S.marks.T1 = { rpReplySeen: { "T2|2026-09-16": 150 } };`);
+  const nw = JSON.parse(run(`return JSON.stringify(rpReplyNew())`));
+  ok("팀장 — 새 답글은 안 본 날만", nw.length === 1 && nw[0].tid === "T2" && nw[0].date === "2026-09-17" && nw[0].n === 1, JSON.stringify(nw));
+  const lh = run(`return rpNotesLeadHtml("T2", "2026-09-17", S.reports.T2["2026-09-17"])`);
+  ok("팀장 카드 — 답글에 선생님 이름과 «새»", /↳ <b>새 이현우<\/b> 내일 다시 볼게요/.test(lh), lh);
+  run(`__writes.length = 0; rpMarkRepliesSeen("2026-09-17");`);
+  ok("받은 보고에서 그 날을 열면 본 것으로", JSON.parse(run(`return JSON.stringify(rpReplyNew())`)).length === 0);
+  const mw = JSON.parse(run(`return JSON.stringify(__writes)`));
+  ok("…본 시각은 marks/<내 tid> 의 rpReplySeen (merge) — 앞서 본 날도 그대로",
+    mw.length === 1 && /marks\/T1$/.test(mw[0].path) && mw[0].d.rpReplySeen["T2|2026-09-17"] === 800 && mw[0].d.rpReplySeen["T2|2026-09-16"] === 150 && mw[0].o.merge === true, JSON.stringify(mw));
+  ok("선생님 계정엔 «새 답글» 이 없다", run(`S.ro = true; var r = rpReplyNew().length; S.ro = false; return r`) === 0);
+  ok("종 숫자에 답글이 더해진다 · 누르면 받은 보고 그 날로",
+    /rpNoteBellN\(\) \+\s*rpr\.reduce/.test(src) && /S\.rpDate = b\.getAttribute\("data-bell-rpr"\); S\.rpTab = "all"/.test(src));
+  ok("팀장은 앱으로 돌아올 때 보고를 다시 읽는다 (1분에 한 번까지 · 듣는 것은 하나만)",
+    /!RP_VIS_ON[\s\S]{0,200}visibilitychange[\s\S]{0,200}Date\.now\(\) - \(S\.rpReloadAt \|\| 0\) < 60000/.test(src));
+  finish();
+})();
+
+function finish() {
 T.forEach((l) => console.log(l));
 const bad = T.filter((l) => l.startsWith("FAIL")).length;
 console.log(bad ? "\n" + bad + "개 실패" : "\n모두 통과 (" + T.length + ")");
 process.exit(bad ? 1 : 0);
+}
