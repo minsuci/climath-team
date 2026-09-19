@@ -438,6 +438,11 @@
   .rp-dig { width: 100%; box-sizing: border-box; font: 12px/1.5 ui-monospace, Consolas, monospace; }
   .rp-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 10px 0; background: #fafbfc; }
   .rp-card.miss { border-color: #f0a8a8; background: #fff8f8; }
+  .rp-who { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .rp-who button { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; background: #fff; cursor: pointer; }
+  .rp-who button.ok { border-color: #9fd4b4; background: #eefaf2; }
+  .rp-who button.no { border-color: #f0a8a8; background: #fff1f1; color: var(--red); font-weight: 600; }
+  .rp-who button.wait { border-color: #f2cf8f; background: #fff8e8; }
   .rp-card .rp-cls { margin: 6px 0; }
   .rp-sub { font-size: 13px; margin-top: 6px; }
   .rp-sub div { margin-top: 2px; }
@@ -2433,6 +2438,17 @@ function rpReplyWire(box, d) {
     };
   });
 }
+// ---- 안 낸 사람에게 알림 (2026-09-19 «박준성 선생님한테 업무보고 내라고 알림 보내줘») ----
+function rpNudge(tid, d) {
+  var late = rpDeadline(d) <= Date.now();
+  return pushApi("send", { to: [tid], title: "업무보고", url: "/#report", tag: "rpnudge-" + d,
+    body: fmtMD(d) + " 업무보고를 아직 안 내셨습니다. " + (late ? "지금 내 주세요." : "다음 날 아침 8시까지 내 주세요.") });
+}
+function rpNudgeMsg(j) {
+  var e = ((j && j.each) || [])[0] || {};
+  return e.sent ? "폰으로 보냈다 " + rpHM(Date.now()).replace(/^.*\) /, "")
+    : e.none ? "폰 알림을 안 켠 선생님이라 못 보냈다 — 직접 연락" : "못 보냈다" + ((e.errors || [])[0] ? " — " + e.errors[0] : "");
+}
 // ---- 팀장 쪽 «새 답글» ----
 // 어디까지 봤나는 «선생님|날짜 → 본 시각» 지도. 이 기기(localStorage)와 팀 DB(marks/<내 tid>.rpReplySeen) 둘 다 —
 // 할 일 종(saveSeen)과 같은 이유다: 기기가 바뀌어도 따라오고, 오프라인에서 봐도 살아남는다.
@@ -2817,15 +2833,30 @@ function rpDrawAll(box, d, sm) {
     (S.rpDig === d ? '<textarea class="rp-dig" rows="16" readonly>' + esc(rpDigest(d)) + '</textarea>' +
       '<div class="row"><button class="mini plus" data-rpcopy>복사</button><button class="mini" data-rpdigx>접기</button></div>' : "");
   if (!tids.length) h += '<p class="muted">' + esc(fmtMD(d)) + ' 에 수업한 선생님이 없다.</p>';
-  tids.forEach(function (tid) {
+  // 누가 냈고 안 냈나 — 한 줄 (9/19 «누가 냈고 안 냈는지 한 눈에»). 누르면 그 카드로 간다.
+  // 낸 사람을 앞에, 안 낸 사람을 뒤에 — 카드도 같은 순서라 **안 낸 사람은 맨 아래에 모인다.**
+  var isIn = function (tid) { var r = ((S.reports || {})[tid] || {})[d]; return !!(r && r.submitted); };
+  tids = tids.filter(isIn).concat(tids.filter(function (tid) { return !isIn(tid); }));
+  if (tids.length) h += '<div class="rp-who">' + tids.map(function (tid) {
+    var r = ((S.reports || {})[tid] || {})[d];
+    return isIn(tid)
+      ? '<button class="ok" data-rpgo="' + esc(tid) + '">✓ ' + esc(teacherName(tid)) + ' <span class="muted">' + esc(rpHM(r.updated || r.submitted).replace(/^.*\) /, "")) + '</span></button>'
+      : '<button class="' + (passed ? "no" : "wait") + '" data-rpgo="' + esc(tid) + '">' + (passed ? "✗ " : "… ") + esc(teacherName(tid)) + (passed ? " 안 냄" : " 아직") + '</button>';
+  }).join("") + '</div>';
+  var missN = tids.filter(function (tid) { return !isIn(tid); }).length;
+  tids.forEach(function (tid, i) {
     var rep = ((S.reports || {})[tid] || {})[d];
     if (!(rep && rep.submitted)) {
-      h += '<div class="rp-card miss"><div class="row"><b>' + esc(teacherName(tid)) + '</b>' +
-        '<span class="pill red">안 냄</span><span class="muted" style="font-size:12px">' +
-        rpClassesOn(tid, d).map(function (c) { return esc(c.name); }).join(" · ") + '</span></div></div>';
+      var nd = (S.rpNudged || {})[tid + "|" + d];
+      if (i === 0 || isIn(tids[i - 1])) h += '<h3 class="rp-h" id="rp-miss">안 낸 사람 ' + missN + '</h3>';
+      h += '<div class="rp-card miss" id="rp-card-' + esc(tid) + '"><div class="row"><b>' + esc(teacherName(tid)) + '</b>' +
+        '<span class="pill ' + (passed ? "red" : "orange") + '">' + (passed ? "안 냄" : "아직 안 냄") + '</span><span class="muted" style="font-size:12px">' +
+        rpClassesOn(tid, d).map(function (c) { return esc(c.name); }).join(" · ") + '</span>' +
+        '<span class="sp"></span><button class="mini" data-rpnudge="' + esc(tid) + '">내라고 알림</button>' +
+        (nd ? '<span class="muted" style="font-size:12px">' + esc(nd) + '</span>' : "") + '</div></div>';
       return;
     }
-    h += '<div class="rp-card"><div class="row"><b>' + esc(rep.name || teacherName(tid)) + '</b>' +
+    h += '<div class="rp-card" id="rp-card-' + esc(tid) + '"><div class="row"><b>' + esc(rep.name || teacherName(tid)) + '</b>' +
       '<span class="pill green">냈다 ' + esc(rpHM(rep.updated || rep.submitted)) + '</span>' +
       (rep.submitted && rpDeadline(d) < rep.submitted ? '<span class="pill orange">8시 넘어 냄</span>' : "") + '</div>';
     (rep.classes || []).forEach(function (c) {
@@ -2868,6 +2899,21 @@ function rpDrawAll(box, d, sm) {
   box.innerHTML = h;
   rpNotesWire(box, d);
   rpMarkRepliesSeen(d);
+  $$("[data-rpgo]", box).forEach(function (b) {
+    b.onclick = function () { var c = $("#rp-card-" + b.getAttribute("data-rpgo"), box); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  });
+  // 안 낸 선생님에게 «내라» 알림 — 폰(켜 둔 사람만). 할 일 알림과 같은 길(/api/push want=send, 팀장만).
+  $$("[data-rpnudge]", box).forEach(function (b) {
+    b.onclick = async function () {
+      var tid = b.getAttribute("data-rpnudge");
+      b.disabled = true; b.textContent = "보내는 중…";
+      var msg;
+      try { msg = rpNudgeMsg(await rpNudge(tid, d)); }
+      catch (e) { msg = "못 보냈다 — " + e.message; }
+      S.rpNudged = S.rpNudged || {}; S.rpNudged[tid + "|" + d] = msg;
+      keepScrollIn("#sec-report", renderReport);
+    };
+  });
   $$("[data-rpmv]", box).forEach(function (b) {
     b.onclick = async function () {
       var m = sm.moves[+b.getAttribute("data-rpmv")].m;
