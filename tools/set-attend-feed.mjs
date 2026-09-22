@@ -77,6 +77,8 @@ if (has("check")) {
   const x = await fetch(str(f.url) + "?date=" + date, { headers: { "x-report-key": str(f.key) } });
   const j = await x.json().catch(() => null);
   console.log(date, "→", x.status, j && j.students ? j.students.length + "명: " + j.students.map((s) => s.name + " " + s.attend).join(", ") : "");
+  // --raw — 그쪽이 무엇을 보내는지 칸 이름까지 본다(새 칸을 붙일 때). 열쇠는 안 찍는다
+  if (has("raw")) console.log(JSON.stringify(j, null, 1));
   process.exit(x.ok ? 0 : 1);
 }
 

@@ -1675,7 +1675,7 @@ async function rpLoadExt(tid, d) {
     var j = await attendApi({ tid: tid, date: d });
     if (j.none) { S.extNone[tid] = true; return null; }
     var day = (j.days || []).filter(function (x) { return x.date === d; })[0];
-    return { source: j.source || "", students: day ? day.students : [] };
+    return { source: j.source || "", students: day ? day.students : [], classes: (day && day.classes) || [] };
   } catch (e) { return { err: e.message }; }
 }
 // 이름 맞추기. 그쪽 앱과 팀체크의 표기가 다르다 (9/15 실측):
@@ -1730,7 +1730,8 @@ function rpApplyExt(rep, ext, all) {
       }
       if (row.contacted && s.att === "결석") s.called = true;
       if (row.note) {
-        if (!String(s.note || "").trim() || s.note === s.autoNote) s.note = row.note;
+        // «주의» 는 **이번에 특이사항을 채웠을 때만** 켠다 — 선생님이 적은 특이사항이나 끈 주의는 안 건드린다
+        if (!String(s.note || "").trim() || s.note === s.autoNote) { s.note = row.note; if (row.warn) s.warn = true; }
         s.autoNote = row.note;
       }
       if (row.score != null) {
@@ -1740,8 +1741,37 @@ function rpApplyExt(rep, ext, all) {
       }
     });
   });
-  rep.ext = { source: ext.source || "", left: m.left, n: (ext.students || []).length };
+  var cl = rpExtClasses(rep, ext.classes);
+  cl.hit.forEach(function (h) {
+    var c = rep.classes[h.ci];
+    ["progress", "homework"].forEach(function (k) {
+      var v = h.row[k], auto = k === "progress" ? "autoProgress" : "autoHomework";
+      if (!v) return;
+      if (!String(c[k] || "").trim() || c[k] === c[auto]) c[k] = v;
+      c[auto] = v;
+    });
+  });
+  rep.ext = { source: ext.source || "", left: m.left.concat(cl.left), n: (ext.students || []).length };
   return rep;
+}
+// 반 단위 진도·과제를 보고의 반에 붙인다 (2026-09-22 박준성T «진도나 숙제도 채워졌으면»).
+//   1) 반 이름이 같으면(띄어쓰기·«반»·괄호 무시 — normClassKey) 그 반
+//   2) 그 날 보고에 반이 **하나**이고 온 것도 **하나**면 이름이 달라도 그 반 — 그쪽 반 이름이 팀체크와 다를 수 있다
+//   못 붙인 것은 띠에 뜬다. 짐작해서 남의 반 진도를 적지 않는다.
+// 선생님이 적은 진도·과제는 안 덮는다(비었거나 지난번에 자동으로 넣은 그대로일 때만).
+function rpExtClasses(rep, rows) {
+  var hit = [], left = [];
+  rows = rows || [];
+  rows.forEach(function (row) {
+    var k = normClassKey(row.name), at = -1;
+    if (k) rep.classes.forEach(function (c, ci) { if (at < 0 && normClassKey(c.name) === k) at = ci; });
+    if (at < 0 && rows.length === 1 && rep.classes.length === 1) at = 0;
+    if (at >= 0) hit.push({ row: row, ci: at });
+    else left.push({ row: { name: (row.name || "반 이름 없음") + " 진도·과제", attend: "", contacted: false,
+      note: [row.progress && "진도 " + row.progress, row.homework && "과제 " + row.homework].filter(Boolean).join(" · ") },
+      why: rep.classes.length ? "어느 반인지 몰라 안 붙였다 — 이 날 반: " + rep.classes.map(function (c) { return c.name; }).join(", ") : "이 날 보고에 반이 없다" });
+  });
+  return { hit: hit, left: left };
 }
 // 수업 위에 뜨는 띠 — 못 읽었거나, 받았는데 표에 못 붙인 이름이 있을 때만.
 function rpExtNote(rep) {

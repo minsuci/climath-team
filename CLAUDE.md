@@ -1826,6 +1826,11 @@ node tools/test-done.js
 "현우쌤이 본인 앱에다가 출결하면 팀체크에 들어오고 업무보고까지 연동되게." 이현우 선생님은 수업관리 앱이 아니라
 **본인이 만든 앱(Supabase)** 에 출결을 찍는다. 그 앱이 `daily-report` 함수를 열어 두었다
 (GET · 헤더 `x-report-key` · `?date=` 또는 `?from=&to=` 최대 31일 · `{ name, attend: 출석|결석|미정, contacted, note, score }`).
+**2026-09-22 규격 늘림**(박준성T «진도나 숙제도 채워졌으면 · 특이사항도») — 둘 다 **선택**이라 옛 앱은 그대로 돈다:
+학생 줄에 `warn: true`(특이사항 «주의»), 그 날에 `classes: [{ name, progress, homework }]`(반 단위 진도·과제).
+반은 이름(`normClassKey`)으로 붙이고, 그 날 보고에 반이 하나·온 것도 하나면 이름이 달라도 붙인다. 못 붙이면 띠(`rpExtClasses`).
+진도·과제·특이사항 모두 **비었거나 지난번 자동값 그대로일 때만** 채운다. 주의는 특이사항을 이번에 채웠을 때만 켠다.
+그쪽이 무엇을 보내는지 보려면 `node tools/set-attend-feed.mjs --tid <tid> --check --raw --date …`
 
 - **브라우저가 바로 못 부른다** — 그쪽이 CORS 사전 요청에 401. 그리고 열쇠를 페이지에 두면 학생 출결을 누구나 뽑는다. → `api/attend.js` 가 중계
 - **열쇠는 팀 DB `secrets/attend_<tid>`** = `{ url, key, name, off }`. `secrets` 는 규칙에 없는 컬렉션이라 브라우저는 못 읽고 서비스 계정만 읽는다(`secrets/vapid` 와 같다).

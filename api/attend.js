@@ -70,7 +70,7 @@ export function rangeQuery(body) {
 
 // 하루짜리·구간짜리를 한 모양으로. 칸도 걸러서 **아는 것만** 넘긴다.
 export function normDays(j) {
-  const days = Array.isArray(j.days) ? j.days : [{ date: j.date, students: j.students }];
+  const days = Array.isArray(j.days) ? j.days : [{ date: j.date, students: j.students, classes: j.classes }];
   return days.filter((d) => d && YMD.test(String(d.date || ""))).map((d) => ({
     date: d.date,
     students: (Array.isArray(d.students) ? d.students : []).filter((s) => s && String(s.name || "").trim()).map((s) => ({
@@ -80,6 +80,15 @@ export function normDays(j) {
       contacted: s.contacted === true,
       note: String(s.note == null ? "" : s.note).trim().slice(0, 300),
       score: typeof s.score === "number" && isFinite(s.score) ? s.score : null,
+      // 2026-09-22 — 특이사항에 «주의»(걱정되는 내용)를 켜서 보낼 수 있다. 안 보내면 false
+      warn: s.warn === true,
+    })),
+    // 2026-09-22 박준성T «진도나 숙제도 채워졌으면» — 반 단위 진도·과제. 없어도 된다(옛 규격 그대로 돈다).
+    // name 은 그쪽 반 이름 — 팀체크 반 이름과 맞춰 붙인다(앞에서). 그 날 반이 하나면 이름이 달라도 붙는다.
+    classes: (Array.isArray(d.classes) ? d.classes : []).filter((c) => c && (c.progress || c.homework)).slice(0, 10).map((c) => ({
+      name: String(c.name == null ? "" : c.name).trim().slice(0, 60),
+      progress: String(c.progress == null ? "" : c.progress).trim().slice(0, 200),
+      homework: String(c.homework == null ? "" : c.homework).trim().slice(0, 200),
     })),
   }));
 }

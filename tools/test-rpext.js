@@ -114,6 +114,35 @@ ok("서버: 열쇠는 응답에 안 싣는다", !/json\(\{[^}]*feed\.key/.test(a
 const rules = fs.readFileSync("firestore.rules", "utf8");
 ok("⚠ 규칙에 secrets 가 없다 (브라우저에서 열쇠를 못 읽는다)", !/match \/secrets/.test(rules));
 
+// ---- 반 단위 진도·과제 · 주의 (2026-09-22 박준성T «진도나 숙제도 채워졌으면 좋겠다 · 특이사항도») ----
+const nd2 = JSON.parse(sv(`JSON.stringify(normDays({date:"2026-09-14",students:[{name:"김규림",attend:"출석",note:"과제 3주째 안 함",warn:true},{name:"이수민",attend:"출석",warn:"yes"}],
+  classes:[{name:" 예비고1S 월금 ",progress:"공통수학1 2단원 p.40까지",homework:"쎈 B 1~20"},{name:"빈 것"},null]}))`));
+ok("서버: 반 진도·과제를 넘긴다 (빈 줄은 버린다)", nd2[0].classes.length === 1 && nd2[0].classes[0].name === "예비고1S 월금" &&
+  nd2[0].classes[0].progress === "공통수학1 2단원 p.40까지" && nd2[0].classes[0].homework === "쎈 B 1~20", JSON.stringify(nd2[0].classes));
+ok("서버: 주의는 true 일 때만", nd2[0].students[0].warn === true && nd2[0].students[1].warn === false);
+ok("서버: 옛 규격(반 없음)도 그대로 — classes 는 빈 배열", JSON.stringify(nd[0].classes) === "[]");
+const applyX = (d, rows, classes, pre) => JSON.parse(run(`var r = rpDraft("H","${d}",${pre ? JSON.stringify(pre) : "null"});
+  rpApplyExt(r, { source:"이현우", students:${JSON.stringify(rows)}, classes:${JSON.stringify(classes)} }, rpMyRoster("H","${d}"));
+  return JSON.stringify(r);`));
+const W = [{ name:"김규림", attend:"출석", contacted:false, note:"과제 3주째 안 함", score:null, warn:true }];
+const x1 = applyX("2026-09-14", W, [{ name:"예비고1S 월금", progress:"2단원 p.40까지", homework:"쎈 B 1~20" }]);
+const cS = x1.classes.filter((c) => c.cid === "S")[0];
+ok("반 이름이 같으면 그 반에 진도·과제", cS.progress === "2단원 p.40까지" && cS.homework === "쎈 B 1~20", JSON.stringify([cS.progress, cS.homework]));
+ok("특이사항이 채워지고, 보낸 «주의» 가 켜진다", stu(x1, "S", "s4").note === "과제 3주째 안 함" && stu(x1, "S", "s4").warn === true);
+const x2 = applyX("2026-09-14", W, [{ name:"A반", progress:"3단원" }]);
+ok("그 날 반이 하나고 온 것도 하나면 이름이 달라도 붙는다", x2.classes.filter((c) => c.cid === "S")[0].progress === "3단원");
+const pre = { classes:[{ cid:"S", progress:"내가 적은 진도", homework:"", students:[{ sid:"s4", att:"출석", note:"내가 적은 메모", warn:false }] }] };
+const x3 = applyX("2026-09-14", W, [{ name:"예비고1S 월금", progress:"앱 진도", homework:"앱 과제" }], pre);
+const c3 = x3.classes.filter((c) => c.cid === "S")[0];
+ok("선생님이 적은 진도는 안 덮고, 빈 과제만 채운다", c3.progress === "내가 적은 진도" && c3.homework === "앱 과제", JSON.stringify([c3.progress, c3.homework]));
+ok("선생님이 적은 특이사항·끈 주의는 안 건드린다", stu(x3, "S", "s4").note === "내가 적은 메모" && stu(x3, "S", "s4").warn === false);
+// 반이 둘인 날(수 9/16: 개진반만 → 하나. 화 9/15 는 개진반 하나) — 둘인 날을 만들어 본다
+run(`S.classes[1].roster.push({ id:"g9", name:"김규림", pid:"P_gyu", days:[1] });`);
+const x4 = applyX("2026-09-14", W, [{ name:"모르는 반", progress:"4단원" }]);
+ok("반이 둘인 날 이름이 안 맞으면 안 붙이고 띠에 남긴다",
+  x4.classes.every((c) => c.progress !== "4단원") && x4.ext.left.some((l) => /모르는 반 진도·과제/.test(l.row.name) && /어느 반인지 몰라/.test(l.why)), JSON.stringify(x4.ext.left));
+run(`S.classes[1].roster.pop();`);
+
 console.log(T.join("\n"));
 const bad = T.filter((x) => x.startsWith("FAIL")).length;
 console.log(bad ? "\n실패 " + bad + "건" : "\n전부 통과 (" + T.length + "건)");
