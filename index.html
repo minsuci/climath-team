@@ -1588,6 +1588,29 @@ async function rpApplyMove(m) {
   if (m.toCid && !rpInClass(m.toCid, m)) await stAssign(m.toCid, S.byPid[m.pid] || { pid: m.pid, name: m.name });
   if (rpInClass(m.fromCid, m)) await stUnassign(m.fromCid, m.pid);
 }
+// 시트 대조 줄이 **업무보고로 이미 옮긴 것을 되돌리는 줄**인가 (2026-09-22).
+// 마왕님 «업무보고에서 명단이동을 앱에 반영하면 학생명단에도 반영되게 해» — 앱 명단은 이미 바뀌는데,
+// 데스크 «인원 현황» 시트는 그대로라 대조에 «배정 김초이 → 개진반 이창혁A» 가 떴다. 거기서 «반영» 을 누르면
+// 방금 뺀 학생이 **도로 들어간다.** 그래서 그런 줄은 «업무보고로 옮겼다 · 시트가 아직 옛 명단» 으로 적고 «반영» 을 감춘다.
+// 시트는 데스크 것이라 여기서 안 고친다(읽기 권한만 있다).
+function rpMoveBehind(it) {
+  var hit = null;
+  Object.keys(S.reports || {}).forEach(function (tid) {
+    Object.keys(S.reports[tid] || {}).sort().forEach(function (d) {
+      var rep = S.reports[tid][d];
+      if (!(rep && rep.submitted)) return;
+      (rep.moves || []).forEach(function (m) {
+        if (!rpMoveState(m).done) return;
+        if (!(it.pid && m.pid ? it.pid === m.pid : it.name === m.name)) return;
+        var undo = (it.kind === "배정" && it.to === m.fromCid) ||
+                   (it.kind === "퇴원" && m.toCid && it.from === m.toCid) ||
+                   (it.kind === "전반" && it.to === m.fromCid && (!m.toCid || it.from === m.toCid));
+        if (undo) hit = { tid: tid, d: d, m: m };
+      });
+    });
+  });
+  return hit;
+}
 // 보고로 올라왔는데 앱에 아직 안 옮긴 것 — 읽어 둔 보고 전부(최근 3주)에서. 팀장 알림 띠가 이걸 센다.
 function rpPendingMoves() {
   var out = [];
@@ -7186,11 +7209,13 @@ function rosterDiffBox() {
   if (S.diffErr) body += '<div class="err">' + esc(S.diffErr) + '</div>';
   if (d) {
     body += d.items.length ? d.items.map(function (it, i) {
-      var k = DIFF_KIND[it.kind] || DIFF_KIND["확인"];
+      var k = DIFF_KIND[it.kind] || DIFF_KIND["확인"], bh = rpMoveBehind(it);
       return '<div class="dfrow" data-diff-i="' + i + '"><span class="pill ' + k[0] + '" title="' + esc(k[1]) + '">' + it.kind + '</span>' +
         '<b>' + esc(it.name) + '</b>' + (it.grade ? '<span class="pill ' + gradeCls(it.grade) + '">' + esc(it.grade) + '</span>' : "") +
-        '<span class="muted">' + diffLabel(it) + (it.why ? " · " + esc(it.why) : "") + '</span><span class="sp"></span>' +
-        (it.kind === "확인" ? "" : '<button class="mini" data-diff-apply="' + i + '" title="' + esc(k[1]) + '">반영</button>') +
+        '<span class="muted">' + diffLabel(it) + (it.why ? " · " + esc(it.why) : "") + '</span>' +
+        (bh ? '<span class="pill green" title="앱 명단은 업무보고대로 바뀌었다. 시트(데스크)만 옛 명단이다 — 반영하면 도로 돌아간다">' +
+          esc(fmtMD(bh.d)) + ' ' + esc(teacherName(bh.tid)) + ' 업무보고로 옮김 · 시트가 옛 명단</span>' : "") + '<span class="sp"></span>' +
+        (it.kind === "확인" || bh ? "" : '<button class="mini" data-diff-apply="' + i + '" title="' + esc(k[1]) + '">반영</button>') +
         '<button class="mini" data-diff-skip="' + i + '" title="이번 차이는 안 본다. 시트가 또 바뀌면 다시 묻는다">무시</button></div>';
     }).join("") : (S.diffErr ? "" : '<div class="muted" style="font-size:13px;padding:4px 0">맞춘 반은 시트와 명단이 같다.</div>');
     if (d.unmatched.length) {
