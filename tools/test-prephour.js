@@ -33,6 +33,15 @@ ok("표의 직보 칸에 «2시»/«5시»", /2시<\/span>/.test(run(`return pre
 ok("범례에 둘 다 뜬다 (참여표 · 중3 내신관리 HTML)", /직보 5시/.test(run(`return EXAM_MARKS.prep.label`)) && /직보 2시/.test(run(`return EXAM_MARKS.prep2.label`)) &&
   /\["exam", "math", "prep", "prep2", "back"\]/.test(src));
 
+// 학교 안 가는 날 직보 — «학교 안가면 일찍올 수 있으니까 2시야» (2026-09-26)
+ok("수학이 첫날이어도 직보가 일요일이면 2시 (10/12 월 첫날=수학 → 10/11 일)",
+  run(`return prepHour({ start:"2026-10-12", math:"2026-10-12", prep:"2026-10-11" })`) === 14);
+ok("토요일도 2시", run(`return prepHour({ start:"2026-10-05", math:"2026-10-05", prep:"2026-10-03" })`) === 14);
+ok("공휴일(10/5 개천절 대체)이면 2시 — 10/6 첫날=수학", run(`return prepHour({ start:"2026-10-06", math:"2026-10-06", prep:"2026-10-05" })`) === 14);
+ok("평일 전날이면 그대로 5시", run(`return prepHour({ start:"2026-10-07", math:"2026-10-07", prep:"2026-10-06" })`) === 17);
+ok("쉬는 날 직보는 수학·시작이 비어도 2시", run(`return prepHour({ prep:"2026-10-11" })`) === 14);
+ok("학원 쉬는 날(holidayOf)이 아니라 나라 공휴일로만 본다", /return w === 0 \|\| w === 6 \|\| !!HOLIDAYS\[d\];/.test(src));
+
 // ---- 직보 날짜별 ----
 run(`
   var C1 = { id:"c1", name:"고1S" }, C2 = { id:"c2", name:"고1T" };

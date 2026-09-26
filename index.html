@@ -8255,7 +8255,7 @@ function drawMathRes() {
 
 var EXAM_MARKS = {
   prep: { t: "직", label: "직보 5시 (수학이 시험 첫날 — 전날 저녁)", bg: "#f6e7df", fg: "#c2703f" },
-  prep2: { t: "직", label: "직보 2시 (수학이 첫날이 아니다 — 다른 시험 보고 일찍 온다)", bg: "#e8e1f5", fg: "#6a4ea8" },
+  prep2: { t: "직", label: "직보 2시 (수학이 첫날이 아니다 — 다른 시험 보고 일찍 온다 · 토·일·공휴일)", bg: "#e8e1f5", fg: "#6a4ea8" },
   math: { t: "수", label: "수학시험", bg: "#fae3e2", fg: "#d6453f" },
   exam: { t: "시", label: "내신기간", bg: "#f0ece5", fg: "#7c6f5f" },
   back: { t: "첫", label: "복귀 (정규 첫 등원)", bg: "#e3edf5", fg: "#2b5f8a" },
@@ -8334,8 +8334,16 @@ function attendCount(cls, st, v, monthDays, examMonth) {
 // 직보 시작 시각 (2026-09-26 마왕님) — «시험 첫날이 바로 수학시험이면 전날 직보 5시,
 // 첫날이 아니면 다른 시험 보고 일찍 올 수 있으니까 수학 직보가 2시».
 // 17 · 14 · 0(모름 — 수학시험이나 내신 시작이 비었다). 직보 날짜를 손으로 고쳐 두었어도 시각은 이 규칙이다.
+// 5시는 «학교 다녀와서» 라서다 — 직보 날이 토·일·공휴일이면 학교를 안 가니 일찍 온다, 2시 (마왕님 «학교 안가면 일찍올 수 있으니까 2시야»).
+// ⚠ 학교 쉬는 날은 나라 공휴일(HOLIDAYS)로만 본다. holidayOf 는 학원 쉬는 날(워크샵 따위)까지 섞여서 학교 사정과 다르다.
+function noSchoolDay(d) {
+  var w = new Date(d + "T00:00:00").getDay();
+  return w === 0 || w === 6 || !!HOLIDAYS[d];
+}
 function prepHour(v) {
-  if (!v || !v.prep || !v.math || !v.start) return 0;
+  if (!v || !v.prep) return 0;
+  if (noSchoolDay(v.prep)) return 14;
+  if (!v.math || !v.start) return 0;
   return v.math <= v.start ? 17 : 14;
 }
 function prepMark(v) { return prepHour(v) === 14 ? EXAM_MARKS.prep2 : EXAM_MARKS.prep; }
@@ -8755,7 +8763,7 @@ function prepGroupsHtml(done) {
     (G.none.length ? '<div style="padding:6px 0"><b class="red">직보 없음 ' + G.none.length + '명</b> <span class="muted" style="font-size:12px">수학시험이 비었다</span>' +
       '<div class="row" style="flex-wrap:wrap;gap:4px;margin-top:4px">' + G.none.map(who).join("") + '</div></div>' : "") +
     '</div><p class="muted" style="font-size:12px;margin:4px 0 0">' +
-    '<b>5시</b> — 수학이 시험 첫날이라 전날 저녁. <b>2시</b> — 수학이 첫날이 아니라 그 전날도 시험을 보고 일찍 온다. ' +
+    '<b>5시</b> — 수학이 시험 첫날이라 전날 저녁. <b>2시</b> — 수학이 첫날이 아니라 그 전날도 시험을 보고 일찍 온다. 직보 날이 토·일·공휴일이어도 학교를 안 가니 2시.' +
     '<b>시각?</b> — 내신 시작일이 비어 가를 수 없다. 이름을 누르면 고친다.</p>';
 }
 function stripHtml(strip, done) {
