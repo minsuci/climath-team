@@ -1003,14 +1003,23 @@ function renderShell() {
     '<button class="link" id="btn-reload">새로고침</button>' +
     '<button class="link" id="btn-out">로그아웃</button></div>' +
     '<div class="wrap"><div id="banner"></div><div class="nav">' +
-    myPages().map(function (p) { return '<button data-page="' + p[0] + '">' + p[1] + '<span class="b" id="nb-' + p[0] + '" hidden></span></button>'; }).join("") +
+    myPages().map(function (p) {
+      return '<button data-page="' + p[0] + '"' + (HIDDEN_PAGES.indexOf(p[0]) >= 0 ? ' class="nav-hid" hidden' : "") + '>' + p[1] +
+        '<span class="b" id="nb-' + p[0] + '" hidden></span></button>'; }).join("") +
+    (S.ro ? "" : '<button id="nav-more" title="숨긴 메뉴 (개발 현황 · 앞으로 2주 · 근거 자료) — 안 쓰는 기능이라 감춰 두었다">⋯</button>') +
     '</div><div class="grid">' +
     myPages().map(function (p) { return '<div class="card" id="sec-' + p[0] + '" hidden></div>'; }).join("") +
     '</div></div>';
   // 로그아웃은 **새로 열기까지.** 안 그러면 다음 사람이 앞사람의 자료(간부회의록 등)를 본다 — boot() 의 주석
   $("#btn-out").onclick = function () { signOutAll().then(function () { location.reload(); }); };
   $("#btn-reload").onclick = function () { location.reload(); };
-  $$(".nav button").forEach(function (b) { b.onclick = function () { showPage(b.getAttribute("data-page")); }; });
+  $$(".nav button[data-page]").forEach(function (b) { b.onclick = function () { showPage(b.getAttribute("data-page")); }; });
+  var more = $("#nav-more");
+  if (more) more.onclick = function () {
+    S.showHidden = !S.showHidden;
+    $$(".nav .nav-hid").forEach(function (b) { b.hidden = !S.showHidden; });
+    more.classList.toggle("on", !!S.showHidden);
+  };
   renderBell();
   showPage(currentPage());
 }
@@ -1024,12 +1033,19 @@ function renderShell() {
 //   여기서 새로 여는 것이 없다. **모아 보는 화면만** 팀장 것이다.
 var PAGES = [["cal", "업무 달력"], ["plan", "월간계획"], ["tasks", "할 일"], ["report", "업무보고"], ["done", "완료 현황", "owner"], ["exec", "간부회의", "owner"], ["minutes", "회의록"], ["dev", "개발 현황"], ["week", "앞으로 2주"], ["students", "학생 명단"], ["board", "학생 한눈에", "owner"], ["terms", "학교 일정"],
   ["exams", "내신 참여표"], ["scores", "시험 성적"], ["sheets", "근거 자료"]];
+// 숨긴 메뉴 (2026-09-26 마왕님 «개발현황 앞으로2주 근거자료는 감추자 안쓰는기능임»).
+// 9/18 간부회의 원장님 «안 쓰는 기능은 **지우지 말고 숨겨 보관**» 을 따른다 — 메뉴 줄에서만 뺀다.
+//   화면·코드는 그대로다. 다른 화면의 «근거 자료에서 등록» 같은 단추(showPage)는 그대로 열린다.
+//   메뉴 끝 «⋯» (팀장만)을 누르면 숨긴 메뉴가 잠깐 보인다. 되살리려면 여기서 빼면 된다.
+// ⚠ 열던 화면이 숨긴 메뉴였어도 다시 켤 때는 «할 일» 로 연다(currentPage) — 메뉴 줄에 없는 화면에 갇히지 않게.
+var HIDDEN_PAGES = ["dev", "week", "sheets"];
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
 function currentPage() {
   var h = (location.hash || "").replace("#", "");
-  if (isPage(h)) return h;
-  try { var v = localStorage.getItem("dash.page"); if (isPage(v)) return v; } catch (e) {}
+  var ok = function (v) { return isPage(v) && HIDDEN_PAGES.indexOf(v) < 0; };
+  if (ok(h)) return h;
+  try { var v = localStorage.getItem("dash.page"); if (ok(v)) return v; } catch (e) {}
   return "tasks";
 }
 function showPage(id) {
