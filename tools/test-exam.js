@@ -257,8 +257,10 @@ ok("안 낸 사람이 아무도 없으면 상자도 없다", box(mkRow("이미�
   const tb = run(`return tableHtml(ROWS, daysOfMonth("2026-09"), "2026-09")`);
   ok("담당 반은 복귀·수학이 칸이다",
     tb.indexOf('data-math="c2|s2"') >= 0 && tb.indexOf('data-back="c2|s2"') >= 0);
+  // 수학 · 복귀 칸 + 직보 «안 옴» 단추 (2026-09-26) = 3
   ok("그 칸에는 data-keep 이 붙는다 (없으면 읽기 계정에서 잠긴다)",
-    (tb.match(/data-keep/g) || []).length === 2, String((tb.match(/data-keep/g) || []).length));
+    (tb.match(/data-keep/g) || []).length === 3 && tb.indexOf('data-noprep="c2|s2" data-keep') >= 0 && tb.indexOf('data-noprep="c1|s1"') < 0,
+    String((tb.match(/data-keep/g) || []).length));
   ok("남의 반은 칸이 아니라 글자다",
     tb.indexOf('data-math="c1|s1"') < 0 && tb.indexOf('data-back="c1|s1"') < 0);
   ok("남의 반 복귀가 비었으면 —", tb.indexOf(">—<") >= 0);

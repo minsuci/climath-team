@@ -8259,6 +8259,7 @@ var EXAM_MARKS = {
   math: { t: "수", label: "수학시험", bg: "#fae3e2", fg: "#d6453f" },
   exam: { t: "시", label: "내신기간", bg: "#f0ece5", fg: "#7c6f5f" },
   back: { t: "첫", label: "복귀 (정규 첫 등원)", bg: "#e3edf5", fg: "#2b5f8a" },
+  noprep: { t: "✕", label: "직보 안 옴", bg: "#ececec", fg: "#8a8a8a" },
 };
 var PAINT_MODES = [
   { key: "exam", label: "시험기간", bg: "#f0ece5", fg: "#7c6f5f" },
@@ -8300,8 +8301,9 @@ function daysOfMonth(ym) {
 }
 // 안 오는 구간은 내신기간이 아니라 **직보 다음날 ~ 복귀 전날**이다.
 // 직보가 마지막 수업이고 그 다음 오는 날이 복귀라, 시험이 끝난 뒤라도 복귀 전이면 안 온다.
+// 직보 안 옴(noPrep, 2026-09-26 «진현겸은 직보 안 온다그랬는데») — 직보 날부터 안 온다. 직보가 그날 수업이라서다.
 function outRange(v) {
-  return { s: (v && v.prep) ? dayAfter(v.prep) : ((v && v.start) || ""),
+  return { s: (v && v.prep) ? (v.noPrep ? v.prep : dayAfter(v.prep)) : ((v && v.start) || ""),
            e: (v && v.back) ? dayBefore(v.back) : ((v && v.end) || "") };
 }
 function isOutOn(v, d) { var r = outRange(v); return !!(r.s && r.e && d >= r.s && d <= r.e); }
@@ -8325,7 +8327,7 @@ function attendCount(cls, st, v, monthDays, examMonth) {
     come[d] = 1;
   });
   // 직보·복귀는 수업 요일이 아니어도 오는 날이다. 그 달 안에 있을 때만.
-  [(v && v.prep) || "", (v && v.back) || ""].forEach(function (d) {
+  [(v && v.prep && !v.noPrep) ? v.prep : "", (v && v.back) || ""].forEach(function (d) {
     if (!d || monthOf(d) !== examMonth || come[d]) return;
     come[d] = 1;
   });
@@ -8348,12 +8350,13 @@ function prepHour(v) {
 }
 function prepMark(v) { return prepHour(v) === 14 ? EXAM_MARKS.prep2 : EXAM_MARKS.prep; }
 function prepHourPill(v) {
+  if (v && v.prep && v.noPrep) return '<span class="pill" style="background:' + EXAM_MARKS.noprep.bg + ';color:' + EXAM_MARKS.noprep.fg + '">안 옴</span>';
   var h = prepHour(v), m = h === 14 ? EXAM_MARKS.prep2 : EXAM_MARKS.prep;
   return h ? '<span class="pill" style="background:' + m.bg + ';color:' + m.fg + '">' + (h === 14 ? "2시" : "5시") + '</span>' : "";
 }
 function markOf(v, d) {
   if (v.math && d === v.math) return EXAM_MARKS.math;
-  if (v.prep && d === v.prep) return prepMark(v);
+  if (v.prep && d === v.prep) return v.noPrep ? EXAM_MARKS.noprep : prepMark(v);
   if (v.back && d === v.back) return EXAM_MARKS.back;
   if (v.start && v.end && d >= v.start && d <= v.end) return EXAM_MARKS.exam;
   return null;
@@ -8402,7 +8405,8 @@ async function deleteExam(cid, sid) {
 // 다른 칸(시험 기간·학교·비고)은 그대로 팀장 것이다. 시험 기간은 학교 일정에서 오고, 갈리면 사람이 봐야 한다.
 // ⚠ 아직 참여표가 없는 학생은 여기서 못 만든다 — 복귀만 있는 반쪽 문서가 생기면 띠도 등원 회차도 엉킨다.
 //   팀장이 «학교 일정으로 채우기» 를 누른 뒤에 넣는다.
-var EXAM_RO_FIELDS = ["math", "back"];
+// noPrep(직보 안 옴)도 선생님이 학생에게 듣고 오는 값이라 같이 연다 (2026-09-26).
+var EXAM_RO_FIELDS = ["math", "back", "noPrep"];
 function myClassIds() {
   var me = S.teachers.filter(function (t) { return t.tid === myTid(); })[0];
   return (me && me.classIds) || [];
@@ -8525,7 +8529,7 @@ function examSortRows(rows, monthDays, examMonth) {
     if (so.key === "start") return (v && v.start) || "";     // YYYY-MM-DD 라 글자 순 = 날짜 순
     if (so.key === "math") return (v && v.math) || "";
     // 직보 — 날짜 순, 같은 날이면 2시 → 5시 (오는 차례). 시각을 모르면 그날 맨 뒤 (2026-09-26)
-    if (so.key === "prep") return (v && v.prep) ? v.prep + ":" + (prepHour(v) || 99) : "";
+    if (so.key === "prep") return (v && v.prep && !v.noPrep) ? v.prep + ":" + (prepHour(v) || 99) : "";   // 안 옴은 빈 칸처럼 맨 아래
     if (so.key === "come") {
       if (!v) return "";
       var n = attendCount(x.cls, x.st, v, monthDays, examMonth).come;
@@ -8695,6 +8699,14 @@ function renderExams() {
       };
     });
   });
+  $$("[data-noprep]", el).forEach(function (b) {
+    b.onclick = async function () {
+      var kk = b.getAttribute("data-noprep").split("|"), v = (S.exams[kk[0]] || {})[kk[1]] || {};
+      b.disabled = true;
+      try { await saveExamRo(kk[0], kk[1], { noPrep: !v.noPrep }); keepScrollIn("#sec-exams", renderExams); }
+      catch (e) { alert("저장하지 못했다: " + e.message); renderExams(); }
+    };
+  });
   $("#ex-re").onclick = function () { S.exams = {}; loadExams().then(renderExams); };
   if ($("#ex-mid3")) $("#ex-mid3").onclick = function () {
     try { downloadMid3(); } catch (e) { alert("굽지 못했다: " + e.message); }
@@ -8732,11 +8744,12 @@ function prepGroups(done) {
   var by = {}, none = [];
   done.forEach(function (x) {
     if (!x.v.prep) { none.push(x); return; }
-    var g = by[x.v.prep] = by[x.v.prep] || { date: x.v.prep, h17: [], h14: [], h0: [] };
+    var g = by[x.v.prep] = by[x.v.prep] || { date: x.v.prep, h17: [], h14: [], h0: [], no: [] };
+    if (x.v.noPrep) { g.no.push(x); return; }        // 안 오는 사람은 그날 따로 — 2시·5시 인원에 안 센다
     g["h" + prepHour(x.v)].push(x);
   });
   var byName = function (a, b) { return a.st.name < b.st.name ? -1 : a.st.name > b.st.name ? 1 : 0; };
-  var list = Object.keys(by).sort().map(function (d) { var g = by[d]; g.h17.sort(byName); g.h14.sort(byName); g.h0.sort(byName); return g; });
+  var list = Object.keys(by).sort().map(function (d) { var g = by[d]; g.h17.sort(byName); g.h14.sort(byName); g.h0.sort(byName); g.no.sort(byName); return g; });
   return { list: list, none: none.sort(byName) };
 }
 function prepGroupsHtml(done) {
@@ -8758,13 +8771,13 @@ function prepGroupsHtml(done) {
       '<b>' + esc(fmtMD(g.date)) + '</b> <span class="muted" style="font-size:12px">' + (g.h17.length + g.h14.length + g.h0.length) + '명' +
       (g.date === TODAY ? ' · <b class="red">오늘</b>' : past ? " · 지남" : "") + '</span>' +
       line("2시", EXAM_MARKS.prep2, g.h14) + line("5시", EXAM_MARKS.prep, g.h17) +
-      line("시각?", { bg: "#f2f2f2", fg: "#777" }, g.h0) + '</div>';
+      line("시각?", { bg: "#f2f2f2", fg: "#777" }, g.h0) + line("안 옴", EXAM_MARKS.noprep, g.no) + '</div>';
   }).join("") +
     (G.none.length ? '<div style="padding:6px 0"><b class="red">직보 없음 ' + G.none.length + '명</b> <span class="muted" style="font-size:12px">수학시험이 비었다</span>' +
       '<div class="row" style="flex-wrap:wrap;gap:4px;margin-top:4px">' + G.none.map(who).join("") + '</div></div>' : "") +
     '</div><p class="muted" style="font-size:12px;margin:4px 0 0">' +
     '<b>5시</b> — 수학이 시험 첫날이라 전날 저녁. <b>2시</b> — 수학이 첫날이 아니라 그 전날도 시험을 보고 일찍 온다. 직보 날이 토·일·공휴일이어도 학교를 안 가니 2시.' +
-    '<b>시각?</b> — 내신 시작일이 비어 가를 수 없다. 이름을 누르면 고친다.</p>';
+    '<b>시각?</b> — 내신 시작일이 비어 가를 수 없다. <b>안 옴</b> — 직보에 안 오는 학생(표 직보 칸의 «안 옴» 단추). 이름을 누르면 고친다.</p>';
 }
 function stripHtml(strip, done) {
   var head = '<tr><th class="rn">이름</th>' + strip.map(function (d) {
@@ -8838,7 +8851,10 @@ function tableHtml(rows, monthDays, examMonth) {
         '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
         (edit ? '<td><input type="date" value="' + esc(v.math || "") + '" data-math="' + esc(k) + '" data-keep style="width:130px"></td>'
               : '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>') +
-        '<td>' + (v.prep ? esc(fmtMD(v.prep)) + " " + prepHourPill(v) : "—") + '</td>' +
+        '<td>' + (v.prep ? '<span' + (v.noPrep ? ' style="text-decoration:line-through;color:#999"' : "") + '>' + esc(fmtMD(v.prep)) + '</span> ' + prepHourPill(v) +
+          // 직보 안 옴 — 선생님도 담당 반은 누른다(EXAM_RO_FIELDS). 다시 누르면 «온다» 로 돌아간다
+          (edit ? ' <button class="mini" data-noprep="' + esc(k) + '" data-keep title="' + (v.noPrep ? "직보에 온다로 되돌린다" : "직보에 안 온다고 표시한다 — 등원 회차에서 직보 날이 빠진다") + '">' +
+            (v.noPrep ? "온다로" : "안 옴") + '</button>' : "") : "—") + '</td>' +
         (edit ? '<td><input type="date" value="' + esc(v.back || "") + '" data-back="' + esc(k) + '" data-keep style="width:130px"></td>'
               : '<td>' + (v.back ? esc(fmtMD(v.back)) : "—") + '</td>') +
         '<td><b>' + ac.come + '</b><span class="muted">/' + ac.total + '</span></td>' +
@@ -8847,6 +8863,7 @@ function tableHtml(rows, monthDays, examMonth) {
     }).join("") + '</tbody></table></div>' +
     '<p class="muted" style="font-size:12px;margin:4px 0 0">등원은 <b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "회차 달") +
     '</b> 기준이다. 그 달 수업일에서 <b>직보 다음날 ~ 복귀 전날</b>을 빼고, 직보·복귀를 더한 값. 수강료에 쓰는 숫자다. ' +
+    '직보에 <b>안 옴</b>이면 직보 날부터 뺀다. ' +
     '<b>복귀와 수학시험은 여기서 바로 넣는다</b>' + (S.ro ? ' — 담당 반만. 다른 반은 글자로만 보인다' : "") +
     '. 수학시험을 바꾸면 직보가 전날로 따라간다(손으로 고쳐둔 직보는 그대로).</p>';
 }
@@ -9036,7 +9053,7 @@ function mid3Build() {
     return {
       name: x.st.name || "", cls: (x.cls && x.cls.name) || "", homeroom: homeroomOf(x.st),
       school: x.school || "", has: !!x.v,
-      start: v.start || "", end: v.end || "", math: v.math || "", prep: v.prep || "", back: v.back || "",
+      start: v.start || "", end: v.end || "", math: v.math || "", prep: v.prep || "", back: v.back || "", noPrep: !!v.noPrep,
       note: v.note || "", come: cnt ? cnt.come : 0, total: cnt ? cnt.total : 0,
       cells: strip.map(function (dd) { return x.v ? markOf(v, dd) : null; }),
     };
@@ -9096,7 +9113,7 @@ function mid3Html(d) {
     }).join("") : '<tr><td colspan="8">중3 학생의 학교가 아직 없다.</td></tr>') +
     '</tbody></table></div>';
 
-  var legend = '<p class="legend">' + ["exam", "math", "prep", "prep2", "back"].map(function (k) {
+  var legend = '<p class="legend">' + ["exam", "math", "prep", "prep2", "noprep", "back"].map(function (k) {
     var m = EXAM_MARKS[k];
     return '<span style="background:' + m.bg + ';color:' + m.fg + '">' + m.t + ' ' + esc(m.label) + '</span>';
   }).join("") + '</p>';
@@ -9126,7 +9143,7 @@ function mid3Html(d) {
       return '<tr><td><b>' + esc(p.name) + '</b></td><td>' + esc(p.cls) + '</td><td>' + esc(p.homeroom) + '</td>' +
         '<td>' + esc(p.school) + '</td>' +
         '<td>' + md(p.start) + (p.end ? " ~ " + fmtMD(p.end) : "") + '</td>' +
-        '<td>' + md(p.math) + '</td><td>' + (p.prep ? fmtMD(p.prep) : "") + '</td>' +
+        '<td>' + md(p.math) + '</td><td>' + (p.prep ? fmtMD(p.prep) + (p.noPrep ? " 안 옴" : "") : "") + '</td>' +
         '<td>' + (p.back ? fmtMD(p.back) : '<span class="miss">—</span>') + '</td>' +
         '<td class="c"><b>' + p.come + '</b> / ' + p.total + '</td>' +
         '<td class="note">' + esc(p.note) + '</td></tr>';
