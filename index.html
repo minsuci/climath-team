@@ -8499,7 +8499,7 @@ function examRows() {
 var EX_SORTS = [
   { key: "name", label: "이름" }, { key: "cls", label: "반" }, { key: "homeroom", label: "담임" },
   { key: "school", label: "학교" }, { key: "start", label: "내신기간" }, { key: "math", label: "수학" },
-  { key: "come", label: "등원" },
+  { key: "prep", label: "직보" }, { key: "come", label: "등원" },
 ];
 function homeroomOf(st) {
   var p = st.pid ? S.byPid[st.pid] : null;
@@ -8516,6 +8516,8 @@ function examSortRows(rows, monthDays, examMonth) {
     if (so.key === "school") return (v && v.school) || x.school || "";
     if (so.key === "start") return (v && v.start) || "";     // YYYY-MM-DD 라 글자 순 = 날짜 순
     if (so.key === "math") return (v && v.math) || "";
+    // 직보 — 날짜 순, 같은 날이면 2시 → 5시 (오는 차례). 시각을 모르면 그날 맨 뒤 (2026-09-26)
+    if (so.key === "prep") return (v && v.prep) ? v.prep + ":" + (prepHour(v) || 99) : "";
     if (so.key === "come") {
       if (!v) return "";
       var n = attendCount(x.cls, x.st, v, monthDays, examMonth).come;
@@ -8813,7 +8815,7 @@ function tableHtml(rows, monthDays, examMonth) {
   return '<div class="tbl" style="margin-top:10px"><table><thead><tr>' +
     exSortTh("name", "이름") + exSortTh("cls", "반") + exSortTh("homeroom", "담임") + exSortTh("school", "학교") +
     exSortTh("start", "내신기간") + exSortTh("math", "수학") +
-    '<th>직보</th><th>복귀</th>' + exSortTh("come", "등원") + '<th>비고</th><th></th></tr></thead><tbody>' +
+    exSortTh("prep", "직보") + '<th>복귀</th>' + exSortTh("come", "등원") + '<th>비고</th><th></th></tr></thead><tbody>' +
     rows.map(function (x) {
       var k = x.cls.id + "|" + x.st.id;
       if (!x.v) return '<tr><td><b>' + esc(x.st.name) + '</b></td><td>' + esc(x.cls.name) + '</td>' +

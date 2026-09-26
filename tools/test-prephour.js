@@ -55,6 +55,13 @@ ok("화면 — 날짜 머리 · 2시/5시 줄 · 이름을 누르면 고치기",
   /data-fix="c1\|a"/.test(H) && /직보 없음 1명/.test(H), H.slice(0, 300));
 ok("보기 칩 «날짜 띠 · 표» / «직보 날짜별»", /data-exview="prep">직보 날짜별/.test(src) && /S\.exView === "prep" \? prepGroupsHtml\(done\)/.test(src));
 
+// ---- 날짜 띠 · 표에서 직보 순 정렬 (2026-09-26 «날짜 띠.표 에서도 직보순으로 정렬도 해줘») ----
+const sortBy = (dir) => run(`S.exSort = { key: "prep", dir: "${dir}" }; var r = examSortRows(__done.concat([{ cls:__done[0].cls, st:{ id:"z", name:"바다" }, v:null }]), [], "");
+  S.exSort = null; return r.map(function (x) { return x.st.name; }).join(",");`);
+ok("직보 오름 — 날짜 순, 같은 날은 2시 → 5시, 직보 없음 · 안 낸 사람은 맨 아래", sortBy("asc") === "가윤,나현,다은,라희,마루,바다", sortBy("asc"));
+ok("직보 내림 — 늦은 직보부터, 빈 칸은 그래도 맨 아래", sortBy("desc") === "라희,다은,가윤,나현,마루,바다", sortBy("desc"));
+ok("정렬 칩과 표 머리에 «직보»", /\{ key: "prep", label: "직보" \}/.test(src) && /exSortTh\("prep", "직보"\)/.test(src));
+
 T.forEach((l) => console.log(l));
 const bad = T.filter((l) => l.startsWith("FAIL")).length;
 console.log(bad ? "\n" + bad + "개 실패" : "\n모두 통과 (" + T.length + ")");
