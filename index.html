@@ -8254,7 +8254,8 @@ function drawMathRes() {
 // **날짜 띠**다 (원본 구글시트가 그랬다).
 
 var EXAM_MARKS = {
-  prep: { t: "직", label: "직보 (수학시험 전날)", bg: "#f6e7df", fg: "#c2703f" },
+  prep: { t: "직", label: "직보 5시 (수학이 시험 첫날 — 전날 저녁)", bg: "#f6e7df", fg: "#c2703f" },
+  prep2: { t: "직", label: "직보 2시 (수학이 첫날이 아니다 — 다른 시험 보고 일찍 온다)", bg: "#e8e1f5", fg: "#6a4ea8" },
   math: { t: "수", label: "수학시험", bg: "#fae3e2", fg: "#d6453f" },
   exam: { t: "시", label: "내신기간", bg: "#f0ece5", fg: "#7c6f5f" },
   back: { t: "첫", label: "복귀 (정규 첫 등원)", bg: "#e3edf5", fg: "#2b5f8a" },
@@ -8330,9 +8331,21 @@ function attendCount(cls, st, v, monthDays, examMonth) {
   });
   return { total: total, skip: skip, come: Object.keys(come).length };
 }
+// 직보 시작 시각 (2026-09-26 마왕님) — «시험 첫날이 바로 수학시험이면 전날 직보 5시,
+// 첫날이 아니면 다른 시험 보고 일찍 올 수 있으니까 수학 직보가 2시».
+// 17 · 14 · 0(모름 — 수학시험이나 내신 시작이 비었다). 직보 날짜를 손으로 고쳐 두었어도 시각은 이 규칙이다.
+function prepHour(v) {
+  if (!v || !v.prep || !v.math || !v.start) return 0;
+  return v.math <= v.start ? 17 : 14;
+}
+function prepMark(v) { return prepHour(v) === 14 ? EXAM_MARKS.prep2 : EXAM_MARKS.prep; }
+function prepHourPill(v) {
+  var h = prepHour(v), m = h === 14 ? EXAM_MARKS.prep2 : EXAM_MARKS.prep;
+  return h ? '<span class="pill" style="background:' + m.bg + ';color:' + m.fg + '">' + (h === 14 ? "2시" : "5시") + '</span>' : "";
+}
 function markOf(v, d) {
   if (v.math && d === v.math) return EXAM_MARKS.math;
-  if (v.prep && d === v.prep) return EXAM_MARKS.prep;
+  if (v.prep && d === v.prep) return prepMark(v);
   if (v.back && d === v.back) return EXAM_MARKS.back;
   if (v.start && v.end && d >= v.start && d <= v.end) return EXAM_MARKS.exam;
   return null;
@@ -8623,8 +8636,12 @@ function renderExams() {
       '. 분반마다 진짜 다를 수 있어 자동으로 고치지 않는다. 표에서 확인하고 고칠 것.</div>' : "") +
     fillBoxHtml(rows) +
     '<div id="ex-entry"></div>' +
-    (strip.length ? stripHtml(strip, done) : '<div class="empty">아직 낸 사람이 없다. 아래에서 학생을 눌러 넣는다.</div>') +
-    tableHtml(rows, monthDays, examMonth) +
+    '<div class="chips"><span class="muted" style="font-size:12px">보기</span>' +
+      '<button class="mini ' + (S.exView === "prep" ? "" : "on") + '" data-exview="">날짜 띠 · 표</button>' +
+      '<button class="mini ' + (S.exView === "prep" ? "on" : "") + '" data-exview="prep">직보 날짜별</button></div>' +
+    (S.exView === "prep" ? prepGroupsHtml(done) :
+      (strip.length ? stripHtml(strip, done) : '<div class="empty">아직 낸 사람이 없다. 아래에서 학생을 눌러 넣는다.</div>') +
+      tableHtml(rows, monthDays, examMonth)) +
     (miss.length ? '<div style="margin-top:10px"><b style="font-size:13px">아직 안 낸 학생 ' + miss.length + '명</b> ' +
       '<span class="muted" style="font-size:12px">— 이름을 누르면 대신 넣는다</span><div class="chips" style="margin-top:6px">' +
       miss.map(function (x) { return '<button class="mini warn" data-ent="' + esc(x.cls.id + "|" + x.st.id) + '">' + esc(x.st.name) + ' <span class="muted">' + esc(x.cls.name) + '</span></button>'; }).join("") +
@@ -8634,6 +8651,7 @@ function renderExams() {
       return '<span class="pill" style="background:' + m.bg + ';color:' + m.fg + '">' + m.t + '</span> ' + esc(m.label); }).join(" · ") +
     '</p>';
 
+  $$("[data-exview]", el).forEach(function (b) { b.onclick = function () { S.exView = b.getAttribute("data-exview"); keepScrollIn("#sec-exams", renderExams); }; });
   $$("[data-eg]", el).forEach(function (b) { b.onclick = function () { S.exGrade = b.getAttribute("data-eg"); S.exCls = ""; S.exEntry = null; renderExams(); }; });
   $$("[data-ecls]", el).forEach(function (b) { b.onclick = function () { S.exCls = b.getAttribute("data-ecls"); S.exEntry = null; keepScrollIn("#sec-exams", renderExams); }; });
   // 오름 → 내림 → 원래 순서. 같은 칩·같은 열 머리 어느 쪽을 눌러도 같이 돈다.
@@ -8697,6 +8715,47 @@ function renderExams() {
   if (S.exEntry) drawEntry();
 }
 
+// 직보 날짜별로 모아 보기 (2026-09-26 마왕님 «내신참여표에서 직보날짜별로 모아볼 수 있게»).
+// 날짜 → 5시 / 2시 로 갈라 학생을 늘어놓는다. 지금 고른 학년·반을 따른다(표와 같은 목록).
+// 직보가 없는 사람(수학시험 미정)은 맨 아래에 따로 — 빠진 줄 모르고 넘어가지 않게.
+function prepGroups(done) {
+  var by = {}, none = [];
+  done.forEach(function (x) {
+    if (!x.v.prep) { none.push(x); return; }
+    var g = by[x.v.prep] = by[x.v.prep] || { date: x.v.prep, h17: [], h14: [], h0: [] };
+    g["h" + prepHour(x.v)].push(x);
+  });
+  var byName = function (a, b) { return a.st.name < b.st.name ? -1 : a.st.name > b.st.name ? 1 : 0; };
+  var list = Object.keys(by).sort().map(function (d) { var g = by[d]; g.h17.sort(byName); g.h14.sort(byName); g.h0.sort(byName); return g; });
+  return { list: list, none: none.sort(byName) };
+}
+function prepGroupsHtml(done) {
+  var G = prepGroups(done);
+  if (!G.list.length && !G.none.length) return '<div class="empty">아직 낸 사람이 없다.</div>';
+  var who = function (x) {
+    return '<button class="mini" data-fix="' + esc(x.cls.id + "|" + x.st.id) + '" title="고치기">' + esc(x.st.name) +
+      ' <span class="muted">' + esc(x.cls.name) + ' · ' + esc(x.v.school || "") + (x.v.math ? ' · 수학 ' + esc(fmtMD(x.v.math)) : "") + '</span></button>';
+  };
+  var line = function (label, mark, arr) {
+    if (!arr.length) return "";
+    return '<div class="row" style="margin:4px 0;align-items:flex-start;flex-wrap:wrap;gap:4px">' +
+      '<span class="pill" style="background:' + mark.bg + ';color:' + mark.fg + ';min-width:44px;text-align:center">' + label + '</span>' +
+      '<b style="font-size:13px;margin-right:4px">' + arr.length + '명</b>' + arr.map(who).join("") + '</div>';
+  };
+  return '<div class="tbl" style="margin-top:10px;padding:6px 10px">' + G.list.map(function (g) {
+    var past = g.date < TODAY;
+    return '<div style="padding:6px 0;border-bottom:1px solid var(--line)' + (past ? ';opacity:.55' : "") + '">' +
+      '<b>' + esc(fmtMD(g.date)) + '</b> <span class="muted" style="font-size:12px">' + (g.h17.length + g.h14.length + g.h0.length) + '명' +
+      (g.date === TODAY ? ' · <b class="red">오늘</b>' : past ? " · 지남" : "") + '</span>' +
+      line("2시", EXAM_MARKS.prep2, g.h14) + line("5시", EXAM_MARKS.prep, g.h17) +
+      line("시각?", { bg: "#f2f2f2", fg: "#777" }, g.h0) + '</div>';
+  }).join("") +
+    (G.none.length ? '<div style="padding:6px 0"><b class="red">직보 없음 ' + G.none.length + '명</b> <span class="muted" style="font-size:12px">수학시험이 비었다</span>' +
+      '<div class="row" style="flex-wrap:wrap;gap:4px;margin-top:4px">' + G.none.map(who).join("") + '</div></div>' : "") +
+    '</div><p class="muted" style="font-size:12px;margin:4px 0 0">' +
+    '<b>5시</b> — 수학이 시험 첫날이라 전날 저녁. <b>2시</b> — 수학이 첫날이 아니라 그 전날도 시험을 보고 일찍 온다. ' +
+    '<b>시각?</b> — 내신 시작일이 비어 가를 수 없다. 이름을 누르면 고친다.</p>';
+}
 function stripHtml(strip, done) {
   var head = '<tr><th class="rn">이름</th>' + strip.map(function (d) {
     var day = Number(d.slice(8));
@@ -8769,7 +8828,7 @@ function tableHtml(rows, monthDays, examMonth) {
         '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
         (edit ? '<td><input type="date" value="' + esc(v.math || "") + '" data-math="' + esc(k) + '" data-keep style="width:130px"></td>'
               : '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>') +
-        '<td>' + (v.prep ? esc(fmtMD(v.prep)) : "—") + '</td>' +
+        '<td>' + (v.prep ? esc(fmtMD(v.prep)) + " " + prepHourPill(v) : "—") + '</td>' +
         (edit ? '<td><input type="date" value="' + esc(v.back || "") + '" data-back="' + esc(k) + '" data-keep style="width:130px"></td>'
               : '<td>' + (v.back ? esc(fmtMD(v.back)) : "—") + '</td>') +
         '<td><b>' + ac.come + '</b><span class="muted">/' + ac.total + '</span></td>' +
@@ -8862,7 +8921,7 @@ function entryHtml() {
 function paintMark(d) {
   var f = S.exForm;
   if (f.math && d === f.math) return EXAM_MARKS.math;
-  if (f.prep && d === f.prep) return EXAM_MARKS.prep;
+  if (f.prep && d === f.prep) return prepMark(f);
   if (f.back && d === f.back) return EXAM_MARKS.back;
   if (S.exAnchor && d === S.exAnchor) return EXAM_MARKS.exam;
   if (f.start && f.end && d >= f.start && d <= f.end) return EXAM_MARKS.exam;
@@ -9027,7 +9086,7 @@ function mid3Html(d) {
     }).join("") : '<tr><td colspan="8">중3 학생의 학교가 아직 없다.</td></tr>') +
     '</tbody></table></div>';
 
-  var legend = '<p class="legend">' + ["exam", "math", "prep", "back"].map(function (k) {
+  var legend = '<p class="legend">' + ["exam", "math", "prep", "prep2", "back"].map(function (k) {
     var m = EXAM_MARKS[k];
     return '<span style="background:' + m.bg + ';color:' + m.fg + '">' + m.t + ' ' + esc(m.label) + '</span>';
   }).join("") + '</p>';
