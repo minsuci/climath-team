@@ -134,12 +134,16 @@ async function load(from, to) {
     if (!r.ok) throw new Error(t.name + " 보고를 못 읽었다 (" + r.status + ")");
     (await r.json()).forEach((row) => { if (row.document) { const d = fields(row.document.fields); reports[t.tid][d.date] = d; } });
   }));
-  return { teachers, reports };
+  // 하루 휴무(연차 · 병가) — 앱의 rpLeaveOf 와 같은 문서. 없으면(404) 아무도 휴무가 아니다
+  const lr = await fetch(BASE + "/dash/rpLeave", { headers: H });
+  if (!lr.ok && lr.status !== 404) throw new Error("dash/rpLeave 를 못 읽었다 (" + lr.status + ")");
+  const rpLeave = lr.ok ? (fields((await lr.json()).fields || {}).items || {}) : {};
+  return { teachers, reports, rpLeave };
 }
 
 // ---- 문서 만들기 ----
 function digestOf(data, d) {
-  const S = { teachers: data.teachers, reports: data.reports };
+  const S = { teachers: data.teachers, reports: data.reports, rpLeave: data.rpLeave || {} };
   const ctx = {
     S,
     teacherName: (tid) => { const t = S.teachers.find((x) => x.tid === tid); return t ? t.name : (tid ? "?" : ""); },
@@ -149,7 +153,8 @@ function digestOf(data, d) {
   // 앱은 «그 날 수업이 있었나» 로 센다. 여기선 그걸 못 읽어서 **담당 반이 있고 출근 요일인가** 로 센다(맨 위 설명).
   ctx.rpExpected = (tid, day) => {
     const t = S.teachers.find((x) => x.tid === tid);
-    return day >= ctx.RP_START && !ctx.rpSkip(tid) && !ctx.rpOffDow(tid, day) && !!(t && (t.classIds || []).length);
+    return day >= ctx.RP_START && !ctx.rpSkip(tid) && !ctx.rpOffDow(tid, day) && !S.rpLeave[tid + "|" + day] &&
+      !!(t && (t.classIds || []).length);
   };
   const sm = ctx.rpSummary(d);
   if (!sm.got.length) return null;                     // 아무도 안 낸 날 = 쉬는 날로 본다
