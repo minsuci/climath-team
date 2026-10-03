@@ -53,10 +53,14 @@ ok("휴무 날에는 매주 하는 일도 안 걸린다", run(`
 ok("원장님 문서에서도 빠진다", !/안 낸 사람: 이현우/.test(run(`return rpDigest("2026-09-26")`)));
 
 // ---- 쉬는 날 출근 (2026-10-03 «이현우선생님 오늘 휴무 아니야 토요일 출근하시는거니까 업무보고 하실 수 있게») ----
-run(`S.rpLeave = {}; S.events = []; S.reports = { TC:{}, TB:{} };`);   // 10/3 개천절 — 학원 달력에서 안 덮었다
-ok("10/3(개천절)은 수업이 사라진다 — 보고할 날이 아니다", run(`return rpClassesOn("TC", "2026-10-03").length === 0 && !rpExpected("TC", "2026-10-03")`));
+// 10/3 개천절은 학원이 쉬지 않는다 (2026-10-03 «우린 설이랑 추석연휴때 말곤 잘 안쉬어») — 그냥 보고하는 날
+run(`S.rpLeave = {}; S.events = []; S.reports = { TC:{}, TB:{} };`);
+ok("10/3(개천절)은 그냥 수업하는 날 — 둘 다 보고할 날", run(`return rpExpected("TC", "2026-10-03") && rpExpected("TB", "2026-10-03")`));
+// 출근 표시는 학원이 쉬는 날에 쓴다 — 여기서는 업무 달력에 손으로 넣은 쉬는 날(워크샵)로 본다
+run(`S.events = [ { id:"w", from:"2026-10-03", to:"", off:true, text:"워크샵" } ];`);
+ok("학원 쉬는 날(달력 워크샵)이면 수업이 사라진다 — 보고할 날이 아니다", run(`return rpClassesOn("TC", "2026-10-03").length === 0 && !rpExpected("TC", "2026-10-03")`));
 run(`__box2 = { innerHTML:"", querySelector:()=>null, querySelectorAll:()=>[] }; rpDrawAll(__box2, "2026-10-03", rpSummary("2026-10-03")); __h2 = __box2.innerHTML;`);
-ok("받은 보고에 «쉬는 날 (개천절) — ＋ 이현우 출근 · ＋ 정찬준 출근»", /쉬는 날 \(개천절\)/.test(run(`return __h2`)) &&
+ok("받은 보고에 «쉬는 날 (워크샵) — ＋ 이현우 출근 · ＋ 정찬준 출근»", /쉬는 날 \(워크샵\)/.test(run(`return __h2`)) &&
   /data-rpwork="TC"/.test(run(`return __h2`)) && /data-rpwork="TB"/.test(run(`return __h2`)));
 run(`S.rpLeave = { "TC|2026-10-03": { note:"출근", work:true, by:"TO", at:1 } };`);
 ok("출근으로 적으면 그 사람만 수업이 뜨고 보고할 날", run(`return rpClassesOn("TC", "2026-10-03").length === 1 && rpExpected("TC", "2026-10-03")`));
@@ -66,7 +70,7 @@ run(`rpDrawAll(__box2, "2026-10-03", rpSummary("2026-10-03")); __h3 = __box2.inn
 ok("받은 보고 — «이현우 출근 · 되돌리기» · 안 내면 안 낸 사람", /이현우 출근<\/span> <button class="mini" data-rpworkx="TC"/.test(run(`return __h3`)) &&
   run(`return rpSummary("2026-10-03").missing.join()`) === "TC");
 ok("되돌리기 — 휴무 줄에 안 섞인다", !/<b>휴무<\/b>/.test(run(`return __h3`)));
-run(`S.rpLeave = {};`);
+run(`S.rpLeave = {}; S.events = [];`);
 
 // 나스 자동 취합도 같은 문서를 읽는다
 const dg = fs.readFileSync("tools/nas-daily-digest.mjs", "utf8");

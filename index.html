@@ -353,6 +353,8 @@
   .pln { font-size: 12px; font-weight: 700; padding: 1px 2px 3px; display: flex; gap: 4px; align-items: center; }
   .pln .hol { font-size: 10px; font-weight: 600; color: #9b2246; }
   .pln .norm { font-size: 10px; font-weight: 600; color: #1f7a4d; }
+  /* 나라 공휴일인데 학원은 수업하는 날 — 흐리게 이름만 (2026-10-03) */
+  .mn .pub, .cday .ch .pub, .pln .pub { font-size: 10px; font-weight: 500; color: #b48a98; margin-left: 2px; }
   .plc { font-size: 11px; line-height: 1.45; border-radius: 4px; padding: 1px 5px; margin-top: 2px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; background: #eef1f6; color: #374151; }
   .calleg .plc { display: inline-block; margin: 0; }
@@ -3275,7 +3277,8 @@ function renderPlan() {
       var its = plOn(ym, d);
       return '<div class="pld' + (out ? " out" : "") + (hol ? " off" : "") + (dow === 0 || dow === 6 ? " wend" : "") + (d === TODAY ? " today" : "") +
         (lead ? " pick" : "") + '" data-pld="' + d + '"><div class="pln">' + (+d.slice(8)) +
-        (hol ? '<span class="hol">' + esc(hol) + '</span>' : (o && !o.off ? '<span class="norm">' + esc(o.text || "정상수업") + '</span>' : "")) + '</div>' +
+        (hol ? '<span class="hol">' + esc(hol) + '</span>' : (o && !o.off ? '<span class="norm">' + esc(o.text || "정상수업") + '</span>'
+          : pubName(d) ? '<span class="pub">' + esc(pubName(d)) + '</span>' : "")) + '</div>' +
         its.map(function (it) {
           return '<div class="plc ' + plKind(it) + (it.tent ? " tent" : "") + (plState(it) === "완료" ? " done" : "") + '"' + (lead ? ' data-pli="' + esc(it.id) + '"' : "") +
             ' title="' + esc(it.text + (it.desc ? " — " + it.desc : "") + (it.who ? " · " + it.who : "")) + '">' +
@@ -3850,10 +3853,17 @@ function holidayOf(d) {
   var mine = (S.events || []).filter(function (e) {
     return e.off && !e.over && e.from <= d && d <= evEnd(e); })[0];
   if (mine) return mine.text || "쉬는 날";
-  return HOLIDAYS[d] || "";
+  return holBuiltin(d);
 }
+// 학원이 붙박이로 쉬는 날은 **설·추석 연휴뿐**이다 (2026-10-03 마왕님 «개천절이라서 쉬는날이라고하면 어떡하냐 ㅋㅋ
+//   우린 설이랑 추석연휴때 말곤 잘 안쉬어»). 개천절에 이현우 보고가 «쉬는 날» 로 막혔었다.
+// HOLIDAYS 는 나라 공휴일을 **전부** 그대로 둔다 — 학생 학교가 쉬는 날(직보 2시 · noSchoolDay)은 그걸로 본다.
+// 그 밖의 공휴일에 학원이 쉬면 업무 달력에서 «쉬는 날» 로 손으로 넣는다. 달력에는 흐린 이름(pubName)으로만 뜬다.
+var ACADEMY_OFF_RE = /설|추석/;
+function holBuiltin(d) { var n = HOLIDAYS[d] || ""; return ACADEMY_OFF_RE.test(n) ? n : ""; }
+function pubName(d) { return HOLIDAYS[d] && !holidayOf(d) ? HOLIDAYS[d] : ""; }
 // 이 날의 쉬는 날이 붙박이인가 (=아직 아무도 안 고쳤나). 폼과 안내 글이 이걸로 갈린다.
-function holIsBuiltin(d) { return !holEvent(d) && !!HOLIDAYS[d] &&
+function holIsBuiltin(d) { return !holEvent(d) && !!holBuiltin(d) &&
   !(S.events || []).some(function (e) { return e.off && !e.over && e.from <= d && d <= evEnd(e); }); }
 // 적어 둔 해. 안 적힌 달을 보고 있으면 «없는 것»이 아니라 «안 적은 것»이라고 화면이 말해야 한다.
 function holidayYears() {
@@ -4245,7 +4255,8 @@ function renderCal() {
             return '<div class="mn' + (monthOf(d) !== ym ? " out" : "") + (d === TODAY ? " today" : "") +
               '" style="grid-column:' + (i + 1) + ';grid-row:1">' + Number(d.slice(8)) +
               (hol ? '<span class="hol' + (S.ro ? "" : " pick") + '"' +
-                (S.ro ? "" : ' data-chol="' + d + '" title="눌러서 고친다"') + '>' + esc(hol) + '</span>' : "") +
+                (S.ro ? "" : ' data-chol="' + d + '" title="눌러서 고친다"') + '>' + esc(hol) + '</span>'
+                : pubName(d) ? '<span class="pub" title="나라 공휴일 — 학원은 수업한다">' + esc(pubName(d)) + '</span>' : "") +
               (tn ? '<span class="tn">' + tn + '</span>' : "") + '</div>';
           }).join("") +
           lay.segs.map(function (g) { return barHtml(g, 2); }).join("") +
@@ -4286,7 +4297,8 @@ function renderCal() {
         (hol ? " off" : "") + '">' +
         '<div class="ch"><b>' + Number(d.slice(8)) + '</b> <span>' + DOW_KO[dow] + '</span>' +
         (hol ? '<span class="hol' + (S.ro ? "" : " pick") + '"' +
-          (S.ro ? "" : ' data-chol="' + d + '" title="눌러서 고친다"') + '>' + esc(hol) + '</span>' : "") +
+          (S.ro ? "" : ' data-chol="' + d + '" title="눌러서 고친다"') + '>' + esc(hol) + '</span>'
+          : pubName(d) ? '<span class="pub" title="나라 공휴일 — 학원은 수업한다">' + esc(pubName(d)) + '</span>' : "") +
         '<button class="add" data-cadd="' + d + '" title="이 날에 일정·할 일 넣기">＋</button></div>' +
         eventsOn(d, want).map(evChipHtml).join("") +
         mine.map(function (t) {
