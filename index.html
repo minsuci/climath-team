@@ -1409,7 +1409,7 @@ function rpStudentsOn(c, d) {
 // 그 선생님이 그 날 들어간 반. 쉬는 날에는 없다(업무 달력의 쉬는 날과 같은 것을 본다).
 function rpClassesOn(tid, d) {
   var t = rpTeacher(tid);
-  if (!t || holidayOf(d)) return [];
+  if (!t || rpHolidayFor(tid, d)) return [];
   return S.classes.filter(function (c) { return (t.classIds || []).indexOf(c.id) >= 0 && rpMeets(c, d); });
 }
 // 그 날 걸린 **매주 하는 일**이 있나 (2026-09-12).
@@ -1418,7 +1418,7 @@ function rpClassesOn(tid, d) {
 // ⚠ 그 날 이미 체크한 것은 안 센다. 체크하면 줄이 사라지는데 날만 남으면 빈 보고를 내라는 말이 된다.
 // ⚠ 쉬는 날은 세지 않는다 — 수업과 같은 규칙이다.
 function rpRepeatOn(tid, d) {
-  if (holidayOf(d)) return false;
+  if (rpHolidayFor(tid, d)) return false;
   var name = teacherName(tid), dow = parseYmd(d).getDay();
   return (S.tasks || []).some(function (t) {
     if (!t.repeat || !t.repeat.dow || t.repeat.dow.indexOf(dow) < 0) return false;
@@ -1466,12 +1466,19 @@ function rpOffDow(tid, d) {
 // dash/rpLeave — items["tid|YYYY-MM-DD"] = { note, by, at }. 쓰기는 팀장만(규칙: dash 쓰기 = owner), 선생님은 읽는다.
 // ⚠ tools/nas-daily-digest.mjs 도 이 문서를 읽는다 — 안 읽으면 원장님 문서에만 «안 낸 사람» 으로 남는다.
 // 학원 전체가 쉬는 날(holidayOf)과 다르다 — 그 날도 다른 선생님은 수업·보고를 한다.
-function rpLeaveOf(tid, d) { return (S.rpLeave || {})[tid + "|" + d] || null; }
-async function saveRpLeave(tid, d, note) {
+// 반대 경우도 같은 문서에 — **쉬는 날 출근** (2026-10-03 «이현우선생님 오늘 휴무 아니야 토요일 출근하시는거니까 업무보고 하실 수 있게»).
+//   10/3 개천절은 학원 달력에서 쉬는 날이라 모든 선생님의 수업이 사라진다. 그 날 나온 사람만 { work: true } 로 살린다.
+//   학원 전체를 «안 쉼» 으로 덮으면(업무 달력) 안 나온 선생님까지 «안 냈다» 가 된다 — 그래서 사람 단위다.
+function rpDayOf(tid, d) { return (S.rpLeave || {})[tid + "|" + d] || null; }
+function rpLeaveOf(tid, d) { var x = rpDayOf(tid, d); return x && !x.work ? x : null; }
+function rpWorkOf(tid, d) { var x = rpDayOf(tid, d); return !!(x && x.work); }
+// 그 사람에게 그 날이 쉬는 날인가 — 학원 쉬는 날이어도 «출근» 으로 적혔으면 아니다
+function rpHolidayFor(tid, d) { return !!holidayOf(d) && !rpWorkOf(tid, d); }
+async function saveRpLeave(tid, d, note, work) {
   var cur = await dashDoc("rpLeave").get().catch(function () { return { exists: false }; });
   var items = Object.assign({}, (cur.exists && cur.data().items) || {}), k = tid + "|" + d;
   if (note === null) delete items[k];
-  else items[k] = { note: String(note || "").trim() || "휴무", by: myTid(), at: Date.now() };
+  else items[k] = Object.assign({ note: String(note || "").trim() || (work ? "출근" : "휴무"), by: myTid(), at: Date.now() }, work ? { work: true } : {});
   await dashDoc("rpLeave").set({ items: items, updated: Date.now() });
   S.rpLeave = items;
 }
@@ -2692,7 +2699,7 @@ function rpDrawMine(box, d) {
   // 수업 — 학생 단위
   h += '<h3 class="rp-h">수업</h3>' + rpExtNote(rep);
   if (!rep.classes.length) h += '<p class="muted" style="font-size:13px">' +
-    (holidayOf(d) ? "쉬는 날이다 (" + esc(holidayOf(d)) + ")." : "이 날은 들어간 수업이 없다.") +
+    (rpHolidayFor(me, d) ? "쉬는 날이다 (" + esc(holidayOf(d)) + "). 출근했으면 팀장에게 말하면 «출근» 으로 열어 준다." : "이 날은 들어간 수업이 없다.") +
     (rpExpected(me, d) ? ' 아래 <b>업무</b>에 이 날 하는 일이 있어 <b>내는 날</b>이다.'
                        : ' 업무만 적어도 된다. 안 내도 «안 냈다» 로 세지 않는다.') + '</p>';
   rep.classes.forEach(function (c, ci) {
@@ -2929,6 +2936,18 @@ function rpDrawAll(box, d, sm) {
       ? '<button class="ok" data-rpgo="' + esc(tid) + '">✓ ' + esc(teacherName(tid)) + ' <span class="muted">' + esc(rpHM(r.updated || r.submitted).replace(/^.*\) /, "")) + '</span></button>'
       : '<button class="' + (passed ? "no" : "wait") + '" data-rpgo="' + esc(tid) + '">' + (passed ? "✗ " : "… ") + esc(teacherName(tid)) + (passed ? " 안 냄" : " 아직") + '</button>';
   }).join("") + '</div>';
+  // 학원 쉬는 날 — 그 요일에 수업이 있는 선생님마다 «출근» 을 켤 수 있게 (2026-10-03)
+  if (holidayOf(d)) {
+    var could = S.teachers.filter(function (t) {
+      if (rpSkip(t.tid) || rpOffDow(t.tid, d)) return false;
+      return S.classes.some(function (c) { return (t.classIds || []).indexOf(c.id) >= 0 && rpMeets(c, d); });
+    });
+    if (could.length) h += '<p class="muted" style="font-size:13px;margin:4px 0"><b>쉬는 날 (' + esc(holidayOf(d)) + ')</b> — ' + could.map(function (t) {
+      return rpWorkOf(t.tid, d)
+        ? '<span class="pill green">' + esc(t.name) + ' 출근</span> <button class="mini" data-rpworkx="' + esc(t.tid) + '" title="출근을 지운다 — 다시 쉬는 날로 본다">되돌리기</button>'
+        : '<button class="mini plus" data-rpwork="' + esc(t.tid) + '" title="이 날 나왔다 — 수업이 보고에 뜨고 «내는 날» 이 된다">＋ ' + esc(t.name) + ' 출근</button>';
+    }).join(" ") + ' <span style="font-size:12px">— 나온 선생님만 켠다. 켜면 그 선생님 보고에 수업이 뜬다</span></p>';
+  }
   // 그 날 휴무로 적힌 사람 — 안 낸 사람에서 빠졌다는 것을 보이게, 되돌릴 수 있게
   var lv = S.teachers.filter(function (t) { return !rpSkip(t.tid) && rpLeaveOf(t.tid, d) && !isIn(t.tid); });
   if (lv.length) h += '<p class="muted" style="font-size:13px;margin:4px 0"><b>휴무</b> — ' + lv.map(function (t) {
@@ -3014,6 +3033,20 @@ function rpDrawAll(box, d, sm) {
       if (note === null) return;
       b.disabled = true;
       try { await saveRpLeave(tid, d, note); } catch (e) { alert("저장하지 못했다: " + e.message); }
+      keepScrollIn("#sec-report", renderReport); try { renderBanner(); } catch (e) {}
+    };
+  });
+  $$("[data-rpwork]", box).forEach(function (b) {
+    b.onclick = async function () {
+      b.disabled = true;
+      try { await saveRpLeave(b.getAttribute("data-rpwork"), d, "출근", true); } catch (e) { alert("저장하지 못했다: " + e.message); }
+      keepScrollIn("#sec-report", renderReport); try { renderBanner(); } catch (e) {}
+    };
+  });
+  $$("[data-rpworkx]", box).forEach(function (b) {
+    b.onclick = async function () {
+      b.disabled = true;
+      try { await saveRpLeave(b.getAttribute("data-rpworkx"), d, null); } catch (e) { alert("지우지 못했다: " + e.message); }
       keepScrollIn("#sec-report", renderReport); try { renderBanner(); } catch (e) {}
     };
   });

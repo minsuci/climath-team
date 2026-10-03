@@ -55,7 +55,9 @@ function log(msg) {
 
 // ---- index.html 에서 꺼내 쓰는 것 ----
 const PICK = ["pad2", "DOW", "parseYmd", "fmtMD", "RP_START", "RP_STATE", "RP_MOVE", "rpScoreVal", "rpScoreAvg",
-  "RP_SKIP_NAMES", "rpSkip", "RP_WORK_DOWS", "rpOffDow", "RP_WEEK", "rpWeekSaid", "rpMoveText", "rpSummary", "rpDigest"];
+  "RP_SKIP_NAMES", "rpSkip", "RP_WORK_DOWS", "rpOffDow", "RP_WEEK", "rpWeekSaid", "rpMoveText", "rpSummary", "rpDigest",
+  // 쉬는 날(2026-10-03) — 앱과 같은 판정. 학원 달력(dash/calEvents)의 «안 쉼» 덮어쓰기까지 본다
+  "HOLIDAYS", "holEvent", "evEnd", "holidayOf", "rpDayOf", "rpWorkOf", "rpHolidayFor"];
 
 // 맨 앞줄에서 시작하는 `function 이름(` 또는 `var 이름 =` 을 찾아 괄호가 닫힐 때까지 자른다.
 // 문자열·정규식 속 괄호는 PICK 에 든 것들에 없다 — 들어오면 아래 컴파일 검사가 잡는다.
@@ -138,12 +140,16 @@ async function load(from, to) {
   const lr = await fetch(BASE + "/dash/rpLeave", { headers: H });
   if (!lr.ok && lr.status !== 404) throw new Error("dash/rpLeave 를 못 읽었다 (" + lr.status + ")");
   const rpLeave = lr.ok ? (fields((await lr.json()).fields || {}).items || {}) : {};
-  return { teachers, reports, rpLeave };
+  // 학원 달력 — 쉬는 날을 손으로 고친 것(«안 쉼» · 워크샵). 없으면 나라 공휴일(HOLIDAYS)만 본다
+  const er = await fetch(BASE + "/dash/calEvents", { headers: H });
+  if (!er.ok && er.status !== 404) throw new Error("dash/calEvents 를 못 읽었다 (" + er.status + ")");
+  const events = er.ok ? (fields((await er.json()).fields || {}).items || []) : [];
+  return { teachers, reports, rpLeave, events };
 }
 
 // ---- 문서 만들기 ----
 function digestOf(data, d) {
-  const S = { teachers: data.teachers, reports: data.reports, rpLeave: data.rpLeave || {} };
+  const S = { teachers: data.teachers, reports: data.reports, rpLeave: data.rpLeave || {}, events: data.events || [] };
   const ctx = {
     S,
     teacherName: (tid) => { const t = S.teachers.find((x) => x.tid === tid); return t ? t.name : (tid ? "?" : ""); },
@@ -153,7 +159,9 @@ function digestOf(data, d) {
   // 앱은 «그 날 수업이 있었나» 로 센다. 여기선 그걸 못 읽어서 **담당 반이 있고 출근 요일인가** 로 센다(맨 위 설명).
   ctx.rpExpected = (tid, day) => {
     const t = S.teachers.find((x) => x.tid === tid);
-    return day >= ctx.RP_START && !ctx.rpSkip(tid) && !ctx.rpOffDow(tid, day) && !S.rpLeave[tid + "|" + day] &&
+    const x = S.rpLeave[tid + "|" + day];
+    return day >= ctx.RP_START && !ctx.rpSkip(tid) && !ctx.rpOffDow(tid, day) && !(x && !x.work) &&
+      !ctx.rpHolidayFor(tid, day) &&                   // 쉬는 날은 «출근» 으로 적힌 사람만 (10/3 개천절 이현우)
       !!(t && (t.classIds || []).length);
   };
   const sm = ctx.rpSummary(d);
