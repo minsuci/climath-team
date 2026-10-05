@@ -9335,9 +9335,11 @@ function downloadMid3() {
 //   testScores/{tid}__{pid}     { tid, pid, name, raw, ach, grade, std, pct, avg, note }
 // 나중에 학생·학부모에게 보여주려면 그때 앱 쪽으로 옮긴다. 지금은 팀장이 보는 자료다.
 
+// 중간·기말에서 «과목평균» 칸은 뺐다 (2026-10-05 마왕님 «시험 성적 텝에 과목평균은 없애자»).
+//   적어 둔 값(testScores.avg)은 지우지 않는다 — 화면·붙여넣기 차례에서만 빠진다. 되살리려면 cols 에 "avg" 를 다시 넣는다.
 var TEST_KINDS = {
-  midterm: { label: "중간고사", short: "중간", cols: ["raw", "ach", "grade", "avg"] },
-  final:   { label: "기말고사", short: "기말", cols: ["raw", "ach", "grade", "avg"] },
+  midterm: { label: "중간고사", short: "중간", cols: ["raw", "ach", "grade"] },
+  final:   { label: "기말고사", short: "기말", cols: ["raw", "ach", "grade"] },
   mock:    { label: "모의고사", short: "모의", cols: ["raw", "std", "pct", "grade"] },
 };
 var TEST_COLS = {
@@ -9475,7 +9477,7 @@ function bindTestForm() {
     '<select id="tf-grade">' + GRADES.map(function (g) { return '<option>' + g + '</option>'; }).join("") + '</select>' +
     '<input type="date" id="tf-date" value="' + TODAY + '">' +
     '<button class="btn" id="tf-go">만들기</button><button class="mini" id="tf-x">취소</button></div>' +
-    '<div class="muted" style="font-size:12px">중간·기말은 원점수·성취도·등급·과목평균을, 모의고사는 원점수·표준점수·백분위·등급을 넣는다.</div></div>' : "";
+    '<div class="muted" style="font-size:12px">중간·기말은 원점수·성취도·등급을, 모의고사는 원점수·표준점수·백분위·등급을 넣는다.</div></div>' : "";
   if (!S.tsForm) return;
   $("#tf-x").onclick = function () { S.tsForm = false; renderScores(); };
   $("#tf-go").onclick = async function () {

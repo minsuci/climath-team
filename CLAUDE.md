@@ -790,7 +790,8 @@ tests/{tid}                { kind: midterm|final|mock, name, grade, date, create
 testScores/{tid}__{pid}    { tid, pid, name, raw, ach, grade, std, pct, avg, note, updated }
 ```
 
-- 시험 종류마다 칸이 다르다 — 중간·기말은 `원점수 · 성취도(A~E) · 등급 · 과목평균`,
+- 시험 종류마다 칸이 다르다 — 중간·기말은 `원점수 · 성취도(A~E) · 등급`
+  («과목평균» 은 2026-10-05 «시험 성적 텝에 과목평균은 없애자» 로 뺐다. 적어 둔 `avg` 값은 DB 에 그대로 있다),
   모의고사는 `원점수 · 표준점수 · 백분위 · 등급`. `TEST_KINDS[kind].cols` 하나만 보면 된다.
 - 표는 **그 학년 학생 전원**이 뜬다(`testRoster`). 안 본 사람도 자리가 있어야 누가 빠졌는지 보인다.
 - 붙여넣기(`parseScoreLine`)는 `이름` 다음에 그 종류의 숫자 칸 차례. **성취도(A~E)는 자리를 안 가린다**
