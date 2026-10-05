@@ -9487,11 +9487,13 @@ async function saveScore(tid, pid, name, patch) {
   // 값이 전부 비면 문서를 지운다 — 빈 껍데기가 "응시함"으로 세어지면 평균이 틀어진다.
   var has = Object.keys(TEST_COLS).some(function (k) { return next[k] !== "" && next[k] != null; }) || next.note;
   if (!has) { await deleteScore(tid, pid); return; }
-  await scoresCol().doc(scoreKey(tid, pid)).set(next, { merge: true });
+  // 성적은 선생님도 적는다 (2026-10-05 마왕님 «시험성적 탭은 모든 선생님이 수정할 수 있게»).
+  // 읽기 계정 문턱(guardWrites)을 이 두 자리만 지나간다. 시험을 만들고 지우는 것은 그대로 팀장 것이다.
+  await passWrite(function () { return scoresCol().doc(scoreKey(tid, pid)).set(next, { merge: true }); });
   S.testScores[pid] = next;
 }
 async function deleteScore(tid, pid) {
-  await scoresCol().doc(scoreKey(tid, pid)).delete().catch(function () {});
+  await passWrite(function () { return scoresCol().doc(scoreKey(tid, pid)).delete(); }).catch(function () {});
   delete S.testScores[pid];
 }
 
@@ -9716,7 +9718,7 @@ function testPanelHtml(t) {
 
   return '<div class="row" style="margin:10px 0 4px"><b>' + esc(TEST_KINDS[t.kind].label) + ' · ' + esc(t.name) + '</b>' +
     '<span class="muted">' + esc(t.grade) + (t.date ? " · " + esc(fmtMD(t.date)) : "") + '</span>' +
-    '<span class="sp" style="flex:1"></span><button class="mini" id="ts-paste">붙여넣기로 넣기</button>' +
+    '<span class="sp" style="flex:1"></span><button class="mini" id="ts-paste" data-keep>붙여넣기로 넣기</button>' +
     (so ? '<button class="mini" data-tss="">원래 순서</button>' : "") + '</div>' +
     '<div class="stat"><div><b>' + got.length + '/' + rows.length + '</b><span>넣은 사람</span></div>' +
     '<div>' + meanBox(mean) + '<span>원점수 평균</span></div>' +
@@ -9738,11 +9740,11 @@ function testPanelHtml(t) {
         cols.map(function (c) {
           var val = v[c] == null ? "" : v[c];
           var tone = c === "grade" ? gradeTone(val) : "";
-          return '<td><input type="' + (TEST_COLS[c].text ? "text" : "number") + '" data-c="' + c + '" value="' + esc(val) + '"' +
+          return '<td><input data-keep type="' + (TEST_COLS[c].text ? "text" : "number") + '" data-c="' + c + '" value="' + esc(val) + '"' +
             (TEST_COLS[c].max ? ' max="' + TEST_COLS[c].max + '" min="0"' : "") +
             ' class="' + tone + '"></td>';
         }).join("") +
-        '<td><input type="text" data-c="note" value="' + esc(v.note || "") + '"></td></tr>';
+        '<td><input data-keep type="text" data-c="note" value="' + esc(v.note || "") + '"></td></tr>';
     }).join("") + '</tbody></table></div>' +
     '<div class="grid2">' +
     '<div><b style="font-size:13px">담임별 평균</b><div class="tbl" style="max-height:180px"><table><thead><tr><th>담임</th><th>인원</th><th>평균</th></tr></thead><tbody>' +
@@ -9792,8 +9794,8 @@ function drawPaste(t) {
   box.innerHTML = '<div class="entry"><div class="muted" style="font-size:12px;margin-bottom:4px">' +
     '한 줄에 한 명. <b>이름 ' + cols.map(function (c) { return TEST_COLS[c].label; }).join(" ") + '</b> 차례로. ' +
     '성취도(A~E)는 아무 자리에나 써도 된다. 빈 값은 건너뛰려면 <b>-</b> 를 쓴다.</div>' +
-    '<textarea id="ts-pt" rows="6" style="width:100%" placeholder="김서진 88 2 71.4"></textarea>' +
-    '<div class="row"><button class="btn o" id="ts-pt-go">넣기</button><span class="muted" id="ts-pt-msg"></span></div></div>';
+    '<textarea id="ts-pt" data-keep rows="6" style="width:100%" placeholder="김서진 88 2 71.4"></textarea>' +
+    '<div class="row"><button class="btn o" id="ts-pt-go" data-keep>넣기</button><span class="muted" id="ts-pt-msg"></span></div></div>';
   $("#ts-pt-go").onclick = async function () {
     var lines = $("#ts-pt").value.split(/\r?\n/), msg = $("#ts-pt-msg");
     var done = 0, unknown = [];

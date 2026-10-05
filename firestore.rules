@@ -78,6 +78,7 @@ service cloud.firestore {
     match /devtools/{doc=**}   { allow read: if team(); allow write: if role() == "owner"; }
     match /devlog/{doc=**}     { allow read: if team(); allow write: if role() == "owner"; }
     match /tests/{doc=**}      { allow read: if team(); allow write: if role() == "owner"; }
-    match /testScores/{doc=**} { allow read: if team(); allow write: if role() == "owner"; }
+    // 성적은 선생님도 적는다 (2026-10-05). 시험(tests)을 만들고 지우는 것은 팀장뿐이다.
+    match /testScores/{doc=**} { allow read: if team(); allow write: if team(); }
   }
 }

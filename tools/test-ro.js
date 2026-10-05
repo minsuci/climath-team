@@ -312,6 +312,9 @@ const val = (expr) => JSON.parse(vm.runInContext("JSON.stringify(" + expr + ")",
   ["dash", "marks", "myTasks", "devtools", "devlog", "tests", "testScores"].forEach((c) => {
     ok("규칙에 " + c + " 가 있다 (없으면 아무도 못 읽는다)", new RegExp("match\\s*/" + c + "/").test(noComment));
   });
+  // 성적은 선생님도 적는다 (2026-10-05). 시험 자체는 팀장만 만든다.
+  ok("testScores — 팀 전체가 쓴다", /match\s*\/testScores\/\{doc=\*\*\}\s*\{[^}]*allow\s+write:\s*if\s+team\(\)/.test(noComment));
+  ok("tests — 쓰는 것은 팀장뿐", /match\s*\/tests\/\{doc=\*\*\}\s*\{[^}]*allow\s+write:\s*if\s+role\(\)\s*==\s*"owner"/.test(noComment));
   // 팀장 전용 할 일. 한 문서 안의 배열은 규칙이 못 가르므로 문서를 나눴다 —
   // 이 조건이 빠지면 선생님이 콘솔에서 팀장 할 일을 통째로 읽는다.
   const dash = /match\s*\/dash\/\{doc\}\s*\{([\s\S]*?)\n\s*\}/.exec(noComment);
