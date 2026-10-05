@@ -134,22 +134,24 @@ export async function runMathScan() {
   async function one(school) {
     const mine = bySchool[school];
     const span = mine.filter((v) => v.start && v.end)[0];
+    // 회차가 여럿 열려 있으면(2026-10-05~) 줄마다 회차·종류가 달려 온다. 옛 판은 문서 하나에 하나.
+    const kindHere = span.kind || kind, termHere = span.term || term;
     let r;
     // 학교마다 예산을 새로 준다. 한 곳이 다 써 버리면 뒤의 학교가 조용히 굶는다.
     try {
       r = await mathDates(school, span.start.replace(/-/g, ""), span.end.replace(/-/g, ""),
-        kind, mine.map((v) => v.grade), { n: BUDGET }, { n: WEB_BUDGET }, ai);
+        kindHere, mine.map((v) => v.grade), { n: BUDGET }, { n: WEB_BUDGET }, ai);
     } catch (e) { return; }
     if (!r || r.error) return;
     // ⚠ AI 한도에 걸렸거나 **AI 키가 없는** 것은 학교 탓이 아니다. 글 링크는 남기되,
     //   다음 판에 다시 긁도록 «다 봤다» 로 세지 않는다 — 세면 다시 안 보고 링크만 영영 남는다.
     // ⚠ 이유를 **서버가 한 말 그대로** 남긴다. 여기서 「AI가 바빴다」로 덮어쓰면
     //   «잠시 뒤 다시» 와 «하루 한도를 다 썼다» 가 같은 말이 된다. 그 둘은 기다릴 시간이 다르다.
-    if (r.again) { if (r.post) add({ school, post: r.post, url: r.url || "",
+    if (r.again) { if (r.post) add({ school, term: termHere, post: r.post, url: r.url || "",
                                     note: r.note || "AI를 못 썼다", retry: true }); return; }
     // 글은 찾았는데 표로 못 읽었다 — **링크를 남긴다.** 팀장이 열어 붙여넣으면 그 자리에서 읽힌다.
     if (r.post && !(r.rows || []).length) {
-      add({ school, post: r.post, url: r.url || "", note: r.note || "" });
+      add({ school, term: termHere, post: r.post, url: r.url || "", note: r.note || "" });
       return;
     }
     if (!(r.rows || []).length) return;              // 아직 안 올렸다. 조용히 지나간다
@@ -160,7 +162,7 @@ export async function runMathScan() {
       hit.forEach((x) => { if (dates.indexOf(x.date) < 0) dates.push(x.date); });
       if (!dates.length) continue;
       if (t.math && dates.length === 1 && t.math === dates[0]) continue;
-      const one2 = { kind: "math", school: t.school, grade: t.grade, mine: t.math || "",
+      const one2 = { kind: "math", term: t.term || term, school: t.school, grade: t.grade, mine: t.math || "",
         dates, why: hit.map((x) => x.subject).filter(Boolean).join(" · "),
         by: r.by || "", post: r.post || "", url: r.url || "",
         // 손으로 돌릴 때 저절로 채우는 것과 **같은 조건**이다. 앱이 이 표시만 보고 한꺼번에 넣는다.

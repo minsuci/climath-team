@@ -798,7 +798,7 @@ var gradeRank = function (g) { var i = GRADES.indexOf(g); return i < 0 ? 99 : i;
 
 // ---------- 상태 ----------
 var S = {
-  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", schoolTerms: {}, mathFound: null, cron: null,   // ro = 읽기만 하는 계정(선생님)
+  claims: null, ro: false, teachers: [], classes: [], students: [], term: "", terms: [], schoolTerms: {}, mathFound: null, cron: null,   // ro = 읽기만 하는 계정(선생님)
   exams: {},      // cid -> { sid -> doc }
   examsDenied: {},  // cid -> true. 앱 규칙이 그 반 참여표 읽기를 막은 것 — «안 냈다»와 다르다
   exCls: "",      // 참여표 반 거르기. 비면 그 학년 전체
@@ -1139,7 +1139,7 @@ async function loadCore() {
     coreRead("선생님 명단", loadTeachers()),
     coreRead("반 목록", db.collection("classes").get().then(function (s) { S.classes = []; s.forEach(function (d) { S.classes.push(Object.assign({ id: d.id }, d.data())); }); S.classes.sort(function (a, b) { return (a.order || 0) - (b.order || 0); }); })),
     coreRead("학생 명단", db.collection("students").get().then(function (s) { S.students = []; s.forEach(function (d) { S.students.push(Object.assign({ pid: d.id }, d.data())); }); })),
-    coreRead("내신 회차", db.collection("appConfig").doc("examTerm").get().then(function (d) { S.term = d.exists ? (d.data().term || "") : ""; })),
+    coreRead("내신 회차", db.collection("appConfig").doc("examTerm").get().then(function (d) { setOpenTerms(d.exists ? d.data() : {}); })),
     coreRead("학교 일정", db.collection("appConfig").doc("schoolTerms").get().then(function (d) { S.schoolTerms = d.exists ? d.data() : {}; })),
     dashDoc("tasks").get().then(function (d) { S.tasksOpen = d.exists ? (d.data().items || []) : []; S.tasks = S.tasksOpen.slice(); S.teamOk = true; })
       .catch(function (e) { S.teamOk = false; S.teamErr = e.code || e.message; }),
@@ -6007,7 +6007,7 @@ function renderWeek() {
   var items = [];
   // 학교 일정에서: 시작·수학시험·복귀가 14일 안
   Object.keys(S.schoolTerms).forEach(function (k) {
-    var v = S.schoolTerms[k]; if (!v || v.term !== S.term) return;
+    var v = S.schoolTerms[k]; if (!v || (S.terms || []).indexOf(v.term) < 0) return;   // 열린 회차 모두 (탭과 상관없이)
     [["start", "내신 시작"], ["math", "수학시험"], ["back", "복귀"]].forEach(function (p) {
       var n = daysFromToday(v[p[0]]); if (n === null || n < -1 || n > 14) return;
       items.push({ date: v[p[0]], text: v.school + " " + v.grade + " " + p[1] + (v.label ? " (" + v.label + ")" : ""), kind: "school",
@@ -7609,12 +7609,12 @@ function jobEmit() { var sn = jobSnap(); PULL_JOB.subs.slice().forEach(function 
 function jobSub(fn) { PULL_JOB.subs.push(fn); fn(jobSnap()); return function () { var i = PULL_JOB.subs.indexOf(fn); if (i >= 0) PULL_JOB.subs.splice(i, 1); }; }
 
 // 수학시험 날짜만 찾아오는 길. 같은 서버의 다른 갈래다(want:"math") — 학사일정이 아니라 가정통신문 게시판을 본다.
-async function fetchMathDates(school, from, to, grades) {
+async function fetchMathDates(school, from, to, grades, kind) {
   var tu = teamAuth.currentUser;
   if (!tu) throw new Error("로그인이 풀렸습니다");
   var r = await fetch("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ idToken: await tu.getIdToken(), want: "math",
-      school: school, from: ymdNum(from), to: ymdNum(to), kind: S.pullKind || "중간", grades: grades }) });
+      school: school, from: ymdNum(from), to: ymdNum(to), kind: kind || termKind(S.term), grades: grades }) });
   var j = await r.json().catch(function () { return null; });
   if (!r.ok) throw new Error((j && j.error) || ("서버가 " + r.status + " 로 답했습니다"));
   return j || {};
@@ -7695,7 +7695,7 @@ async function runPull(term, targets, from, to, kind) {
       }
       // 이미 적어둔 것이 다르면 **덮지 않는다.** 학교가 바꿨을 수도, 사람이 맞게 고쳤을 수도 있다.
       if (t.cur.start || t.cur.end) {
-        PULL_JOB.diffs.push({ school: t.school, grade: t.grade, mine: Object.assign({}, t.cur),
+        PULL_JOB.diffs.push({ term: term, school: t.school, grade: t.grade, mine: Object.assign({}, t.cur),
                               neis: { start: g.start, end: g.end }, name: g.name });
         jobEmit();
         continue;
@@ -7757,7 +7757,7 @@ async function runMathPull(term, targets) {
     var span = mine.filter(function (v) { return v.start && v.end; })[0];
     if (!span) { noSpan.push(school); return; }
     var r;
-    try { r = await fetchMathDates(school, span.start, span.end, mine.map(function (v) { return v.grade; })); }
+    try { r = await fetchMathDates(school, span.start, span.end, mine.map(function (v) { return v.grade; }), termKind(term)); }
     catch (e) { failed.push(school + " — " + e.message); return; }
     if (r.error) { failed.push(school + " — " + r.error); return; }
     // ⚠ AI 분당 한도에 걸린 것은 **학교 탓이 아니다.** 스무 곳을 이름으로 늘어놓으면
@@ -7790,7 +7790,7 @@ async function runMathPull(term, targets) {
         catch (e) { failed.push(t.school + " (저장 실패)"); }
         continue;
       }
-      PULL_JOB.diffs.push({ kind: "math", school: t.school, grade: t.grade, mine: t.math || "",
+      PULL_JOB.diffs.push({ kind: "math", term: term, school: t.school, grade: t.grade, mine: t.math || "",
                             dates: dates, why: why, by: r.by || "", post: r.post || "", url: r.url || "" });
       jobEmit();
     }
@@ -7823,16 +7823,16 @@ async function runMathPull(term, targets) {
 }
 
 // 화면에 놓을 줄 — 학생이 실제로 다니는 (학교·학년) + 이 회차에 이미 적어둔 것
-function termRows() {
-  var m = {};
+function termRows(term) {
+  var T = term || S.term, m = {};
   Object.keys(S.schoolTerms).forEach(function (k) {
     var v = S.schoolTerms[k];
-    if (v && v.term === S.term && v.school) m[v.school + "__" + v.grade] = Object.assign({ n: 0 }, v);
+    if (v && v.term === T && v.school) m[v.school + "__" + v.grade] = Object.assign({ n: 0 }, v);
   });
   S.students.forEach(function (x) {
     if (!x.school || !x.grade) return;
     var k = x.school + "__" + x.grade;
-    if (!m[k]) m[k] = { term: S.term, school: x.school, grade: x.grade, n: 0 };
+    if (!m[k]) m[k] = { term: T, school: x.school, grade: x.grade, n: 0 };
     m[k].n++;
   });
   var out = Object.keys(m).map(function (k) { return m[k]; });
@@ -7869,12 +7869,16 @@ function adoptMathFound() {
   var f = S.mathFound;
   if (!f || S.ro || PULL_JOB.running) return;   // 손으로 돌리는 중이면 그 결과를 덮지 않는다
   var cur = {};
-  termRows().forEach(function (v) { cur[v.school + "__" + v.grade] = v; });
+  // 줄에 회차가 달려 왔으면 그 회차로, 옛 판(회차 없음)이면 지금 탭으로 맞춰 본다
+  (S.terms.length ? S.terms : [S.term]).forEach(function (tm) {
+    termRows(tm).forEach(function (v) { cur[tm + "__" + v.school + "__" + v.grade] = v; });
+  });
   // ⚠ 새벽에 적힌 «지금 값»은 낡았다. 그 뒤에 팀장이 손으로 넣었을 수 있다.
   //   지금 값으로 다시 맞추고, 이미 채워진 줄은 아예 뺀다 — 다 한 일을 또 하라고 내밀면 안 된다.
   var diffs = (f.diffs || []).filter(function (d) {
-    var v = cur[d.school + "__" + d.grade];
-    if (!v) return false;                                  // 이 회차에 더는 없는 학교·학년
+    if (!d.term) d.term = S.term;
+    var v = cur[d.term + "__" + d.school + "__" + d.grade];
+    if (!v) return false;                                  // 이 회차에 더는 없는 학교·학년 (닫힌 회차 포함)
     if (v.math && (d.dates || []).length === 1 && v.math === d.dates[0]) return false;
     d.mine = v.math || "";
     if (d.mine) d.auto = false;                            // 이미 적힌 것은 절대 저절로 안 덮는다
@@ -7895,14 +7899,18 @@ function adoptMathFound() {
 var MATH_WATCH_SIG = "";
 async function saveMathWatch() {
   if (S.ro || !S.teamOk || !S.term) return;
-  var rows = termRows()
-    .filter(function (v) { return !v.math && v.start && v.end; })
-    .map(function (v) { return { school: v.school, grade: v.grade, start: v.start, end: v.end, math: "" }; })
-    .slice(0, 80);
-  var doc = { by: myTid(), term: S.term, kind: /기말|졸업/.test(S.term) ? "기말" : "중간",
+  // 열린 회차 모두 — 탭을 안 열어 둔 회차의 학교도 새벽에 본다. 줄마다 회차·종류를 달아 보낸다.
+  var rows = [];
+  (S.terms.length ? S.terms : [S.term]).forEach(function (tm) {
+    termRows(tm).filter(function (v) { return !v.math && v.start && v.end; }).forEach(function (v) {
+      rows.push({ term: tm, kind: termKind(tm), school: v.school, grade: v.grade, start: v.start, end: v.end, math: "" });
+    });
+  });
+  rows = rows.slice(0, 80);
+  var doc = { by: myTid(), term: S.terms[0] || S.term, kind: termKind(S.terms[0] || S.term),
               rows: rows, at: new Date().toISOString() };
   var sig = doc.by + "|" + doc.term + "|" + rows.map(function (r) {
-    return r.school + r.grade + r.start + r.end;
+    return r.term + r.school + r.grade + r.start + r.end;
   }).join(",");
   if (sig === MATH_WATCH_SIG) return;
   MATH_WATCH_SIG = sig;
@@ -8107,7 +8115,7 @@ function renderTerms() {
     '<button class="mini" id="tm-pull">시험 기간 찾아오기</button>' +
     '<button class="mini" id="tm-mathall" title="빈 칸인 학교를 모두, 넷씩 나란히 찾아온다">수학시험 날짜 찾아오기</button>' +
     '<button class="mini" id="tm-math">붙여넣기로 넣기</button>' +
-    '</h2>' +
+    '</h2>' + termTabsHtml() +
     '<div class="stat"><div class="' + (missing.length ? "bad" : "good") + '"><b>' + missing.length + '</b><span>기간 비어 있음</span></div>' +
     '<div class="' + (noMath.length ? "bad" : "good") + '"><b>' + noMath.length + '</b><span>수학시험 없음</span></div>' +
     '<div><b>' + rows.filter(function (v) { var n = daysFromToday(v.start); return n !== null && n >= 0 && n <= 14; }).length + '</b><span>2주 안 시작</span></div></div>' +
@@ -8138,6 +8146,7 @@ function renderTerms() {
     '직보는 참여표에서 수학시험 전날로 자동으로 잡힌다.</p>';
 
   bindTerms();
+  bindTermTabs(el);
   $("#tm-pull").onclick = function () { S.pullOpen = !S.pullOpen; drawPullBox(); };
   $("#tm-math").onclick = function () { S.mathOpen = !S.mathOpen; drawMathBox(); };
   // 빈 칸인 학교를 모두, 넷씩 나란히. 이미 적어둔 칸은 건드리지 않는다 —
@@ -8211,7 +8220,7 @@ function bindJobBox() {
     var ok = 0, bad = [];
     for (var i = 0; i < take.length; i++) {
       var d = take[i];
-      try { await saveSchoolTerm(S.term, d.school, d.grade, { math: d.dates[0] }); ok++; }
+      try { await saveSchoolTerm(d.term || S.term, d.school, d.grade, { math: d.dates[0] }); ok++; }
       catch (e) { bad.push(d.school + " " + d.grade); }
     }
     PULL_JOB.diffs = PULL_JOB.diffs.filter(function (x) { return take.indexOf(x) < 0 || bad.indexOf(x.school + " " + x.grade) >= 0; });
@@ -8225,7 +8234,7 @@ function bindJobBox() {
       if (!d || !date) return;
       b.disabled = true;
       try {
-        await saveSchoolTerm(S.term, d.school, d.grade, { math: date });
+        await saveSchoolTerm(d.term || S.term, d.school, d.grade, { math: date });
         PULL_JOB.diffs = PULL_JOB.diffs.filter(function (x) { return x !== d; });
         jobEmit();
         keepScrollIn("#sec-terms", renderTerms);
@@ -8237,7 +8246,7 @@ function bindJobBox() {
       var d = PULL_JOB.diffs[Number(b.getAttribute("data-take"))];
       b.disabled = true;
       try {
-        await saveSchoolTerm(S.term, d.school, d.grade, { start: d.neis.start, end: d.neis.end, label: d.name || "" });
+        await saveSchoolTerm(d.term || S.term, d.school, d.grade, { start: d.neis.start, end: d.neis.end, label: d.name || "" });
         PULL_JOB.diffs = PULL_JOB.diffs.filter(function (x) { return !(x.school === d.school && x.grade === d.grade); });
         jobEmit(); keepScrollIn("#sec-terms", renderTerms);
       } catch (e) { b.disabled = false; alert("맞추지 못했다: " + e.message); }
@@ -8269,7 +8278,7 @@ function drawPullBox() {
     '<span class="muted">기간</span><input type="date" id="tm-from" value="' + esc(S.pullFrom || addDays(TODAY, -7)) + '">' +
     '<span class="muted">~</span><input type="date" id="tm-to" value="' + esc(S.pullTo || addDays(TODAY, 75)) + '">' +
     '<span class="muted">회차</span><select id="tm-kind">' +
-    ["중간", "기말"].map(function (k) { return '<option' + ((S.pullKind || "중간") === k ? " selected" : "") + '>' + k + '</option>'; }).join("") + '</select>' +
+    ["중간", "기말"].map(function (k) { return '<option' + ((S.pullKind || termKind(S.term)) === k ? " selected" : "") + '>' + k + '</option>'; }).join("") + '</select>' +
     '<label style="font-size:13px"><input type="checkbox" id="tm-redo"' + (S.pullRedo ? " checked" : "") + '> 이미 채운 것도 다시 확인</label>' +
     '<span class="sp" style="flex:1"></span>' +
     '<button class="btn o" id="tm-go"' + (todo.length ? "" : " disabled") + '>' + todo.length + '줄 찾아오기</button>' +
@@ -8398,7 +8407,7 @@ function drawMathRes() {
 //
 // 수업관리 앱의 ExamBoard/ExamEntry 와 **같은 자리에 같은 모양으로** 쓴다.
 //   classes/{cid}/exams/{회차키}__{sid}   회차키 = 회차의 / 와 공백을 _ 로 바꾼 것
-//   회차는 학원 전체로 하나 — appConfig/examTerm
+//   열린 회차 목록 — appConfig/examTerm.terms (2026-10-05부터 여럿. 화면은 탭 하나씩 본다)
 // 그래서 여기서 만든 것이 앱의 참여표에 그대로 뜨고, 학생이 낸 것도 여기 그대로 보인다.
 //
 // 이 표가 답하는 질문은 "누가 언제 안 오고 언제 돌아오나"다. 그래서 본체는 표가 아니라
@@ -8533,9 +8542,91 @@ async function loadExams() {
     });
   }));
 }
+// ---- 회차 여러 개 (2026-10-05) ----
+//
+// 마왕님 — "탭을 여러개 만들면 되잖아." 고1 중간(직보·복귀 ~10/20)이 안 끝났는데 중3 졸업·기말이 10/21부터 시작한다.
+// 회차를 하나만 열 수 있으면, 기말을 여는 순간 중간의 직보·복귀가 화면에서 사라진다.
+//   appConfig/examTerm.terms = 열린 회차 목록. .term 은 옛 판을 위해 첫 회차를 그대로 적어 둔다.
+//   S.term = **지금 보고 있는 탭**이다(이 화면의 값). 참여표·학교 일정의 읽기·쓰기는 전부 이걸 따른다.
+// 닫기는 목록에서만 뺀다 — 참여표·학교 일정은 그대로 남고, 다시 열면 돌아온다.
+function termsOfDoc(d) {
+  d = d || {};
+  var list = Array.isArray(d.terms) ? d.terms.filter(Boolean) : [];
+  if (!list.length && d.term) list = [d.term];
+  return list.filter(function (t, i) { return list.indexOf(t) === i; });
+}
+var TERM_TAB_KEY = "dash.examTerm";
+function setOpenTerms(d) {
+  S.terms = termsOfDoc(d);
+  var pick = ""; try { pick = localStorage.getItem(TERM_TAB_KEY) || ""; } catch (e) {}
+  S.term = S.terms.indexOf(pick) >= 0 ? pick : (S.terms.indexOf(S.term) >= 0 ? S.term : (S.terms[0] || ""));
+}
+function pickTerm(t) {
+  S.term = t || ""; S.exams = {}; S.examsDenied = {};
+  try { localStorage.setItem(TERM_TAB_KEY, S.term); } catch (e) {}
+}
+function termKind(t) { return /기말|졸업/.test(String(t || "")) ? "기말" : "중간"; }
+async function writeTerms(list) {
+  await db.collection("appConfig").doc("examTerm").set({ terms: list, term: list[0] || "", time: Date.now() }, { merge: true });
+  S.terms = list.slice();
+}
+// 회차를 연다 — 열려 있는 것은 그대로 두고 뒤에 붙인다. 연 탭을 본다.
 async function saveExamTerm(term) {
-  await db.collection("appConfig").doc("examTerm").set({ term: term, time: Date.now() }, { merge: true });
-  S.term = term;
+  var list = (S.terms || []).slice();
+  if (list.indexOf(term) < 0) list.push(term);
+  await writeTerms(list);
+  pickTerm(term);
+}
+// 지금 탭의 이름만 고친다. ⚠ 적어 둔 참여표는 옛 이름에 붙어 있다 — 오타 고칠 때만 쓴다.
+async function renameExamTerm(from, to) {
+  var list = (S.terms || []).map(function (t) { return t === from ? to : t; });
+  if (list.indexOf(to) < 0) list.push(to);
+  await writeTerms(termsOfDoc({ terms: list }));
+  pickTerm(to);
+}
+async function closeExamTerm(term) {
+  var list = (S.terms || []).filter(function (t) { return t !== term; });
+  await writeTerms(list);
+  if (S.term === term) pickTerm(list[0] || "");
+}
+// 다음 회차 이름 짐작 — «… 중간» 을 보고 있으면 «… 기말».
+function nextTermGuess() {
+  var t = S.term || "";
+  return /중간/.test(t) ? t.replace("중간", "기말") : "";
+}
+// 참여표·학교 일정 머리의 회차 탭. 두 화면이 같은 탭을 본다.
+function termTabsHtml() {
+  if (!S.terms || !S.terms.length) return "";
+  return '<div class="chips"><span class="muted" style="font-size:12px">회차</span>' + S.terms.map(function (t) {
+    return '<button class="mini ' + (t === S.term ? "on" : "") + '" data-term="' + esc(t) + '">' + esc(t) + '</button>';
+  }).join("") +
+    (S.ro ? "" : '<button class="mini" data-term-open="1" title="지금 열린 회차는 그대로 둔다">+ 회차 열기</button>' +
+      (S.terms.length > 1 ? '<button class="mini" data-term-close="1" title="목록에서만 뺀다. 적어 둔 것은 남는다">이 회차 닫기</button>' : "")) +
+    '</div>';
+}
+function rerenderTerms() { renderExams(); renderTerms(); }
+function bindTermTabs(el) {
+  if (!el) return;
+  el.querySelectorAll("[data-term]").forEach(function (b) {
+    b.onclick = async function () {
+      var t = b.getAttribute("data-term"); if (t === S.term) return;
+      pickTerm(t); rerenderTerms();
+      try { await loadExams(); } catch (e) {}
+      rerenderTerms();
+    };
+  });
+  var op = el.querySelector("[data-term-open]");
+  if (op) op.onclick = async function () {
+    var t = prompt("새로 열 회차 이름 (예: 2026 2학기 기말)\n지금 열린 회차는 그대로 남는다 — 탭이 하나 늘어난다.", nextTermGuess());
+    if (t === null || !t.trim()) return;
+    try { await saveExamTerm(t.trim()); await loadExams(); rerenderTerms(); } catch (e) { alert("열지 못했다: " + e.message); }
+  };
+  var cl = el.querySelector("[data-term-close]");
+  if (cl) cl.onclick = async function () {
+    if (!confirm("«" + S.term + "» 회차를 닫는다.\n\n참여표·학교 일정은 지우지 않는다 — 다시 열면 그대로 돌아온다.\n" +
+                 "학생 화면의 내신 탭에서 이 회차가 빠진다. 계속할까?")) return;
+    try { await closeExamTerm(S.term); await loadExams(); rerenderTerms(); } catch (e) { alert("닫지 못했다: " + e.message); }
+  };
 }
 async function saveExam(cid, sid, data) {
   await db.collection("classes").doc(cid).collection("exams").doc(examKey(S.term, sid))
@@ -8712,7 +8803,7 @@ function renderExams() {
       '<div class="row"><input type="text" id="ex-term" placeholder="예: 2026 2학기 중간" style="max-width:240px">' +
       '<button class="btn" id="ex-open">회차 열기</button></div>' +
       '<p class="muted" style="font-size:13px">회차를 열면 학생 화면에 <b>내신</b> 탭이 생기고, 여기와 수업관리 앱 양쪽에서 참여표를 만들 수 있다. ' +
-      '회차는 학원 전체로 하나다.</p>';
+      '회차는 여럿 열 수 있다 — 탭으로 갈아 본다.</p>';
     $("#ex-open").onclick = async function () {
       var t = $("#ex-term").value.trim(); if (!t) return;
       this.disabled = true;
@@ -8767,11 +8858,11 @@ function renderExams() {
   var clash = Object.keys(sigs).filter(function (k) { return Object.keys(sigs[k]).length > 1; });
 
   el.innerHTML = '<h2>내신 참여표 <span class="n">' + esc(S.term) + '</span><span class="sp"></span>' +
-    '<button class="mini" id="ex-edit-term">회차 바꾸기</button>' +
+    (S.ro ? "" : '<button class="mini" id="ex-edit-term" title="오타 고칠 때만. 적어 둔 참여표는 옛 이름에 붙어 있다">이름 고치기</button>') +
     '<button class="mini" id="ex-re">다시 읽기</button>' +
     // 팀장만. 선생님 계정은 못 읽는 반이 있을 수 있어 «안 냈다»가 섞인 파일이 나간다
     (S.ro ? "" : '<button class="mini" id="ex-mid3">중3 내신관리 HTML</button>') +
-    '</h2>' +
+    '</h2>' + termTabsHtml() +
     '<div class="chips">' + GRADES.map(function (g) {
       return '<button class="mini ' + (g === S.exGrade ? "on" : "") + '" data-eg="' + g + '">' +
         '<span class="pill ' + gradeCls(g) + '">' + g + '</span> ' + grades[g] + '</button>' ;
@@ -8879,10 +8970,11 @@ function renderExams() {
   // 채울 사람이 없을 때의 이유 상자 — 고칠 자리로 보낸다
   if ($("#ex-goterms")) $("#ex-goterms").onclick = function () { showPage("terms"); };
   if ($("#ex-gostudents")) $("#ex-gostudents").onclick = function () { S.stView = "edit"; showPage("students"); renderStudents(); };
-  $("#ex-edit-term").onclick = async function () {
-    var t = prompt("회차 이름 (학원 전체로 하나다)", S.term);
+  bindTermTabs(el);
+  if ($("#ex-edit-term")) $("#ex-edit-term").onclick = async function () {
+    var t = prompt("이 회차의 이름 (오타 고칠 때만 — 새 회차는 «+ 회차 열기»)", S.term);
     if (t === null || !t.trim() || t.trim() === S.term) return;
-    try { await saveExamTerm(t.trim()); S.exams = {}; await loadExams(); renderExams(); }
+    try { await renameExamTerm(S.term, t.trim()); await loadExams(); rerenderTerms(); }
     catch (e) { alert("바꾸지 못했다: " + e.message); }
   };
   if (S.exEntry) drawEntry();
