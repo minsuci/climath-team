@@ -425,6 +425,13 @@
   .rp-fubox { border: 2px solid #c62828; background: #fff6f6; border-radius: 8px; padding: 8px 12px; margin: 8px 0 12px; }
   .rp-fu-c { background: #fff; border-radius: 6px; padding: 8px 10px; margin-top: 6px; }
   .rp-fu-in input[type=text] { flex: 1 1 220px; }
+  .rp-fu-note { padding: 8px 12px; font-size: 13px; }
+  .rp-fu-c.lv { border: 1px solid #e4b4ae; margin-top: 8px; }
+  .rp-fu-c.lv.fresh { border: 2px solid #c62828; }
+  .rp-fu-c.lv.done { background: #f7f7f7; border-color: var(--line); opacity: .85; }
+  .chips .mini.lv b { color: #c62828; }
+  .chips .mini.lv.on b { color: #ffb4b4; }
+  .rk-band .rk-h .mini { margin-left: 8px; font-size: 12px; vertical-align: middle; }
   .rk-band .rk-why { font-size: 13px; margin: 2px 0 4px; line-height: 1.5; }
   .rk-band .rk-why b { opacity: .85; margin-right: 4px; }
   .rk-band .rk-fu { font-size: 13px; background: rgba(255,255,255,.15); border-radius: 4px; padding: 3px 6px; margin-bottom: 4px; }
@@ -1403,8 +1410,11 @@ function rpRiskNew(prev, doc) {
 }
 function riskSeenMap() { var m = (S.marks || {})[myTid()] || {}; return m.riskSeen || {}; }
 // 한 선생님의 퇴원 보고 사건들 (읽어 둔 보고 범위 — 3주)
+// 한 선생님의 보고 — 퇴원 보고 탭이 읽어 둔 90일(S.rpLong) 위에 늘 들고 있는 3주(S.reports)를 얹는다.
+// 3주 쪽이 더 새것이다(낸 직후 · 후속 올린 직후 화면 사본이 거기 있다).
+function rpDocsOf(tid) { return Object.assign({}, ((S.rpLong || {})[tid]) || {}, ((S.reports || {})[tid]) || {}); }
 function rpCases(tid) {
-  var out = [], m = (S.reports || {})[tid] || {};
+  var out = [], m = rpDocsOf(tid);
   Object.keys(m).forEach(function (d) {
     var rep = m[d];
     if (!(rep && rep.submitted)) return;
@@ -1450,7 +1460,7 @@ function riskBannerHtml() {
   if (S.ro || !S.claims || !S.reports) return "";
   var list = riskItems(riskSeenMap());
   if (!list.length) return "";
-  return '<div class="banner rk-band"><div class="rk-h">🚨 퇴원 보고 ' + list.length + '건 — 확인하고 바로 연락</div>' +
+  return '<div class="banner rk-band"><div class="rk-h">🚨 퇴원 보고 ' + list.length + '건 — 확인하고 바로 연락 <button class="mini" data-rklv>퇴원 보고에서 관리</button></div>' +
     list.map(function (x) {
       return '<div class="rk-row"><span class="pill rk-k">' + (x.kind === "leave" ? "퇴원" : "퇴원 위험") + '</span> <b>' + esc(x.name) + '</b> ' +
         '<span class="rk-meta">' + esc(x.cls) + ' · ' + esc(x.who) + ' · ' + esc(fmtMD(x.d)) + (x.follow.length ? ' · 후속 ' + x.follow.length : "") + '</span>' +
@@ -1467,36 +1477,115 @@ function riskBannerHtml() {
 // 업무보고 «내 보고» 맨 위. 아직 끝나지 않은 사건(마지막 후속이 «진행 중» 이거나 아직 없음)만.
 // 쓰는 곳은 **그 사건이 처음 올라온 보고 문서**의 follow[사건] — 자기 칸이라 규칙 그대로(merge).
 // 올리면 팀장 폰이 다시 울리고(kind=riskf) 팀장 맨 위 띠에 다시 뜬다.
+// 내 보고 맨 위 — 후속을 기다리는 퇴원 보고가 있으면 한 줄로 알리고 «퇴원 보고» 탭으로 보낸다.
+// 관리는 그 탭에서 한다 (2026-10-06 마왕님 «내 보고 받은보고 옆에 퇴원보고도 추가하자 거기서 관리하는게 좋을듯»).
 function rpFollowMineHtml() {
-  var me = myTid(), list = rpCases(me).filter(function (x) { return !x.closed; });
-  if (!list.length) return "";
-  S.rpFuList = list;
-  return '<div class="rp-fubox"><h3 class="rp-h">퇴원 보고 — 후속 <span class="muted" style="font-size:12px;font-weight:400">통화 · 상담한 뒤 결과를 올린다. «남기로 함» · «퇴원 확정» 을 올리면 여기서 빠진다</span></h3>' +
-    list.map(function (x, i) {
-      var msg = (S.rpFuMsg || {})[x.key];
-      return '<div class="rp-fu-c"><div><span class="pill rk">' + (x.kind === "leave" ? "퇴원" : "퇴원 위험") + '</span> <b>' + esc(x.name) + '</b> ' +
-        '<span class="muted" style="font-size:12px">' + esc(x.cls) + ' · ' + esc(fmtMD(x.d)) + ' 보고</span></div>' +
-        rpWhyReadHtml(x) + (x.follow.length ? '<div class="rp-fu">' + x.follow.map(rpFollowLine).join("") + '</div>' : "") +
-        '<div class="row rp-fu-in"><select data-rpfus="' + i + '"' + RPK + '>' +
-        Object.keys(RP_FOLLOW).map(function (k) { return '<option value="' + k + '">' + RP_FOLLOW[k] + '</option>'; }).join("") + '</select>' +
-        '<input type="text" data-rpfut="' + i + '" maxlength="300" placeholder="통화 · 상담 결과 한 줄"' + RPK + '>' +
-        '<button class="mini plus" data-rpfu="' + i + '"' + RPK + '>후속 보고 올리기</button>' +
-        (msg ? '<span class="muted" style="font-size:12px">' + esc(msg) + '</span>' : "") + '</div></div>';
-    }).join("") + '</div>';
+  var n = rpCases(myTid()).filter(function (x) { return !x.closed; }).length;
+  if (!n) return "";
+  return '<div class="rp-fubox rp-fu-note">후속 보고를 기다리는 <b>퇴원 보고 ' + n + '건</b> — 통화 · 상담한 뒤 결과를 올린다 ' +
+    '<button class="mini" data-rplv' + RPK + '>퇴원 보고로</button></div>';
+}
+
+// ---------- 퇴원 보고 탭 (2026-10-06) ----------
+// 업무보고 «내 보고 · 받은 보고» 옆. 팀장은 선생님 전원 것, 선생님은 자기 것.
+// 퇴원 위험(학생 줄)과 퇴원(명단 변동)을 사건 하나씩 — 세 입장 · 후속 보고 줄기 · 지금 상태.
+// 범위: 처음 열 때 **최근 90일** 보고를 따로 읽는다(S.rpLong). 늘 들고 있는 3주(S.reports)는 건드리지 않는다 —
+//   그걸 늘리면 명단 변동 · 안 낸 날 알림까지 90일 치가 뜬다.
+var RP_LONG_DAYS = 90;
+var RP_LV_FILTER = { open: "진행 중", closed: "끝남", all: "전체" };
+async function loadLongReports() {
+  var from = addDays(TODAY, -RP_LONG_DAYS), got = {}, failed = [];
+  var tids = S.ro ? [myTid()] : S.teachers.map(function (t) { return t.tid; });
+  await Promise.all(tids.filter(Boolean).map(function (tid) {
+    return rpCol(tid).where("date", ">=", from).get().then(function (snap) {
+      var m = {}; snap.forEach(function (d) { m[d.id] = d.data(); }); got[tid] = m;
+    }).catch(function () { failed.push(teacherName(tid) || tid); });
+  }));
+  S.rpLong = got; S.rpLongFailed = failed; S.rpLongFrom = from;
+}
+function rpLeaveCases() {
+  var tids = S.ro ? [myTid()] : S.teachers.map(function (t) { return t.tid; });
+  var all = [];
+  tids.filter(Boolean).forEach(function (tid) { all = all.concat(rpCases(tid)); });
+  return all.sort(function (a, b) { return (a.closed ? 1 : 0) - (b.closed ? 1 : 0) || b.at - a.at; });
+}
+function rpLeaveTabN() { return rpLeaveCases().filter(function (x) { return !x.closed; }).length; }
+function rpDrawLeave(box) {
+  if (!S.rpLong && !S.rpLongBusy) {
+    S.rpLongBusy = true;
+    loadLongReports().catch(function () {}).then(function () {
+      S.rpLongBusy = false;
+      if ((S.rpTab || "mine") === "leave") keepScrollIn("#sec-report", renderReport);
+    });
+  }
+  var all = rpLeaveCases(), f = S.rpLvF || "open", seen = S.ro ? {} : riskSeenMap();
+  var pick = all.filter(function (x) { return f === "all" || (f === "closed" ? x.closed : !x.closed); });
+  var cnt = { open: all.filter(function (x) { return !x.closed; }).length, closed: all.filter(function (x) { return x.closed; }).length, all: all.length };
+  S.rpFuList = pick;
+  var h = '<div class="chips">' + Object.keys(RP_LV_FILTER).map(function (k) {
+      return '<button class="mini' + (f === k ? " on" : "") + '" data-rplvf="' + k + '"' + RPK + '>' + RP_LV_FILTER[k] + ' ' + cnt[k] + '</button>'; }).join("") +
+    '<span class="muted" style="font-size:12px">' + (S.rpLong ? "최근 " + RP_LONG_DAYS + "일 보고" : "최근 " + RP_LONG_DAYS + "일 보고를 읽는 중… (지금은 3주 치)") +
+    (S.rpLongFailed && S.rpLongFailed.length ? ' · <span class="red">못 읽은 선생님: ' + esc(S.rpLongFailed.join(", ")) + '</span>' : "") + '</span></div>' +
+    '<p class="muted" style="font-size:12px;margin:4px 0 8px">업무보고 학생 줄의 <b>퇴원 위험</b>과 명단 변동의 <b>퇴원</b>이 여기 모인다. ' +
+    '학생 · 학부모 · 강사 세 입장 → 통화 · 상담한 뒤 <b>후속 보고</b>. «남기로 함» · «퇴원 확정» 을 올리면 «끝남» 으로 간다.' +
+    (S.ro ? "" : ' 새로 온 것 · 새 후속이 붙은 것은 맨 위 빨간 띠에도 뜬다.') + '</p>';
+  if (!pick.length) h += '<div class="empty">' + (f === "open" ? "진행 중인 퇴원 보고가 없다." : f === "closed" ? "끝난 퇴원 보고가 없다." : "퇴원 보고가 없다.") + '</div>';
+  h += pick.map(function (x, i) {
+    var msg = (S.rpFuMsg || {})[x.key], fresh = !S.ro && !(seen[x.key] >= x.at);
+    var st = x.last ? RP_FOLLOW[x.last.state] || x.last.state : "후속 없음";
+    return '<div class="rp-fu-c lv' + (x.closed ? " done" : "") + (fresh ? " fresh" : "") + '">' +
+      '<div class="row" style="margin:0"><span class="pill rk">' + (x.kind === "leave" ? "퇴원" : "퇴원 위험") + '</span> <b style="font-size:15px">' + esc(x.name) + '</b>' +
+      '<span class="muted" style="font-size:12px">' + esc(x.cls) + (S.ro ? "" : ' · ' + esc(x.who)) + ' · ' + esc(fmtMD(x.d)) + ' 보고</span>' +
+      '<span class="sp" style="flex:1"></span><span class="pill' + (x.last && x.last.state === "left" ? " rk" : x.last && x.last.state === "stay" ? " green" : x.last ? " yellow" : "") + '">' + esc(st) + '</span>' +
+      (fresh ? '<span class="pill red">새로 옴</span>' : "") + '</div>' +
+      (x.note ? '<div style="font-size:13px;margin-top:4px">' + esc(x.note) + '</div>' : "") +
+      rpWhyReadHtml(x) +
+      (x.follow.length ? '<div class="rp-fu"><b>후속 보고 ' + x.follow.length + '</b>' + x.follow.map(rpFollowLine).join("") + '</div>' : "") +
+      // 선생님 — 자기 사건에 후속을 올린다(끝난 것도 다시 열 수 있게 칸은 둔다). 팀장 — 확인 · 그 날 보고로
+      (S.ro
+        ? '<div class="row rp-fu-in"><select data-rpfus="' + i + '"' + RPK + '>' +
+          Object.keys(RP_FOLLOW).map(function (k) { return '<option value="' + k + '">' + RP_FOLLOW[k] + '</option>'; }).join("") + '</select>' +
+          '<input type="text" data-rpfut="' + i + '" maxlength="300" placeholder="통화 · 상담 결과 한 줄"' + RPK + '>' +
+          '<button class="mini plus" data-rpfu="' + i + '"' + RPK + '>후속 보고 올리기</button>' +
+          (msg ? '<span class="muted" style="font-size:12px">' + esc(msg) + '</span>' : "") + '</div>'
+        : '<div class="row" style="margin:6px 0 0">' + (fresh ? '<button class="mini rk-ok" data-rkok="' + esc(x.key) + '">확인함</button>' : '<span class="muted" style="font-size:12px">확인함</span>') +
+          '<button class="mini" data-rkgo="' + esc(x.d) + '">그 날 보고 보기</button></div>') +
+      '</div>';
+  }).join("");
+  box.innerHTML = h;
+  $$("[data-rplvf]", box).forEach(function (b) { b.onclick = function () { S.rpLvF = b.getAttribute("data-rplvf"); keepScrollIn("#sec-report", renderReport); }; });
+  rpFollowWire(box);
+  if (!S.ro) {
+    $$("[data-rkok]", box).forEach(function (b) {
+      b.onclick = function () {
+        b.disabled = true;
+        riskSee(b.getAttribute("data-rkok")).catch(function (e) { alert("적지 못했다: " + e.message); });
+        renderBanner(); keepScrollIn("#sec-report", renderReport);
+      };
+    });
+    $$("[data-rkgo]", box).forEach(function (b) {
+      b.onclick = function () { S.rpTab = "all"; S.rpDate = b.getAttribute("data-rkgo"); S.rpEdit = null; renderReport(); };
+    });
+  }
 }
 async function rpAddFollow(x, state, text) {
   var me = myTid();
   if (x.tid !== me) throw new Error("남의 보고에는 못 붙인다");
-  var rep = ((S.reports || {})[me] || {})[x.d];
+  var rep = rpDocsOf(me)[x.d];
   if (!rep) throw new Error("그 보고를 못 찾았다");
   var cur = ((rep.follow || {})[x.id] || []).slice();
   cur.push({ id: newId(), at: Date.now(), day: TODAY, state: state, text: text, name: x.name });
   var patch = { follow: {} }; patch.follow[x.id] = cur;
   await passWrite(function () { return rpCol(me).doc(x.d).set(patch, { merge: true }); });
-  rep.follow = Object.assign({}, rep.follow || {}); rep.follow[x.id] = cur;
+  // 두 사본(3주 · 90일) 모두에 — 어느 쪽을 보든 바로 붙어 있게
+  [S.reports, S.rpLong].forEach(function (src) {
+    var r = src && src[me] && src[me][x.d];
+    if (r) { r.follow = Object.assign({}, r.follow || {}); r.follow[x.id] = cur; }
+  });
   pingLead("riskf", { date: x.d, case: x.id });
 }
 function rpFollowWire(box) {
+  $$("[data-rplv]", box).forEach(function (b) { b.onclick = function () { S.rpTab = "leave"; S.rpLvF = "open"; renderReport(); }; });
   $$("[data-rpfu]", box).forEach(function (b) {
     b.onclick = async function () {
       var i = +b.getAttribute("data-rpfu"), x = (S.rpFuList || [])[i]; if (!x) return;
@@ -1526,6 +1615,7 @@ async function riskSee(key) {
   await tdb.collection("marks").doc(me).set(patch, { merge: true });
 }
 function riskBannerWire(el) {
+  $$("[data-rklv]", el).forEach(function (b) { b.onclick = function () { S.rpTab = "leave"; S.rpLvF = "open"; showPage("report"); renderReport(); }; });
   $$("[data-rkok]", el).forEach(function (b) {
     b.onclick = function () {
       b.disabled = true;
@@ -2998,7 +3088,8 @@ function renderReport() {
   if (!el) return;
   var me = myTid();
   if (!S.rpDate) S.rpDate = rpDefaultDate();
-  var d = S.rpDate, tab = S.ro ? "mine" : (S.rpTab || "mine");
+  var d = S.rpDate, tab = S.rpTab || "mine";
+  if (S.ro && tab === "all") tab = "mine";        // 받은 보고는 팀장만
   var late = S.ro ? rpOverdue(me).length : rpOverdue(me).length + rpOverdueAll().filter(function (x) { return x.tid !== me; }).length;
   navBadge("report", late, true);
   var sm = S.ro ? null : rpSummary(d);
@@ -3008,9 +3099,11 @@ function renderReport() {
     (d !== TODAY ? '<button class="mini" data-rpd="0"' + RPK + '>오늘로</button>' : "") +
     (rpOffDow(me, d) ? ' <span class="pill" title="휴무 요일이다 — 안 내도 «안 냈다» 로 안 센다">휴무</span>' : "") +
     (rpLeaveOf(me, d) ? ' <span class="pill" title="팀장이 이 날을 휴무로 적었다 — 안 내도 «안 냈다» 로 안 센다">휴무 · ' + esc(rpLeaveOf(me, d).note) + '</span>' : "") + '</h2>' +
-    (S.ro ? "" : '<div class="chips">' +
-      '<button class="mini' + (tab === "mine" ? " on" : "") + '" data-rpt="mine">내 보고</button>' +
-      '<button class="mini' + (tab === "all" ? " on" : "") + '" data-rpt="all">받은 보고 ' + sm.got.length + '/' + sm.expect.length + '</button></div>') +
+    '<div class="chips">' +
+      '<button class="mini' + (tab === "mine" ? " on" : "") + '" data-rpt="mine"' + RPK + '>내 보고</button>' +
+      (S.ro ? "" : '<button class="mini' + (tab === "all" ? " on" : "") + '" data-rpt="all">받은 보고 ' + sm.got.length + '/' + sm.expect.length + '</button>') +
+      // 퇴원 보고 — 진행 중인 것 수. 선생님도 자기 것을 여기서 관리한다
+      '<button class="mini lv' + (tab === "leave" ? " on" : "") + '" data-rpt="leave"' + RPK + '>퇴원 보고' + (function (n) { return n ? ' <b>' + n + '</b>' : ""; })(rpLeaveTabN()) + '</button></div>' +
     '<div id="rp-body"></div>';
   $$("[data-rpd]", el).forEach(function (b) {
     b.onclick = function () {
@@ -3019,7 +3112,8 @@ function renderReport() {
     };
   });
   $$("[data-rpt]", el).forEach(function (b) { b.onclick = function () { S.rpTab = b.getAttribute("data-rpt"); renderReport(); }; });
-  if (tab === "all") rpDrawAll($("#rp-body", el), d, sm); else rpDrawMine($("#rp-body", el), d);
+  if (tab === "leave") rpDrawLeave($("#rp-body", el));
+  else if (tab === "all") rpDrawAll($("#rp-body", el), d, sm); else rpDrawMine($("#rp-body", el), d);
 }
 
 // ---- 내 보고 ----

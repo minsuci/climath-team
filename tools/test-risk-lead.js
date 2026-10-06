@@ -92,16 +92,37 @@ ok("화면은 바로 바뀐다 (S.marks 에도 적힌다)", run(`return !!S.mark
 // ================= 후속 보고 =================
 run(`S.claims = { role:"teacher", tid:"T2", name:"이현우" }; S.ro = true;`);
 const mineBox = run(`return rpFollowMineHtml()`);
-ok("선생님 «내 보고» 맨 위 — 끝나지 않은 퇴원 보고에 후속 칸", /퇴원 보고 — 후속/.test(mineBox) && /최하윤/.test(mineBox) && /data-rpfu="0"/.test(mineBox) && /남기로 함/.test(mineBox), mineBox.slice(0, 300));
+ok("선생님 «내 보고» 맨 위 — 후속을 기다리는 퇴원 보고를 한 줄로 알리고 탭으로 보낸다", /퇴원 보고 1건/.test(mineBox) && /data-rplv data-keep>퇴원 보고로/.test(mineBox), mineBox);
 ok("후속 칸은 읽기 계정에서도 살아 있다 (RPK)", /data-rpfut="' \+ i \+ '" maxlength="300" placeholder="통화 · 상담 결과 한 줄"' \+ RPK/.test(src));
+// ---- 퇴원 보고 탭 ----
+ok("업무보고 탭 — 내 보고 · 받은 보고(팀장만) 옆에 «퇴원 보고» (선생님도 누르게 RPK)",
+  /data-rpt="leave"' \+ RPK \+ '>퇴원 보고'/.test(src) && /if \(tab === "leave"\) rpDrawLeave\(\$\("#rp-body", el\)\);/.test(src) && /if \(S\.ro && tab === "all"\) tab = "mine";/.test(src));
+const fakeBox = () => run(`return (__B = { innerHTML: "", querySelectorAll: function () { return []; } }, true)`);
+fakeBox();
+run(`S.rpLong = {}; S.rpTab = "leave"; rpDrawLeave(__B);`);
+const tabT = run(`return __B.innerHTML`);
+ok("선생님 탭 — 내 사건 카드: 세 입장 · 상태 · 후속 칸", /최하윤/.test(tabT) && /<b>학부모<\/b> 다른 학원 1:1/.test(tabT) && /후속 없음/.test(tabT) && /data-rpfu="0"/.test(tabT) && /진행 중 1/.test(tabT), tabT.slice(0, 400));
+ok("선생님 탭에는 «확인함» 이 없다 (팀장 것)", tabT.indexOf("data-rkok") < 0);
+run(`S.rpLong = { T2: { "2026-08-20": { submitted: 1, date: "2026-08-20", classes: [ { cid:"c2", name:"예비고1 S", students: [ { sid:"s9", name:"옛학생", risk:true, why:{ student:"a", parent:"b", teacher:"c" } } ] } ],
+  follow: { "r:c2:s9": [ { id:"q", at: 5, day:"2026-08-22", state:"left", text:"9월부터 안 옴", name:"옛학생" } ] } } } };
+  __B.innerHTML = ""; S.rpLvF = "closed"; rpDrawLeave(__B);`);
+const tabC = run(`return __B.innerHTML`);
+ok("3주보다 오래된 사건도 90일 치에서 — «끝남» 에 퇴원 확정", /옛학생/.test(tabC) && /퇴원 확정/.test(tabC) && /끝남 1/.test(tabC) && tabC.indexOf("최하윤") < 0, tabC.slice(0, 400));
+ok("3주 사본이 90일 사본보다 앞선다 (rpDocsOf)", /function rpDocsOf\(tid\) \{ return Object\.assign\(\{\}, \(\(S\.rpLong \|\| \{\}\)\[tid\]\) \|\| \{\}, \(\(S\.reports \|\| \{\}\)\[tid\]\) \|\| \{\}\); \}/.test(src));
+run(`S.rpLvF = "open";`);
 (async () => {
 await run(`__SETS.length = 0; __x = rpCases("T2")[0]; return rpAddFollow(__x, "going", "어머니와 통화 — 이번 주 금요일 상담");`);
 ok("후속 보고는 그 보고 문서의 follow[사건] 에 merge 로", run(`return __SETS.length === 1 && __SETS[0].o.merge === true && __SETS[0].v.follow["r:c2:s1"].length === 1 && __SETS[0].v.follow["r:c2:s1"][0].state === "going"`) === true);
 ok("화면에도 바로 붙는다", run(`return S.reports.T2["2026-10-06"].follow["r:c2:s1"][0].text`) === "어머니와 통화 — 이번 주 금요일 상담");
 ok("올리면 팀장 폰을 다시 울린다 (kind riskf)", /pingLead\("riskf", \{ date: x\.d, case: x\.id \}\);/.test(src));
+ok("후속은 3주 · 90일 두 사본에 다 붙는다", /\[S\.reports, S\.rpLong\]\.forEach/.test(src));
 ok("다시 낸 보고가 후속을 지우지 않는다 (merge + 화면 사본에 이어 붙임)", /if \(prev && prev\.follow\) doc\.follow = prev\.follow;/.test(src));
 run(`S.claims = { role:"owner", tid:"T1", name:"한민수" }; S.ro = false; S.reports.T2["2026-10-06"].follow["r:c2:s1"][0].at = Date.now() + 1000;`);
 const band2 = run(`return riskBannerHtml()`);
+ok("팀장 띠에서 «퇴원 보고에서 관리» 로 간다", /data-rklv>퇴원 보고에서 관리/.test(band2));
+run(`__B.innerHTML = ""; rpDrawLeave(__B);`);
+const tabL = run(`return __B.innerHTML`);
+ok("팀장 탭 — 선생님 이름 · 새로 옴 · 확인함 · 그 날 보고", /이현우/.test(tabL) && /새로 옴/.test(tabL) && /data-rkok="T2\|2026-10-06\|r:c2:s1"/.test(tabL) && /data-rkgo="2026-10-06"/.test(tabL) && tabL.indexOf("data-rpfu") < 0, tabL.slice(0, 500));
 ok("확인한 뒤 후속이 오면 팀장 띠에 **다시** 뜬다 (마지막 후속까지)", /최하윤/.test(band2) && /후속 1/.test(band2) && /↳ <b>후속 진행 중<\/b> 어머니와 통화/.test(band2), band2);
 run(`S.claims = { role:"teacher", tid:"T2", name:"이현우" }; S.ro = true;
   S.reports.T2["2026-10-06"].follow["r:c2:s1"].push({ id:"z", at: Date.now() + 2000, day: TODAY, state:"stay", text:"상담 후 남기로", name:"최하윤" });`);
