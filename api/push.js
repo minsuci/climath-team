@@ -155,7 +155,22 @@ export default async function handler(req, res) {
         done:   { title: "한 줄 보고 도착", body: who + " 선생님이 할 일에 보고를 남겼습니다", url: "/#tasks", tag: "done" },
         reply:  { title: "코멘트에 답글", body: who + " 선생님이 업무보고 코멘트에 답글을 달았습니다", url: "/#report", tag: "reply" },
       };
-      const p = TEXT[kind];
+      let p = TEXT[kind];
+      // 퇴원 위험 (2026-10-06) — 팀장에게 «강하게». 글은 **그 선생님이 낸 보고 문서를 읽어** 여기서 만든다.
+      // 보내는 쪽이 적은 이름을 그대로 나르지 않는다(위 주석과 같은 이유). 보고는 그 선생님 자기 칸이다(me).
+      if (kind === "risk") {
+        const date = String(body.date || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "어느 날 보고인지 모르겠습니다" }); return; }
+        const rep = await getDoc("dailyReports/" + me + "/days/" + date);
+        const names = [];
+        for (const c of (rep && rep.classes) || []) for (const s of c.students || []) {
+          if (s && s.risk && s.name && names.indexOf(s.name) < 0) names.push(String(s.name).slice(0, 12));
+        }
+        if (!names.length) { res.status(200).json({ ok: true, none: true }); return; }
+        const md = Number(date.slice(5, 7)) + "/" + Number(date.slice(8, 10));
+        p = { title: "🚨 퇴원 위험", tag: "risk-" + me + "-" + date, url: "/#report", strong: true,
+              body: who + " 선생님 — " + names.slice(0, 6).join(", ") + (names.length > 6 ? " 외 " + (names.length - 6) + "명" : "") + " (" + md + " 업무보고)" };
+      }
       if (!p) { res.status(400).json({ error: "무엇을 알릴지 모르겠습니다" }); return; }
       const keys = await vapidKeys();
       const out = [];

@@ -36,6 +36,9 @@ self.addEventListener("push", function (e) {
     renotify: true,
     data: { url: d.url || "/" },
   };
+  // 퇴원 위험처럼 **강하게** 와야 하는 것 (2026-10-06) — 눌러서 닫을 때까지 화면에 남고 길게 떤다.
+  // 아이폰은 둘 다 무시하지만 알림 자체는 온다.
+  if (d.strong) { opt.requireInteraction = true; opt.vibrate = [400, 150, 400, 150, 800]; }
   e.waitUntil(self.registration.showNotification(title, opt));
 });
 

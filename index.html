@@ -411,6 +411,29 @@
   .rp-notec input[type=text] { flex: 1; min-width: 0; }
   .rp-flag { font-size: 12px; white-space: nowrap; color: var(--muted); cursor: pointer; }
   .rp-flag.on { color: var(--red); font-weight: 700; }
+  .rp-flag.risk { margin-left: 6px; }
+  .rp-flag.risk.on { color: #fff; background: #c62828; border-radius: 4px; padding: 1px 6px; }
+  .pill.rk { background: #c62828; color: #fff; border-color: #c62828; }
+  /* 퇴원 위험 — 팀장 맨 위 띠. 다른 띠(노랑·분홍)와 섞이지 않게 진한 빨강 */
+  .banner.rk-band { background: #c62828; border-color: #8e1b1b; color: #fff; padding: 12px 14px; }
+  .rk-band .rk-h { font-size: 17px; font-weight: 800; margin-bottom: 6px; }
+  .rk-band .rk-row { background: rgba(255,255,255,.12); border-radius: 6px; padding: 8px 10px; margin-top: 6px; font-size: 15px; }
+  .rk-band .rk-meta { font-size: 12px; opacity: .9; }
+  .rk-band .rk-note { font-size: 14px; margin: 3px 0 4px; }
+  .rk-band .mini { background: #fff; color: #8e1b1b; border-color: #fff; }
+  .rk-band .mini.rk-ok { font-weight: 700; }
+  .rk-band .rk-act { display: inline-flex; gap: 6px; }
+  /* 팀장 지시 — 선생님 화면 맨 위 */
+  .lead-box { background: #eef3ff; border: 2px solid #3559c7; border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
+  .lead-box .lb-h { font-size: 18px; font-weight: 800; color: #1f3a8a; margin-bottom: 6px; }
+  .lead-box .lb-n { background: #3559c7; color: #fff; border-radius: 10px; padding: 0 8px; font-size: 14px; margin-left: 4px; }
+  .lead-box .lb-sub { font-size: 12px; font-weight: 400; color: #4a5a85; margin-left: 8px; }
+  .lead-box .lb-row { background: #fff; border-radius: 8px; padding: 10px 12px; margin-top: 8px; border-left: 5px solid #3559c7; }
+  .lead-box .lb-row.late { border-left-color: #c62828; }
+  .lead-box .lb-t { font-size: 16px; font-weight: 700; line-height: 1.45; }
+  .lead-box .lb-a { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .lead-box .lb-a .rep { flex: 1 1 260px; margin: 0; }
+  .lead-box .lb-more { margin-top: 8px; }
   #sec-report .rp-seg .mini.st-done.on { background: var(--green); border-color: var(--green); }
   #sec-report .rp-seg .mini.st-doing.on { background: var(--blue); border-color: var(--blue); }
   #sec-report .rp-seg .mini.st-hold.on { background: var(--yellow); border-color: var(--yellow); color: #5a3d00; }
@@ -1324,16 +1347,163 @@ function teachersWithoutIndiv() {
 function renderBanner() {
   var el = $("#banner");
   var ro = S.ro ? '<div class="banner" style="background:#f5f7fb;border-color:var(--line)"><b>읽기만 하는 계정</b> — 보이는 것은 관리자와 같고, 고치는 단추는 감춰져 있다. ' +
-    '고칠 것이 있으면 한민수 팀장에게. 학생 명단·참여표·학교 일정은 수업관리 앱에서 여느 때처럼 고친다.<br>' +
+    '고칠 것이 있으면 한민수 팀장에게. 학생 명단·참여표는 수업관리 앱에서 여느 때처럼 고친다.<br>' +
+    '<b>학교 일정</b>의 시작·끝·수학시험·복귀와 <b>시험 성적</b>은 여기서 직접 넣는다.<br>' +
     '<b>할 일</b>은 예외다 — <b>내 할 일은 직접</b> 넣고 지운다. 남에게 시키는 것만 팀장이 한다.<br>' +
     '<b>회의록</b>은 팀회의만 올라온다. 간부회의는 팀장만 본다.</div>' : "";
   var rd = (S.readErr && S.readErr.length)
     ? '<div class="banner"><b>수업관리 앱 DB에서 못 읽은 것</b> — ' + esc(S.readErr.join(", ")) + '.<br>' +
       '그 화면만 비어 있고 나머지는 그대로 돈다. climath-class 쪽 <code>firestore.rules</code> 를 본다.</div>' : "";
-  if (S.teamOk) { el.innerHTML = rd + rpBannerHtml() + ro; rpBannerWire(el); return; }
+  if (S.teamOk) { el.innerHTML = rd + riskBannerHtml() + leadBoxHtml() + rpBannerHtml() + ro; rpBannerWire(el); riskBannerWire(el); leadBoxWire(el); return; }
   el.innerHTML = rd + '<div class="banner"><b>팀체크 DB(climath-team)를 못 읽었다</b> (' + esc(S.teamErr) + ').<br>' +
     'Firebase 콘솔의 climath-team 프로젝트에서 Firestore가 켜져 있고 규칙이 게시됐는지 본다. 규칙은 저장소 <code>firestore.rules</code>. ' +
     '나머지 상자(앱 데이터)는 그대로 돈다.</div>' + ro;
+}
+
+// ---------- 퇴원 위험 — 팀장에게 강하게 (2026-10-06) ----------
+//
+// 10/5 팀회의 «퇴원 낌새가 있으면 업무보고 특이사항 + 구두 + 카톡» → 마왕님 «퇴원위험 알림은 나한테 강하게 오게».
+// 선생님이 업무보고 학생 줄에서 «퇴원 위험» 을 켜고 내면
+//   ① 팀장 폰 — `/api/push` want=lead kind=risk. 글은 서버가 그 보고 문서를 읽어 만든다(학생 이름).
+//      **눌러서 닫을 때까지 화면에 남는다**(requireInteraction) · 진동 길게.
+//   ② 팀장 화면 맨 위 빨간 띠 — 어느 메뉴에 있든 보인다. **«확인함» 을 눌러야** 빠진다.
+// 확인한 것은 `marks/<팀장>.riskSeen["tid|날짜|sid"] = 시각` — 새 컬렉션을 안 만든다(규칙을 다시 게시하지 않게).
+// 띠가 보는 범위는 팀장이 읽어 둔 보고(최근 3주)다.
+function rpRiskKey(tid, d, c, s) { return tid + "|" + d + "|" + (s.sid || (c.cid + ":" + s.name)); }
+// 앞서 낸 판에는 없고 이번 판에 새로 켜진 학생 — 이것이 있을 때만 폰을 울린다
+function rpRiskNew(prev, doc) {
+  var had = {};
+  ((prev && prev.submitted && prev.classes) || []).forEach(function (c) {
+    (c.students || []).forEach(function (s) { if (s.risk) had[c.cid + "|" + (s.sid || s.name)] = 1; });
+  });
+  var out = [];
+  (doc.classes || []).forEach(function (c) {
+    (c.students || []).forEach(function (s) { if (s.risk && !had[c.cid + "|" + (s.sid || s.name)]) out.push(s.name); });
+  });
+  return out;
+}
+function riskSeenMap() { var m = (S.marks || {})[myTid()] || {}; return m.riskSeen || {}; }
+// 낸 보고들 가운데 퇴원 위험이 켜진 학생. seen 을 넘기면 확인 안 한 것만.
+function riskItems(seen) {
+  var out = [];
+  Object.keys(S.reports || {}).forEach(function (tid) {
+    var m = S.reports[tid] || {};
+    Object.keys(m).forEach(function (d) {
+      var rep = m[d];
+      if (!(rep && rep.submitted)) return;
+      (rep.classes || []).forEach(function (c) {
+        (c.students || []).forEach(function (s) {
+          if (!s.risk) return;
+          var key = rpRiskKey(tid, d, c, s);
+          if (seen && seen[key]) return;
+          out.push({ key: key, tid: tid, who: teacherName(tid) || rep.name || tid, d: d, cls: c.name, name: s.name, note: s.note || "" });
+        });
+      });
+    });
+  });
+  return out.sort(function (a, b) { return a.d < b.d ? 1 : a.d > b.d ? -1 : String(a.name).localeCompare(String(b.name), "ko"); });
+}
+function riskBannerHtml() {
+  if (S.ro || !S.claims || !S.reports) return "";
+  var list = riskItems(riskSeenMap());
+  if (!list.length) return "";
+  return '<div class="banner rk-band"><div class="rk-h">🚨 퇴원 위험 ' + list.length + '명 — 확인하고 바로 연락</div>' +
+    list.map(function (x) {
+      return '<div class="rk-row"><b>' + esc(x.name) + '</b> <span class="rk-meta">' + esc(x.cls) + ' · ' + esc(x.who) + ' · ' + esc(fmtMD(x.d)) + '</span>' +
+        '<div class="rk-note">' + esc(x.note) + '</div>' +
+        '<span class="rk-act"><button class="mini" data-rkgo="' + esc(x.d) + '">보고 보기</button>' +
+        '<button class="mini rk-ok" data-rkok="' + esc(x.key) + '">확인함</button></span></div>';
+    }).join("") + '</div>';
+}
+async function riskSee(key) {
+  var me = myTid(); if (!me) return;
+  var cur = (S.marks || {})[me] || {}, seen = Object.assign({}, cur.riskSeen || {});
+  seen[key] = Date.now();
+  S.marks = S.marks || {}; S.marks[me] = Object.assign({}, cur, { riskSeen: seen });
+  var patch = { riskSeen: {} }; patch.riskSeen[key] = seen[key];
+  // merge — 지도 안까지 합친다. done·seenTasks 를 건드리지 않는다
+  await tdb.collection("marks").doc(me).set(patch, { merge: true });
+}
+function riskBannerWire(el) {
+  $$("[data-rkok]", el).forEach(function (b) {
+    b.onclick = function () {
+      b.disabled = true;
+      riskSee(b.getAttribute("data-rkok")).catch(function (e) { alert("적지 못했다: " + e.message); });
+      renderBanner();
+    };
+  });
+  $$("[data-rkgo]", el).forEach(function (b) {
+    b.onclick = function () { S.rpTab = "all"; S.rpDate = b.getAttribute("data-rkgo"); S.rpEdit = null; showPage("report"); renderReport(); };
+  });
+}
+
+// ---------- 팀장 지시 — 선생님 화면 맨 위에 크게 (2026-10-06) ----------
+//
+// 마왕님 «내가 직접 내린 업무도 선생님들이 가장 먼저 처리할 수 있게 상단에 크게».
+// 팀 할 일(dash/tasks)은 팀장만 만든다 — 그러니 **선생님 몫으로 걸린 팀 할 일 = 팀장이 내린 일**이다.
+// 빼는 것: 자기가 적은 할 일(own) · 초안 · 매주 도는 일(업무보고가 그 날 챙긴다) · 끝낸 것(내 완료 · 팀장이 닫은 것).
+// 어느 메뉴에 있든 맨 위(#banner)에 뜬다. 한 줄 보고가 걸린 일은 그 자리에서 적어 낸다.
+var LEAD_BOX_MAX = 6;
+function leadTasksMine() {
+  if (!S.ro || !S.tasks) return [];
+  var me = myTid();
+  return S.tasks.filter(function (t) {
+    if (!t || !t.id || t.own || taskDraft(t) || t.status === "done") return false;
+    if (t.repeat && t.repeat.dow) return false;
+    if (!taskIsMine(t) || markDate(me, t.id)) return false;
+    return true;
+  }).sort(function (a, b) { var x = a.due || "9999", y = b.due || "9999"; return x < y ? -1 : x > y ? 1 : 0; });
+}
+function leadBoxHtml() {
+  var list = leadTasksMine();
+  if (!list.length) return "";
+  var shown = list.slice(0, LEAD_BOX_MAX);
+  return '<div class="lead-box"><div class="lb-h">📌 팀장 지시 <span class="lb-n">' + list.length + '건</span>' +
+    '<span class="lb-sub">먼저 처리하고 «내 완료» 를 누른다</span></div>' +
+    shown.map(function (t) {
+      var n = daysFromToday(t.due);
+      var due = !t.due ? '<span class="pill">기한 없음</span>'
+        : '<span class="pill' + (n < 0 ? " red" : n <= 1 ? " yellow" : "") + '">' + esc(fmtMD(t.due)) + ' · ' + (n < 0 ? "기한 지남" : dday(t.due)) + '</span>';
+      return '<div class="lb-row' + (n !== null && n < 0 ? " late" : "") + '"><div class="lb-t">' + esc(t.text) + '</div>' +
+        '<div class="lb-a">' + due + ' ' + (t.report ? reportBox(t) : myMarkBtn(t)) + '</div></div>';
+    }).join("") +
+    (list.length > shown.length ? '<div class="lb-more"><button class="mini" data-lbgo data-keep>그 밖에 ' + (list.length - shown.length) + '건 — 할 일에서 보기</button></div>' : "") +
+    '</div>';
+}
+function leadBoxWire(el) {
+  var box = $(".lead-box", el); if (!box) return;
+  var after = function () { renderBanner(); renderTasksSafe(); };
+  $$("[data-mk]", box).forEach(function (b) {
+    b.onclick = async function () {
+      b.disabled = true;
+      try { await toggleMyMark(b.getAttribute("data-mk")); } catch (e) { alert("표시하지 못했다: " + e.message); }
+      after();
+    };
+  });
+  $$("[data-rep]", box).forEach(function (b) {
+    b.onclick = async function () {
+      var id = b.getAttribute("data-rep"), inp = $('[data-rep-in="' + id + '"]', box);
+      var text = inp ? String(inp.value || "").trim() : "";
+      if (!text) { if (inp) inp.focus(); return; }
+      b.disabled = true;
+      try { await saveReport(id, text); } catch (e) { alert("보고하지 못했다: " + e.message); }
+      after();
+    };
+  });
+  $$("[data-rep-in]", box).forEach(function (i) {
+    i.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      var b = $('[data-rep="' + i.getAttribute("data-rep-in") + '"]', box); if (b) b.click();
+    });
+  });
+  $$("[data-lbgo]", box).forEach(function (b) { b.onclick = function () { S.filterWho = MINE; showPage("tasks"); renderTasks(); }; });
+}
+// 할 일·완료 표시가 바뀌면 맨 위 상자도 다시. ⚠ 상자 안에서 한 줄 보고를 적는 중이면 건너뛴다 — 글자가 날아간다.
+function renderBannerSafe() {
+  var a = typeof document !== "undefined" ? document.activeElement : null, b = $("#banner");
+  if (!b) return;
+  if (a && b.contains && b.contains(a) && /^(input|textarea)$/i.test(a.tagName || "")) return;
+  try { renderBanner(); } catch (e) {}
 }
 
 // ---------- 업무보고 (2026-09-11 — 마왕님과 상의해 정하고 같은 날 올렸다) ----------
@@ -1558,7 +1728,7 @@ function rpDraft(tid, d, prev) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
         return { sid: r.id, pid: r.pid || "", name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
           called: ps ? !!ps.called : false, score: ps && ps.score != null ? ps.score : "", autoScore: ps && ps.autoScore != null ? ps.autoScore : null,
-          note: ps ? (ps.note || "") : "", warn: ps ? !!ps.warn : false,
+          note: ps ? (ps.note || "") : "", warn: ps ? !!ps.warn : false, risk: ps ? !!ps.risk : false,
           consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
       }) };
   });
@@ -1916,6 +2086,10 @@ function rpCheck(rep) {
   var wEmpty = [];
   rep.classes.forEach(function (c) { c.students.forEach(function (s) { if (s.warn && !String(s.note || "").trim()) wEmpty.push(s.name); }); });
   if (wEmpty.length) warn.push("«주의» 만 켜고 특이사항을 안 적은 학생 " + wEmpty.length + "명 — " + wEmpty.join(", ") + " (무엇이 걱정인지 한 줄)");
+  // «퇴원 위험» 은 **막는다** — 팀장 폰이 울리는데 왜인지 없으면 받은 사람이 전화를 걸 수 없다
+  rep.classes.forEach(function (c) { c.students.forEach(function (s) {
+    if (s.risk && !String(s.note || "").trim()) stop.push("퇴원 위험 — " + s.name + ": 무엇 때문인지 특이사항에 한 줄 적어야 낼 수 있다");
+  }); });
   return { stop: stop, warn: warn };
 }
 // 저장할 모양. 화면에만 쓰는 칸(attRead · due)은 뗀다.
@@ -1929,7 +2103,7 @@ function rpClean(rep) {
         students: c.students.map(function (s) {
           return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
                    score: rpScoreVal(s.score), autoScore: s.autoScore == null ? null : s.autoScore,
-                   note: String(s.note || "").trim(), warn: !!s.warn, consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
+                   note: String(s.note || "").trim(), warn: !!s.warn, risk: !!s.risk, consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
         }) };
     }),
     tasks: rep.tasks.filter(function (t) { return t.state || String(t.note || "").trim(); })
@@ -2016,6 +2190,9 @@ async function saveDailyReport(rep) {
   catch (e) { S.rpAttSync = { tid: tid, date: rep.date, added: 0, removed: 0, failed: ["전체 — " + e.message] }; }
   // ⚠ **처음 올릴 때만** 팀장 폰을 울린다. 고칠 때마다 울리면 하루에 열 번이고, 그러면 끄게 된다.
   if (!prev || !prev.submitted) pingLead("report");
+  // 퇴원 위험은 **새로 켠 학생이 있을 때마다** 울린다 — 처음 낼 때만이 아니다. 고쳐 내면서 켠 것도 팀장이 바로 알아야 한다.
+  // 이미 알린 학생(앞서 낸 판에도 켜져 있던 학생)은 다시 안 울린다.
+  if (rpRiskNew(prev, doc).length) pingLead("risk", { date: rep.date });
   // 보고에서 «완료» 로 고른 할 일은 **내 완료 표시**로도 남긴다 — 할 일 메뉴·완료 현황이 같은 것을 보게.
   var todo = doc.tasks.filter(function (t) { return t.state === "done" && !markDate(tid, t.id); });
   for (var i = 0; i < todo.length; i++) { try { await toggleMyMark(todo[i].id); } catch (e) {} }
@@ -2081,7 +2258,7 @@ function boardEntries(reports) {
         (c.students || []).forEach(function (st) {
           var sc = rpScoreVal(st.score);
           var e = { date: rep.date || d, tid: tid, cid: c.cid || "", cname: c.name || "", att: st.att || "", called: !!st.called,
-                    score: sc == null || isNaN(sc) ? null : sc, note: String(st.note || "").trim(), warn: !!st.warn };
+                    score: sc == null || isNaN(sc) ? null : sc, note: String(st.note || "").trim(), warn: !!st.warn || !!st.risk, risk: !!st.risk };
           if (st.pid) (byPid[st.pid] = byPid[st.pid] || []).push(e);
           else { var k = e.cid + "|" + st.name; (byKey[k] = byKey[k] || []).push(e); }
         });
@@ -2377,7 +2554,7 @@ function rpSummary(d) {
     (rep.classes || []).forEach(function (c) {
       (c.students || []).forEach(function (s) {
         if (s.att === "결석" && !s.called) sm.noCall.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name });
-        if (s.note || s.warn || (s.att && s.att !== "출석")) sm.notes.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name, att: s.att, note: s.note, called: s.called, warn: !!s.warn });
+        if (s.note || s.warn || s.risk || (s.att && s.att !== "출석")) sm.notes.push({ tid: t.tid, who: t.name, cls: c.name, name: s.name, att: s.att, note: s.note, called: s.called, warn: !!s.warn || !!s.risk, risk: !!s.risk });
       });
     });
     (rep.moves || []).forEach(function (m) { sm.moves.push({ tid: t.tid, who: t.name, m: m }); });
@@ -2407,8 +2584,8 @@ function rpDigest(d) {
       var av = rpScoreAvg(st);
       L.push("**" + c.name + "** · 출석 " + come + "/" + st.length + (av ? " · 테스트 평균 " + av.avg + "점(" + av.n + "명)" : "") +
         (c.progress ? " · 진도: " + c.progress : "") + (c.homework ? " · 과제: " + c.homework : ""));
-      st.filter(function (s) { return s.note || s.warn || (s.att && s.att !== "출석"); }).forEach(function (s) {
-        L.push("- " + s.name + (s.warn ? " **(주의)**" : "") + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") +
+      st.filter(function (s) { return s.note || s.warn || s.risk || (s.att && s.att !== "출석"); }).forEach(function (s) {
+        L.push("- " + s.name + (s.risk ? " **(퇴원 위험)**" : s.warn ? " **(주의)**" : "") + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") +
           (s.score != null ? s.score + "점" + (s.note ? " · " : "") : "") + (s.note || ""));
       });
       // 이번 주 우리 반 — **«없음» 은 안 싣는다.** 여섯 반 × 세 줄이 «없음» 이면 읽을 것이 묻힌다.
@@ -2773,7 +2950,10 @@ function rpDrawMine(box, d) {
             (s.att === "결석" ? "결석 사유" : "없으면 비워 둔다") + '"' + RPK + '>' +
             // 걱정되는 내용일 때만 켠다 — 학생 한눈에서 빨간 점. 안 켜면 그냥 적어 둔 것(회색 점)
             '<label class="rp-flag' + (s.warn ? " on" : "") + '" title="걱정되는 내용이면 켠다 — 학생 한눈에서 빨간 점으로 뜬다">' +
-            '<input type="checkbox" data-rps="' + k + '|warn"' + (s.warn ? " checked" : "") + RPK + '> 주의</label></div></td></tr>';
+            '<input type="checkbox" data-rps="' + k + '|warn"' + (s.warn ? " checked" : "") + RPK + '> 주의</label>' +
+            // 퇴원 낌새 (2026-10-06) — 켜고 내면 팀장 폰이 «퇴원 위험» 으로 울리고, 팀장이 확인할 때까지 맨 위 빨간 띠에 남는다
+            '<label class="rp-flag risk' + (s.risk ? " on" : "") + '" title="퇴원 낌새가 있으면 켠다 — 내는 순간 팀장에게 바로 알림이 간다. 무엇 때문인지 특이사항에 한 줄">' +
+            '<input type="checkbox" data-rps="' + k + '|risk"' + (s.risk ? " checked" : "") + RPK + '> 퇴원 위험</label></div></td></tr>';
       }).join("") + '</tbody></table></div>' +
       // 이번 주 우리 반 — 그 반의 그 주 마지막 수업일에만 뜬다 (월금 반은 금, 화목 반은 목)
       (c.week ? '<div class="rp-week"><b>이번 주 ' + esc(c.name) + '</b> ' +
@@ -2877,6 +3057,7 @@ function rpWireMine(box) {
     else if (k[2] === "score") i.oninput = function () { s.score = i.value; };   // 글자 칸 — 다시 그리지 않는다
     else if (k[2] === "called") i.onchange = function () { s.called = i.checked; rep.classes[+k[0]].allUndo = null; re(); };
     else if (k[2] === "warn") i.onchange = function () { s.warn = i.checked; re(); };
+    else if (k[2] === "risk") i.onchange = function () { s.risk = i.checked; re(); };
     // 손으로 고르면 «전체 출석» 이 이 학생을 안 건드리고, «되돌리기» 도 거둔다 — 되돌리기가 방금 고른 값을 덮으면 안 된다
     else i.onchange = function () { s.att = i.value; s.attTouched = true; rep.classes[+k[0]].allUndo = null; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
   });
@@ -3043,12 +3224,12 @@ function rpDrawAll(box, d, sm) {
         (c.progress ? ' · 진도 ' + esc(c.progress) : ' · <span class="red">진도 안 적음</span>') +
         (c.homework ? ' · 과제 ' + esc(c.homework) : "") + '</span></div>' +
         '<div class="rpwrap"><table class="rp-t rp-read"><tbody>' + ss.map(function (s) {
-          var quiet = s.att === "출석" && !s.note && s.score == null;
+          var quiet = s.att === "출석" && !s.note && s.score == null && !s.risk;
           return '<tr class="' + (quiet ? "rp-dim" : s.att === "결석" ? "abs" : s.att === "지각" || s.att === "조퇴" ? "late" : "") + '">' +
             '<td style="width:90px"><b>' + esc(s.name) + '</b></td><td style="width:90px">' + esc(s.att || "—") +
             (s.att === "결석" ? (s.called ? ' <span class="muted">연락함</span>' : ' <span class="red">연락 안 함</span>') : "") + '</td>' +
             '<td style="width:56px">' + (s.score != null ? esc(s.score) + '점' : "") + '</td>' +
-            '<td>' + (s.warn ? '<span class="pill red">주의</span> ' : "") + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
+            '<td>' + (s.risk ? '<span class="pill rk">퇴원 위험</span> ' : "") + (s.warn ? '<span class="pill red">주의</span> ' : "") + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
             (s.makeup ? ' <span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td></tr>';
         }).join("") + '</tbody></table></div>' +
         // 이번 주 우리 반 — «없음» 도 그대로 둔다. 여기서는 그게 **확인했다는 표시**다.
@@ -5103,10 +5284,10 @@ async function pushOff() {
 }
 // 팀장에게 보내는 짧은 알림. 글은 서버가 만든다 — 여기서는 «무슨 일인지»만 말한다.
 function leadTids() { return (S.teachers || []).filter(function (t) { return t.role === "owner"; }).map(function (t) { return t.tid; }); }
-function pingLead(kind) {
+function pingLead(kind, extra) {
   var leads = leadTids();
   if (!leads.length) return;
-  pushApi("lead", { kind: kind, leads: leads }).catch(function () {});   // 실패해도 하던 일은 그대로 간다
+  pushApi("lead", Object.assign({ kind: kind, leads: leads }, extra || {})).catch(function () {});   // 실패해도 하던 일은 그대로 간다
 }
 // 팀장이 담당 선생님들에게 «새 할 일» 을 알린다.
 //
@@ -5378,6 +5559,7 @@ function rebuildTasks(part, items) {
   if (!$("#sec-tasks")) return;
   renderBell();
   renderTasksSafe();
+  renderBannerSafe();
   renderDone();
   renderExec();
   renderCal();
@@ -5429,7 +5611,7 @@ function watchTasks() {
     var m = {}; s2.forEach(function (d) { m[d.id] = d.data() || {}; });
     S.marks = m;
     if (!$("#sec-tasks")) return;      // 로그아웃 중 스냅샷 방어
-    renderTasksSafe(); renderDone(); renderExec();
+    renderTasksSafe(); renderDone(); renderExec(); renderBannerSafe();
   });
 }
 
@@ -8134,13 +8316,15 @@ function renderTerms() {
         '<td><span class="pill ' + gradeCls(v.grade) + '">' + esc(v.grade) + '</span></td>' +
         '<td class="muted">' + (v.n || 0) + '</td>' +
         ["start", "end", "math", "back"].map(function (f) {
-          return '<td><input type="date" data-f="' + f + '" value="' + esc(v[f] || "") + '"></td>';
+          // data-keep — 선생님도 넣는다 (2026-10-06). 없으면 읽기 계정의 «감추기»가 칸을 잠근다
+          return '<td><input type="date" data-f="' + f + '" value="' + esc(v[f] || "") + '" data-keep></td>';
         }).join("") +
         '<td>' + esc(v.label || "") + ' ' + badge + '</td>' +
         '<td class="wrapc muted" style="font-size:12px">' + esc(v.plan || "") +
         (v.srcUrl ? ' <a href="' + esc(v.srcUrl) + '" target="_blank">' + esc(v.srcName || "근거") + '</a>' : "") + '</td></tr>';
     }).join("") + '</tbody></table></div>' +
     '<p class="muted" style="font-size:12px;margin:6px 0 0">학생이 다니는 학교·학년만 뜬다. ' +
+    '<b>시작 · 끝 · 수학시험 · 복귀는 선생님도 직접 넣는다</b> — 홈페이지 학사일정 그대로. 고치면 그 자리에서 저장된다. ' +
     '<b>수학시험 날짜는 학사일정에 없다</b> — 과목별 시간표는 안 올라온다. ' +
     '가정통신문·공지의 시험 시간표를 <b>수학시험 날짜 넣기</b> 에 붙여넣으면 찾아 준다. ' +
     '직보는 참여표에서 수학시험 전날로 자동으로 잡힌다.</p>';
@@ -8261,8 +8445,13 @@ function bindTerms() {
       var kk = inp.closest("tr").getAttribute("data-k").split("|");
       var f = inp.getAttribute("data-f"), patch = {};
       patch[f] = inp.value;
+      patch.by = myName();     // 누가 마지막으로 고쳤나 — 선생님도 넣으니 남긴다
       try {
-        await saveSchoolTerm(S.term, kk[0], kk[1], patch);
+        // 학교 일정 기간은 선생님도 넣는다 (2026-10-06 마왕님 «학교일정기간도 선생님들이 넣을 수 있게»).
+        // 앱 DB(appConfig/schoolTerms)라 규칙은 원래 선생님 쓰기를 허용한다 — 문턱은 guardWrites 하나다.
+        // 이 칸 하나만 passWrite 로 지나간다. 찾아오기·붙여넣기·채우기는 그대로 팀장 것이다.
+        // ⚠ saveSchoolTerm 은 async 지만 set() 은 첫 await 전에 불린다 — passWrite 가 여는 동기 구간 안이다.
+        await passWrite(function () { return saveSchoolTerm(S.term, kk[0], kk[1], patch); });
         inp.classList.add("ok"); setTimeout(function () { inp.classList.remove("ok"); }, 900);
       } catch (e) { inp.classList.add("bad"); alert("저장하지 못했다: " + e.message); }
     };
