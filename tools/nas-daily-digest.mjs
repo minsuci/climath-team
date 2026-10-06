@@ -56,6 +56,8 @@ function log(msg) {
 // ---- index.html 에서 꺼내 쓰는 것 ----
 const PICK = ["pad2", "DOW", "parseYmd", "fmtMD", "RP_START", "RP_STATE", "RP_MOVE", "rpScoreVal", "rpScoreAvg",
   "RP_SKIP_NAMES", "rpSkip", "RP_WORK_DOWS", "rpOffDow", "RP_WEEK", "rpWeekSaid", "rpMoveText", "rpSummary", "rpDigest",
+  // 퇴원 보고 세 입장 · 후속 (2026-10-06)
+  "RP_WHY", "RP_FOLLOW", "rpWhyOf", "rpWhyText",
   // 쉬는 날(2026-10-03) — 앱과 같은 판정. 학원 달력(dash/calEvents)의 «안 쉼» 덮어쓰기까지 본다
   "HOLIDAYS", "holEvent", "evEnd", "ACADEMY_OFF_RE", "holBuiltin", "holidayOf", "rpDayOf", "rpWorkOf", "rpHolidayFor"];
 

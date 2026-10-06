@@ -414,6 +414,21 @@
   .rp-flag.risk { margin-left: 6px; }
   .rp-flag.risk.on { color: #fff; background: #c62828; border-radius: 4px; padding: 1px 6px; }
   .pill.rk { background: #c62828; color: #fff; border-color: #c62828; }
+  .rp-why { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; margin: 4px 0 2px; }
+  .rp-why label { flex: 1 1 200px; display: flex; flex-direction: column; font-size: 12px; color: #8e1b1b; gap: 2px; }
+  .rp-why input { border-color: #e4b4ae; }
+  .rp-why-tr td { border-top: 0; padding-top: 0; background: #fff6f6; }
+  .rp-why-r { font-size: 12px; margin-top: 3px; line-height: 1.5; }
+  .rp-why-r b { color: #8e1b1b; margin-right: 3px; }
+  .rp-fu { font-size: 12px; margin-top: 4px; border-left: 3px solid #e4b4ae; padding-left: 6px; }
+  .rp-fu-l { margin-top: 2px; }
+  .rp-fubox { border: 2px solid #c62828; background: #fff6f6; border-radius: 8px; padding: 8px 12px; margin: 8px 0 12px; }
+  .rp-fu-c { background: #fff; border-radius: 6px; padding: 8px 10px; margin-top: 6px; }
+  .rp-fu-in input[type=text] { flex: 1 1 220px; }
+  .rk-band .rk-why { font-size: 13px; margin: 2px 0 4px; line-height: 1.5; }
+  .rk-band .rk-why b { opacity: .85; margin-right: 4px; }
+  .rk-band .rk-fu { font-size: 13px; background: rgba(255,255,255,.15); border-radius: 4px; padding: 3px 6px; margin-bottom: 4px; }
+  .rk-band .pill.rk-k { background: #fff; color: #8e1b1b; border-color: #fff; font-weight: 700; }
   /* 퇴원 위험 — 팀장 맨 위 띠. 다른 띠(노랑·분홍)와 섞이지 않게 진한 빨강 */
   .banner.rk-band { background: #c62828; border-color: #8e1b1b; color: #fff; padding: 12px 14px; }
   .rk-band .rk-h { font-size: 17px; font-weight: 800; margin-bottom: 6px; }
@@ -1369,51 +1384,137 @@ function renderBanner() {
 //   ② 팀장 화면 맨 위 빨간 띠 — 어느 메뉴에 있든 보인다. **«확인함» 을 눌러야** 빠진다.
 // 확인한 것은 `marks/<팀장>.riskSeen["tid|날짜|sid"] = 시각` — 새 컬렉션을 안 만든다(규칙을 다시 게시하지 않게).
 // 띠가 보는 범위는 팀장이 읽어 둔 보고(최근 3주)다.
-function rpRiskKey(tid, d, c, s) { return tid + "|" + d + "|" + (s.sid || (c.cid + ":" + s.name)); }
-// 앞서 낸 판에는 없고 이번 판에 새로 켜진 학생 — 이것이 있을 때만 폰을 울린다
+// 사건 하나 = 보고 한 장의 퇴원 위험 학생 하나 또는 퇴원 줄 하나. 후속 보고는 **그 보고 문서**의 follow[사건] 에 붙는다.
+function rpCaseId(kind, c, x) {
+  return kind === "risk" ? "r:" + (c ? c.cid : "") + ":" + (x.sid || x.name) : "m:" + (x.fromCid || "") + ":" + (x.sid || x.name);
+}
+function rpRiskKey(tid, d, caseId) { return tid + "|" + d + "|" + caseId; }
+// 앞서 낸 판에는 없고 이번 판에 새로 생긴 퇴원 보고(위험 학생 · 퇴원 줄) — 이것이 있을 때만 폰을 울린다
 function rpRiskNew(prev, doc) {
   var had = {};
-  ((prev && prev.submitted && prev.classes) || []).forEach(function (c) {
-    (c.students || []).forEach(function (s) { if (s.risk) had[c.cid + "|" + (s.sid || s.name)] = 1; });
-  });
-  var out = [];
-  (doc.classes || []).forEach(function (c) {
-    (c.students || []).forEach(function (s) { if (s.risk && !had[c.cid + "|" + (s.sid || s.name)]) out.push(s.name); });
-  });
-  return out;
+  var ids = function (r) {
+    var out = [];
+    ((r && r.classes) || []).forEach(function (c) { (c.students || []).forEach(function (s) { if (s.risk) out.push({ id: rpCaseId("risk", c, s), name: s.name }); }); });
+    ((r && r.moves) || []).forEach(function (m) { if (m.kind === "leave" && m.name) out.push({ id: rpCaseId("leave", null, m), name: m.name }); });
+    return out;
+  };
+  if (prev && prev.submitted) ids(prev).forEach(function (x) { had[x.id] = 1; });
+  return ids(doc).filter(function (x) { return !had[x.id]; }).map(function (x) { return x.name; });
 }
 function riskSeenMap() { var m = (S.marks || {})[myTid()] || {}; return m.riskSeen || {}; }
-// 낸 보고들 가운데 퇴원 위험이 켜진 학생. seen 을 넘기면 확인 안 한 것만.
-function riskItems(seen) {
-  var out = [];
-  Object.keys(S.reports || {}).forEach(function (tid) {
-    var m = S.reports[tid] || {};
-    Object.keys(m).forEach(function (d) {
-      var rep = m[d];
-      if (!(rep && rep.submitted)) return;
-      (rep.classes || []).forEach(function (c) {
-        (c.students || []).forEach(function (s) {
-          if (!s.risk) return;
-          var key = rpRiskKey(tid, d, c, s);
-          if (seen && seen[key]) return;
-          out.push({ key: key, tid: tid, who: teacherName(tid) || rep.name || tid, d: d, cls: c.name, name: s.name, note: s.note || "" });
-        });
-      });
+// 한 선생님의 퇴원 보고 사건들 (읽어 둔 보고 범위 — 3주)
+function rpCases(tid) {
+  var out = [], m = (S.reports || {})[tid] || {};
+  Object.keys(m).forEach(function (d) {
+    var rep = m[d];
+    if (!(rep && rep.submitted)) return;
+    var fl = rep.follow || {};
+    var add = function (kind, id, name, cls, x) {
+      var f = (fl[id] || []).slice(), last = f[f.length - 1] || null;
+      out.push({ kind: kind, id: id, key: rpRiskKey(tid, d, id), tid: tid, who: teacherName(tid) || rep.name || tid, d: d, name: name, cls: cls,
+        note: x.note || "", why: rpWhyOf(x), follow: f, last: last,
+        at: Math.max(rep.submitted || 0, last ? last.at || 0 : 0),
+        closed: !!(last && last.state && last.state !== "going") });
+    };
+    (rep.classes || []).forEach(function (c) {
+      (c.students || []).forEach(function (s) { if (s.risk) add("risk", rpCaseId("risk", c, s), s.name, c.name, s); });
     });
+    (rep.moves || []).forEach(function (mv) { if (mv.kind === "leave" && mv.name) add("leave", rpCaseId("leave", null, mv), mv.name, mv.fromName || "", mv); });
   });
   return out.sort(function (a, b) { return a.d < b.d ? 1 : a.d > b.d ? -1 : String(a.name).localeCompare(String(b.name), "ko"); });
+}
+// 팀장 띠 — 확인 안 한 것 + **확인한 뒤 후속 보고가 새로 온 것**
+function riskItems(seen) {
+  var out = [];
+  S.teachers.forEach(function (t) {
+    rpCases(t.tid).forEach(function (x) { if (!seen || !(seen[x.key] >= x.at)) out.push(x); });
+  });
+  return out.sort(function (a, b) { return b.at - a.at; });
+}
+function rpWhyReadHtml(x) {
+  var w = rpWhyOf(x);
+  if (!RP_WHY.some(function (f) { return w[f.k]; })) return "";
+  return '<div class="rp-why-r">' + RP_WHY.map(function (f) {
+    return '<div><b>' + f.label.replace(" 입장", "") + '</b> ' + (w[f.k] ? esc(w[f.k]) : '<span class="muted">—</span>') + '</div>';
+  }).join("") + '</div>';
+}
+function rpFollowLine(f) {
+  return '<div class="rp-fu-l"><span class="pill' + (f.state === "left" ? " rk" : f.state === "stay" ? " green" : "") + '">' + esc(RP_FOLLOW[f.state] || f.state || "") + '</span> ' +
+    esc(f.text || "") + ' <span class="muted" style="font-size:12px">' + esc(rpHM(f.at)) + '</span></div>';
+}
+function rpFollowReadHtml(rep, id) {
+  var f = ((rep && rep.follow) || {})[id] || [];
+  return f.length ? '<div class="rp-fu"><b>후속 보고 ' + f.length + '</b>' + f.map(rpFollowLine).join("") + '</div>' : "";
 }
 function riskBannerHtml() {
   if (S.ro || !S.claims || !S.reports) return "";
   var list = riskItems(riskSeenMap());
   if (!list.length) return "";
-  return '<div class="banner rk-band"><div class="rk-h">🚨 퇴원 위험 ' + list.length + '명 — 확인하고 바로 연락</div>' +
+  return '<div class="banner rk-band"><div class="rk-h">🚨 퇴원 보고 ' + list.length + '건 — 확인하고 바로 연락</div>' +
     list.map(function (x) {
-      return '<div class="rk-row"><b>' + esc(x.name) + '</b> <span class="rk-meta">' + esc(x.cls) + ' · ' + esc(x.who) + ' · ' + esc(fmtMD(x.d)) + '</span>' +
-        '<div class="rk-note">' + esc(x.note) + '</div>' +
+      return '<div class="rk-row"><span class="pill rk-k">' + (x.kind === "leave" ? "퇴원" : "퇴원 위험") + '</span> <b>' + esc(x.name) + '</b> ' +
+        '<span class="rk-meta">' + esc(x.cls) + ' · ' + esc(x.who) + ' · ' + esc(fmtMD(x.d)) + (x.follow.length ? ' · 후속 ' + x.follow.length : "") + '</span>' +
+        (x.note ? '<div class="rk-note">' + esc(x.note) + '</div>' : "") +
+        '<div class="rk-why">' + RP_WHY.map(function (f) {
+          return '<div><b>' + f.label.replace(" 입장", "") + '</b> ' + (x.why[f.k] ? esc(x.why[f.k]) : "—") + '</div>'; }).join("") + '</div>' +
+        (x.last ? '<div class="rk-fu">↳ <b>후속 ' + esc(RP_FOLLOW[x.last.state] || x.last.state || "") + '</b> ' + esc(x.last.text || "") +
+          ' <span class="rk-meta">' + esc(rpHM(x.last.at)) + '</span></div>' : "") +
         '<span class="rk-act"><button class="mini" data-rkgo="' + esc(x.d) + '">보고 보기</button>' +
         '<button class="mini rk-ok" data-rkok="' + esc(x.key) + '">확인함</button></span></div>';
     }).join("") + '</div>';
+}
+// ---- 선생님 — 내 퇴원 보고에 후속 보고 (2026-10-06 마왕님 «퇴원보고에는 후속보고를 올릴 수 있게») ----
+// 업무보고 «내 보고» 맨 위. 아직 끝나지 않은 사건(마지막 후속이 «진행 중» 이거나 아직 없음)만.
+// 쓰는 곳은 **그 사건이 처음 올라온 보고 문서**의 follow[사건] — 자기 칸이라 규칙 그대로(merge).
+// 올리면 팀장 폰이 다시 울리고(kind=riskf) 팀장 맨 위 띠에 다시 뜬다.
+function rpFollowMineHtml() {
+  var me = myTid(), list = rpCases(me).filter(function (x) { return !x.closed; });
+  if (!list.length) return "";
+  S.rpFuList = list;
+  return '<div class="rp-fubox"><h3 class="rp-h">퇴원 보고 — 후속 <span class="muted" style="font-size:12px;font-weight:400">통화 · 상담한 뒤 결과를 올린다. «남기로 함» · «퇴원 확정» 을 올리면 여기서 빠진다</span></h3>' +
+    list.map(function (x, i) {
+      var msg = (S.rpFuMsg || {})[x.key];
+      return '<div class="rp-fu-c"><div><span class="pill rk">' + (x.kind === "leave" ? "퇴원" : "퇴원 위험") + '</span> <b>' + esc(x.name) + '</b> ' +
+        '<span class="muted" style="font-size:12px">' + esc(x.cls) + ' · ' + esc(fmtMD(x.d)) + ' 보고</span></div>' +
+        rpWhyReadHtml(x) + (x.follow.length ? '<div class="rp-fu">' + x.follow.map(rpFollowLine).join("") + '</div>' : "") +
+        '<div class="row rp-fu-in"><select data-rpfus="' + i + '"' + RPK + '>' +
+        Object.keys(RP_FOLLOW).map(function (k) { return '<option value="' + k + '">' + RP_FOLLOW[k] + '</option>'; }).join("") + '</select>' +
+        '<input type="text" data-rpfut="' + i + '" maxlength="300" placeholder="통화 · 상담 결과 한 줄"' + RPK + '>' +
+        '<button class="mini plus" data-rpfu="' + i + '"' + RPK + '>후속 보고 올리기</button>' +
+        (msg ? '<span class="muted" style="font-size:12px">' + esc(msg) + '</span>' : "") + '</div></div>';
+    }).join("") + '</div>';
+}
+async function rpAddFollow(x, state, text) {
+  var me = myTid();
+  if (x.tid !== me) throw new Error("남의 보고에는 못 붙인다");
+  var rep = ((S.reports || {})[me] || {})[x.d];
+  if (!rep) throw new Error("그 보고를 못 찾았다");
+  var cur = ((rep.follow || {})[x.id] || []).slice();
+  cur.push({ id: newId(), at: Date.now(), day: TODAY, state: state, text: text, name: x.name });
+  var patch = { follow: {} }; patch.follow[x.id] = cur;
+  await passWrite(function () { return rpCol(me).doc(x.d).set(patch, { merge: true }); });
+  rep.follow = Object.assign({}, rep.follow || {}); rep.follow[x.id] = cur;
+  pingLead("riskf", { date: x.d, case: x.id });
+}
+function rpFollowWire(box) {
+  $$("[data-rpfu]", box).forEach(function (b) {
+    b.onclick = async function () {
+      var i = +b.getAttribute("data-rpfu"), x = (S.rpFuList || [])[i]; if (!x) return;
+      var t = $('[data-rpfut="' + i + '"]', box), sel = $('[data-rpfus="' + i + '"]', box);
+      var text = String((t && t.value) || "").trim();
+      if (!text) { if (t) t.focus(); return; }
+      b.disabled = true;
+      try { await rpAddFollow(x, sel ? sel.value : "going", text); S.rpFuMsg = S.rpFuMsg || {}; S.rpFuMsg[x.key] = "올렸다 · 팀장에게 알렸다"; }
+      catch (e) { alert("못 올렸다: " + e.message); }
+      keepScrollIn("#sec-report", renderReport);
+    };
+  });
+}
+function rpWhyInputs(x, attr) {
+  var w = rpWhyOf(x);
+  return '<div class="rp-why">' + RP_WHY.map(function (f) {
+    return '<label><b>' + f.label + '</b><input type="text" ' + attr + f.k + '" value="' + esc(w[f.k]) + '" placeholder="' + f.ph + '"' + RPK + '></label>';
+  }).join("") + '</div>';
 }
 async function riskSee(key) {
   var me = myTid(); if (!me) return;
@@ -1539,6 +1640,21 @@ var RP_KINDS = ["학부모 연락", "상담", "자료 제작", "채점·검사",
 //   앱 명단에 아직 없는 학생이라 고르지 않고 **이름을 적는다**(sid·pid 없음). 학교는 적으면 같이.
 //   팀장이 «앱에 반영» 을 누르면 학생 명단에서 이름(·학교)으로 찾아 반에 넣고, 없으면 새로 만든다(stCreate → stAssign).
 var RP_MOVE = { move: "반 이동", leave: "퇴원", add: "학생 추가" };
+// 퇴원 보고는 **세 입장을 모두** 받는다 (2026-10-06 마왕님 «학부모 학생 강사 입장 세가지를 모두 보고하도록»).
+// 10/5 팀회의 순서 — 낌새 → 통화 · 상담 → 학생 · 학부모 · 강사 세 관점 보고. 퇴원 위험(학생 줄)과 퇴원(명단 변동) 둘 다.
+var RP_WHY = [
+  { k: "student", label: "학생 입장",   ph: "학생이 직접 한 말 · 태도" },
+  { k: "parent",  label: "학부모 입장", ph: "통화 · 상담에서 들은 것" },
+  { k: "teacher", label: "강사 입장",   ph: "내가 보는 원인 · 어떻게 할지" },
+];
+// 후속 보고의 상태. 앞의 둘이 아니면 끝난 것이다.
+var RP_FOLLOW = { going: "진행 중", stay: "남기로 함", left: "퇴원 확정" };
+function rpWhyOf(x) { var w = (x && x.why) || {}, o = {}; RP_WHY.forEach(function (f) { o[f.k] = String(w[f.k] || "").trim(); }); return o; }
+function rpWhyMissing(x) { var w = rpWhyOf(x); return RP_WHY.filter(function (f) { return !w[f.k]; }).map(function (f) { return f.label; }); }
+function rpWhyText(x) {
+  var w = rpWhyOf(x);
+  return RP_WHY.filter(function (f) { return w[f.k]; }).map(function (f) { return f.label.replace(" 입장", "") + ": " + w[f.k]; }).join(" / ");
+}
 function rpMovePill(m) { return m.kind === "leave" ? "red" : m.kind === "add" ? "green" : "blue"; }
 var RP_DUE_HOUR = 8;               // 그 날 보고는 **다음 날 아침 8시**까지
 // 이 날부터 «안 냈다» 를 센다. 기능을 올리기 전 날들이 전부 «안 냄» 으로 뜨면 안 된다.
@@ -1728,7 +1844,7 @@ function rpDraft(tid, d, prev) {
         var ps = (pc.students || []).filter(function (x) { return x.sid === r.id; })[0] || null;
         return { sid: r.id, pid: r.pid || "", name: r.name, auto: ps ? (ps.auto || "") : "", att: ps ? (ps.att || "") : "",
           called: ps ? !!ps.called : false, score: ps && ps.score != null ? ps.score : "", autoScore: ps && ps.autoScore != null ? ps.autoScore : null,
-          note: ps ? (ps.note || "") : "", warn: ps ? !!ps.warn : false, risk: ps ? !!ps.risk : false,
+          note: ps ? (ps.note || "") : "", warn: ps ? !!ps.warn : false, risk: ps ? !!ps.risk : false, why: rpWhyOf(ps),
           consult: ps ? ps.consult : null, makeup: ps ? ps.makeup : null };
       }) };
   });
@@ -1739,7 +1855,7 @@ function rpDraft(tid, d, prev) {
   });
   return { tid: tid, name: teacherName(tid), date: d, classes: classes, tasks: tasks,
     extra: (prev.extra || []).slice(), toLead: prev.toLead || "",
-    moves: (prev.moves || []).map(function (m) { return Object.assign({}, m); }),
+    moves: (prev.moves || []).map(function (m) { return Object.assign({}, m, { why: rpWhyOf(m) }); }),   // why 는 따로 베낀다 — 판에서 고치면 낸 사본까지 바뀐다
     submitted: prev.submitted || 0, updated: prev.updated || 0 };
 }
 // 명단 변동에서 고를 학생 — 그 날 수업이 없어도 **내 반 학생은 전부**. 개별진도반은 요일이 달라 그 날 명단에 없을 수 있다.
@@ -2086,10 +2202,16 @@ function rpCheck(rep) {
   var wEmpty = [];
   rep.classes.forEach(function (c) { c.students.forEach(function (s) { if (s.warn && !String(s.note || "").trim()) wEmpty.push(s.name); }); });
   if (wEmpty.length) warn.push("«주의» 만 켜고 특이사항을 안 적은 학생 " + wEmpty.length + "명 — " + wEmpty.join(", ") + " (무엇이 걱정인지 한 줄)");
-  // «퇴원 위험» 은 **막는다** — 팀장 폰이 울리는데 왜인지 없으면 받은 사람이 전화를 걸 수 없다
+  // 퇴원 보고는 **막는다** — 학생 · 학부모 · 강사 세 입장이 다 있어야 낸다 (2026-10-06).
+  // 팀장 폰이 울리는데 왜인지 없으면 받은 사람이 전화를 걸 수 없다.
   rep.classes.forEach(function (c) { c.students.forEach(function (s) {
-    if (s.risk && !String(s.note || "").trim()) stop.push("퇴원 위험 — " + s.name + ": 무엇 때문인지 특이사항에 한 줄 적어야 낼 수 있다");
+    var miss = s.risk ? rpWhyMissing(s) : [];
+    if (miss.length) stop.push("퇴원 위험 — " + s.name + ": " + miss.join(" · ") + " 을(를) 적어야 낼 수 있다");
   }); });
+  (rep.moves || []).forEach(function (m) {
+    var miss = m.kind === "leave" && m.name ? rpWhyMissing(m) : [];
+    if (miss.length) stop.push("퇴원 — " + m.name + ": " + miss.join(" · ") + " 을(를) 적어야 낼 수 있다");
+  });
   return { stop: stop, warn: warn };
 }
 // 저장할 모양. 화면에만 쓰는 칸(attRead · due)은 뗀다.
@@ -2103,7 +2225,8 @@ function rpClean(rep) {
         students: c.students.map(function (s) {
           return { sid: s.sid, pid: s.pid || "", name: s.name, att: s.att || "", auto: s.auto || "", called: !!s.called,
                    score: rpScoreVal(s.score), autoScore: s.autoScore == null ? null : s.autoScore,
-                   note: String(s.note || "").trim(), warn: !!s.warn, risk: !!s.risk, consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
+                   note: String(s.note || "").trim(), warn: !!s.warn, risk: !!s.risk, why: s.risk ? rpWhyOf(s) : null,
+                   consult: s.consult == null ? null : s.consult, makeup: s.makeup || null };
         }) };
     }),
     tasks: rep.tasks.filter(function (t) { return t.state || String(t.note || "").trim(); })
@@ -2118,7 +2241,7 @@ function rpClean(rep) {
       return { kind: leave ? "leave" : "move", sid: m.sid || "", pid: m.pid || "", name: m.name,
         fromCid: m.fromCid || "", fromName: m.fromName || "",
         toCid: leave ? "" : (m.toCid || ""), toName: leave ? "" : String(m.toName || "").trim(),
-        date: m.date || rep.date, note: String(m.note || "").trim() };
+        date: m.date || rep.date, note: String(m.note || "").trim(), why: leave ? rpWhyOf(m) : null };
     }),
     toLead: String(rep.toLead || "").trim() };
 }
@@ -2184,6 +2307,7 @@ async function saveDailyReport(rep) {
   await passWrite(function () { return rpCol(tid).doc(rep.date).set(doc, { merge: true }); });
   if (prev && prev.leadNotes) { doc.leadNotes = prev.leadNotes; if (prev.leadSeen) doc.leadSeen = prev.leadSeen; }
   if (prev && prev.replies) doc.replies = prev.replies;
+  if (prev && prev.follow) doc.follow = prev.follow;      // 후속 보고는 따로 쓴다(rpAddFollow) — 다시 내도 merge 라 남는다
   S.reports = S.reports || {}; S.reports[tid] = S.reports[tid] || {}; S.reports[tid][rep.date] = doc;
   // 낸 출석을 수업관리 앱에도 (rpSyncAppAtt) — 못 옮겨도 보고는 낸 것이다
   try { S.rpAttSync = Object.assign({ tid: tid, date: rep.date }, await rpSyncAppAtt(doc)); }
@@ -2575,6 +2699,18 @@ function rpDigest(d) {
   if (sm.moves.length) L.push("- **명단 변동 " + sm.moves.length + "건** — " +
     sm.moves.map(function (x) { return x.m.name + " " + rpMoveText(x.m) + (x.m.date ? "(" + fmtMD(x.m.date) + ")" : ""); }).join(", "));
   if (sm.asks.length) L.push("- 요청 " + sm.asks.length + "건");
+  // 그 날 올라온 퇴원 후속 보고 — 앞서 낸 보고에 붙는다. 읽어 둔 보고 범위 안에서만 찾는다
+  var fu = [];
+  Object.keys(S.reports || {}).forEach(function (tid) {
+    var m = S.reports[tid] || {};
+    Object.keys(m).forEach(function (rd) {
+      var fl = (m[rd] && m[rd].follow) || {};
+      Object.keys(fl).forEach(function (cid) {
+        (fl[cid] || []).forEach(function (f) { if (f.day === d) fu.push(nm(tid) + " — " + (f.name || "") + " [" + (RP_FOLLOW[f.state] || f.state || "") + "] " + (f.text || "") + " (" + fmtMD(rd) + " 보고에 이어)"); });
+      });
+    });
+  });
+  if (fu.length) { L.push("- **퇴원 후속 보고 " + fu.length + "건**"); fu.forEach(function (x) { L.push("  - " + x); }); }
   sm.got.forEach(function (tid) {
     var rep = S.reports[tid][d];
     L.push(""); L.push("## " + nm(tid));
@@ -2587,6 +2723,7 @@ function rpDigest(d) {
       st.filter(function (s) { return s.note || s.warn || s.risk || (s.att && s.att !== "출석"); }).forEach(function (s) {
         L.push("- " + s.name + (s.risk ? " **(퇴원 위험)**" : s.warn ? " **(주의)**" : "") + " — " + (s.att && s.att !== "출석" ? s.att + (s.att === "결석" ? (s.called ? "(연락함)" : "(**연락 안 함**)") : "") + (s.note ? " · " : "") : "") +
           (s.score != null ? s.score + "점" + (s.note ? " · " : "") : "") + (s.note || ""));
+        if (s.risk && rpWhyText(s)) L.push("  - " + rpWhyText(s));
       });
       // 이번 주 우리 반 — **«없음» 은 안 싣는다.** 여섯 반 × 세 줄이 «없음» 이면 읽을 것이 묻힌다.
       RP_WEEK.forEach(function (f) {
@@ -2602,6 +2739,7 @@ function rpDigest(d) {
     (rep.extra || []).forEach(function (x) { L.push("- (" + x.kind + ") " + x.text); });
     (rep.moves || []).forEach(function (m) {
       L.push("- (" + RP_MOVE[m.kind] + ") " + m.name + " " + rpMoveText(m) + (m.date ? " · " + fmtMD(m.date) + "부터" : "") + (m.note ? " — " + m.note : ""));
+      if (m.kind === "leave" && rpWhyText(m)) L.push("  - " + rpWhyText(m));
     });
     if (rep.toLead) { L.push(""); L.push("요청: " + rep.toLead); }
   });
@@ -2906,7 +3044,7 @@ function rpDrawMine(box, d) {
     : (rpExpected(me, d) && rpDeadline(d) <= Date.now()
         ? '<span class="pill red">안 냈다 — 다음 날 아침 8시가 지났다</span>'
         : '<span class="pill">아직 안 냈다</span> <span class="muted">다음 날 아침 8시까지 내면 된다</span>');
-  var h = '<div class="rp-state">' + st + '</div>' + rpNotesMineHtml(saved);
+  var h = '<div class="rp-state">' + st + '</div>' + rpNotesMineHtml(saved) + rpFollowMineHtml();
   var others = rpNoteDates().filter(function (x) { return x !== d; });
   if (others.length) h += '<div class="rp-notes">새 코멘트가 달린 날 ' + others.map(function (x) {
     return '<button class="mini" data-rpngo="' + x + '"' + RPK + '>' + esc(fmtMD(x)) + '</button>'; }).join(" ") + '</div>';
@@ -2953,7 +3091,8 @@ function rpDrawMine(box, d) {
             '<input type="checkbox" data-rps="' + k + '|warn"' + (s.warn ? " checked" : "") + RPK + '> 주의</label>' +
             // 퇴원 낌새 (2026-10-06) — 켜고 내면 팀장 폰이 «퇴원 위험» 으로 울리고, 팀장이 확인할 때까지 맨 위 빨간 띠에 남는다
             '<label class="rp-flag risk' + (s.risk ? " on" : "") + '" title="퇴원 낌새가 있으면 켠다 — 내는 순간 팀장에게 바로 알림이 간다. 무엇 때문인지 특이사항에 한 줄">' +
-            '<input type="checkbox" data-rps="' + k + '|risk"' + (s.risk ? " checked" : "") + RPK + '> 퇴원 위험</label></div></td></tr>';
+            '<input type="checkbox" data-rps="' + k + '|risk"' + (s.risk ? " checked" : "") + RPK + '> 퇴원 위험</label></div></td></tr>' +
+            (s.risk ? '<tr class="rp-why-tr"><td></td><td colspan="6">' + rpWhyInputs(s, 'data-rpy="' + k + '|') + '</td></tr>' : "");
       }).join("") + '</tbody></table></div>' +
       // 이번 주 우리 반 — 그 반의 그 주 마지막 수업일에만 뜬다 (월금 반은 금, 화목 반은 목)
       (c.week ? '<div class="rp-week"><b>이번 주 ' + esc(c.name) + '</b> ' +
@@ -2995,6 +3134,7 @@ function rpDrawMine(box, d) {
       '<label class="muted" style="font-size:12px">' + (m.kind === "leave" ? "마지막 수업" : "옮기는 날") +
       ' <input type="date" data-rpm="' + mi + '|date" value="' + esc(m.date || d) + '"' + RPK + '></label>' +
       '<input type="text" data-rpm="' + mi + '|note" value="' + esc(m.note || "") + '" placeholder="' + (m.kind === "leave" ? "퇴원 사유" : "왜 옮기나") + '" class="rp-mnote"' + RPK + '>' +
+      (m.kind === "leave" ? rpWhyInputs(m, 'data-rpmy="' + mi + '|') : "") +
       (st ? '<span class="pill ' + (st.done ? "green" : "") + '">' + esc(st.done ? "팀장이 앱에 반영함" : "팀장 확인 전") + '</span>' : "") +
       '<button class="x" data-rpmdel="' + mi + '"' + RPK + ' title="이 줄 빼기">×</button></div>';
   }).join("") +
@@ -3034,6 +3174,7 @@ function rpDrawMine(box, d) {
     '<span class="muted" style="font-size:12px">' + (S.ro ? "팀장만 본다. 다른 선생님은 못 본다." : "팀장 것도 같은 칸에 적는다.") + '</span></div>';
   box.innerHTML = h;
   rpReplyWire(box, d);
+  rpFollowWire(box);
   $$("[data-rpngo]", box).forEach(function (b) {
     b.onclick = function () { S.rpDate = b.getAttribute("data-rpngo"); S.rpEdit = null; renderReport(); };
   });
@@ -3060,6 +3201,15 @@ function rpWireMine(box) {
     else if (k[2] === "risk") i.onchange = function () { s.risk = i.checked; re(); };
     // 손으로 고르면 «전체 출석» 이 이 학생을 안 건드리고, «되돌리기» 도 거둔다 — 되돌리기가 방금 고른 값을 덮으면 안 된다
     else i.onchange = function () { s.att = i.value; s.attTouched = true; rep.classes[+k[0]].allUndo = null; if (s.att !== "결석") s.called = false; re(); };   // 결석일 때만 «연락함» 이 뜬다
+  });
+  // 퇴원 보고의 세 입장 — 글자 칸이라 다시 그리지 않는다
+  $$("[data-rpy]", box).forEach(function (i) {
+    var k = i.getAttribute("data-rpy").split("|"), s = rep.classes[+k[0]].students[+k[1]];
+    i.oninput = function () { s.why = s.why || {}; s.why[k[2]] = i.value; };
+  });
+  $$("[data-rpmy]", box).forEach(function (i) {
+    var k = i.getAttribute("data-rpmy").split("|"), m = rep.moves[+k[0]];
+    i.oninput = function () { m.why = m.why || {}; m.why[k[1]] = i.value; };
   });
   $$("[data-rpk]", box).forEach(function (b) {
     b.onclick = function () {
@@ -3154,6 +3304,7 @@ function rpDrawAll(box, d, sm) {
         (m.date ? ' <span class="muted">· ' + esc(fmtMD(m.date)) + (m.kind === "leave" ? " 마지막" : "부터") + '</span>' : "") +
         (m.note ? ' <span class="muted">— ' + esc(m.note) + '</span>' : "") +
         ' <span class="muted" style="font-size:12px">(' + esc(x.who) + ')</span> ' +
+        (m.kind === "leave" ? rpWhyReadHtml(m) + rpFollowReadHtml(((S.reports || {})[x.tid] || {})[d], rpCaseId("leave", null, m)) : "") +
         (st.done ? '<span class="pill green">' + esc(st.text) + '</span>'
           : '<span class="pill orange">' + esc(st.text) + '</span>' +
             // 학생 추가 — 학생 명단에 있으면 그 사람을 넣고, 없으면 새로 만든다. 동명이인이 둘 이상이면 사람이 고른다
@@ -3229,7 +3380,8 @@ function rpDrawAll(box, d, sm) {
             '<td style="width:90px"><b>' + esc(s.name) + '</b></td><td style="width:90px">' + esc(s.att || "—") +
             (s.att === "결석" ? (s.called ? ' <span class="muted">연락함</span>' : ' <span class="red">연락 안 함</span>') : "") + '</td>' +
             '<td style="width:56px">' + (s.score != null ? esc(s.score) + '점' : "") + '</td>' +
-            '<td>' + (s.risk ? '<span class="pill rk">퇴원 위험</span> ' : "") + (s.warn ? '<span class="pill red">주의</span> ' : "") + esc(s.note || "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
+            '<td>' + (s.risk ? '<span class="pill rk">퇴원 위험</span> ' : "") + (s.warn ? '<span class="pill red">주의</span> ' : "") + esc(s.note || "") +
+            (s.risk ? rpWhyReadHtml(s) + rpFollowReadHtml(rep, rpCaseId("risk", c, s)) : "") + (s.consult != null ? ' <span class="pill' + (s.consult >= 2 ? " red" : "") + '">상담</span>' : "") +
             (s.makeup ? ' <span class="pill blue">보강 ' + esc(fmtMD(s.makeup)) + '</span>' : "") + '</td></tr>';
         }).join("") + '</tbody></table></div>' +
         // 이번 주 우리 반 — «없음» 도 그대로 둔다. 여기서는 그게 **확인했다는 표시**다.

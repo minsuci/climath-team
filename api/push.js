@@ -162,14 +162,32 @@ export default async function handler(req, res) {
         const date = String(body.date || "");
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "어느 날 보고인지 모르겠습니다" }); return; }
         const rep = await getDoc("dailyReports/" + me + "/days/" + date);
-        const names = [];
+        const names = [], gone = [];
         for (const c of (rep && rep.classes) || []) for (const s of c.students || []) {
           if (s && s.risk && s.name && names.indexOf(s.name) < 0) names.push(String(s.name).slice(0, 12));
         }
-        if (!names.length) { res.status(200).json({ ok: true, none: true }); return; }
+        // 명단 변동의 «퇴원» 도 같은 길로 (2026-10-06 — 퇴원 보고는 세 입장 · 후속까지 한 묶음)
+        for (const m of (rep && rep.moves) || []) {
+          if (m && m.kind === "leave" && m.name && gone.indexOf(m.name) < 0) gone.push(String(m.name).slice(0, 12));
+        }
+        if (!names.length && !gone.length) { res.status(200).json({ ok: true, none: true }); return; }
         const md = Number(date.slice(5, 7)) + "/" + Number(date.slice(8, 10));
-        p = { title: "🚨 퇴원 위험", tag: "risk-" + me + "-" + date, url: "/#report", strong: true,
-              body: who + " 선생님 — " + names.slice(0, 6).join(", ") + (names.length > 6 ? " 외 " + (names.length - 6) + "명" : "") + " (" + md + " 업무보고)" };
+        const list = (a) => a.slice(0, 6).join(", ") + (a.length > 6 ? " 외 " + (a.length - 6) + "명" : "");
+        p = { title: gone.length && !names.length ? "🚨 퇴원 보고" : "🚨 퇴원 위험", tag: "risk-" + me + "-" + date, url: "/#report", strong: true,
+              body: who + " 선생님 — " + [names.length ? "퇴원 위험 " + list(names) : "", gone.length ? "퇴원 " + list(gone) : ""].filter(Boolean).join(" · ") + " (" + md + " 업무보고)" };
+      }
+      // 퇴원 후속 보고 — 그 보고 문서의 follow[사건] 마지막 줄을 읽어 만든다
+      if (kind === "riskf") {
+        const date = String(body.date || ""), cs = String(body.case || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[rm]:[^\/]{1,80}$/.test(cs)) { res.status(400).json({ error: "어느 보고인지 모르겠습니다" }); return; }
+        const rep = await getDoc("dailyReports/" + me + "/days/" + date);
+        const arr = ((rep && rep.follow) || {})[cs] || [];
+        const last = arr[arr.length - 1];
+        if (!last) { res.status(200).json({ ok: true, none: true }); return; }
+        const ST = { going: "진행 중", stay: "남기로 함", left: "퇴원 확정" };
+        const t = String(last.text || "");
+        p = { title: "🚨 퇴원 후속 보고", tag: "riskf-" + me + "-" + date, url: "/#report", strong: true,
+              body: who + " 선생님 — " + String(last.name || "").slice(0, 12) + " [" + (ST[last.state] || "") + "] " + (t.length > 70 ? t.slice(0, 70) + "…" : t) };
       }
       if (!p) { res.status(400).json({ error: "무엇을 알릴지 모르겠습니다" }); return; }
       const keys = await vapidKeys();

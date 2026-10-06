@@ -73,7 +73,7 @@ const w = JSON.parse(run(`return JSON.stringify(__writes)`));
 ok("적는 것은 내 문서의 leadSeen 한 칸만 (merge)", w.length === 1 && /dailyReports\/T2\/days\/2026-09-17$/.test(w[0].path) && JSON.stringify(w[0].d) === '{"leadSeen":600}' && w[0].o && w[0].o.merge === true, JSON.stringify(w));
 run(`__writes.length = 0; rpMarkNotesSeen("2026-09-17"); rpMarkNotesSeen("2026-09-14");`);
 ok("이미 읽었거나 코멘트가 없으면 안 적는다", run(`return __writes.length`) === 0);
-ok("내 보고 화면 머리에 코멘트 · 열면 읽음으로", /rpNotesMineHtml\(saved\);[\s\S]{0,400}rpMarkNotesSeen\(d\);/.test(src));
+ok("내 보고 화면 머리에 코멘트 · 열면 읽음으로", /rpNotesMineHtml\(saved\)(?: \+ rpFollowMineHtml\(\))?;[\s\S]{0,400}rpMarkNotesSeen\(d\);/.test(src));
 ok("다른 날 새 코멘트로 가는 단추 (읽기 계정에서도 눌리게 data-keep)", /data-rpngo="' \+ x \+ '"' \+ RPK/.test(src));
 
 // ---- 종 ----

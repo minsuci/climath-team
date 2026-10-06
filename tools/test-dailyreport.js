@@ -362,7 +362,7 @@ ok("진도가 빈 반을 알려 준다", ck.warn.some(function (w) { return /진
     ok("반 이동인데 «어디로» 가 비면 못 낸다", stop.some(function (s) { return /김도윤: 어느 반으로/.test(s); }), JSON.stringify(stop));
     run(`__rep.moves[0].toCid = "pT"; __rep.moves[0].toName = "예비고1 T반"; __rep.moves[0].toOther = false;
       __rep.moves.push({ kind:"move", name:"" });                                     // 학생도 안 고른 줄
-      __rep.moves.push({ kind:"leave", sid:"a2", pid:"P2", name:"박지우", fromCid:"pS", fromName:"예비고1 S반", toCid:"pT", toName:"x", date:"2026-09-20", note:"  이사  " });`);
+      __rep.moves.push({ kind:"leave", sid:"a2", pid:"P2", name:"박지우", fromCid:"pS", fromName:"예비고1 S반", toCid:"pT", toName:"x", date:"2026-09-20", note:"  이사  ", why:{ student:"이사 간다", parent:"이사 때문에 그만둠", teacher:"붙잡을 수 없음" } });`);
     ok("다 채우면 낼 수 있다", run(`return rpCheck(__rep).stop.length`) === 0, run(`return JSON.stringify(rpCheck(__rep).stop)`));
     const cm = JSON.parse(run(`return JSON.stringify(rpClean(__rep).moves)`));
     ok("학생을 안 고른 줄은 버린다", cm.length === 2, JSON.stringify(cm));
