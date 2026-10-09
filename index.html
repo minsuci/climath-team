@@ -1773,7 +1773,13 @@ function rpTeacher(tid) { return S.teachers.filter(function (t) { return t.tid =
 //   정규반에 학생 요일을 대면 요일이 비어 있는 학생이 전부 빠진다.
 function rpIndividual(c) { return c.type === "individual"; }
 function rpActiveOn(r, d) { return !(r.startDate && d < r.startDate) && !(r.endDate && d > r.endDate); }
+// 업무보고에 안 올리는 반 (10/9 마왕님 «학교결정모의고사는 업무보고에서 빼»).
+// 학결모 응시반(대치·서초·평촌)은 수업이 아니라 시험 응시생 명단이다 — 반 요일이 있어도 보고할 수업으로 안 센다.
+// rpMeets 에서 거르므로 보고 카드 · «보고하는 날» · 받은 보고 · 주간 마지막 수업 · 쉬는 날 «출근» 후보에서 함께 빠진다.
+var RP_SKIP_CLASS_RE = /학교결정\s*모의고사/;
+function rpSkipClass(c) { return RP_SKIP_CLASS_RE.test(String((c && c.name) || "")); }
 function rpMeets(c, d) {
+  if (rpSkipClass(c)) return false;
   if (c.endDate && d > c.endDate) return false;
   var dow = parseYmd(d).getDay();
   if (!rpIndividual(c)) return (c.classDays || []).indexOf(dow) >= 0;
