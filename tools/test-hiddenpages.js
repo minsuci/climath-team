@@ -16,8 +16,8 @@ const run = (code) => vm.runInContext("(function(){" + code + "})()", ctx);
 const T = [];
 const ok = (n, c, e) => T.push((c ? "  OK  " : "FAIL  ") + n + (e ? "   " + e : ""));
 
-ok("숨긴 메뉴는 넷 — 월간계획 · 개발 현황 · 앞으로 2주 · 근거 자료", run(`return HIDDEN_PAGES.join(",")`) === "plan,dev,week,sheets");
-ok("지우지 않았다 — 화면(PAGES)에는 그대로 있다", run(`return ["plan","dev","week","sheets"].every(function (id) { return PAGES.some(function (p) { return p[0] === id; }); })`));
+ok("숨긴 메뉴는 다섯 — 월간계획 · 간부회의 · 개발 현황 · 앞으로 2주 · 근거 자료", run(`return HIDDEN_PAGES.join(",")`) === "plan,exec,dev,week,sheets");
+ok("지우지 않았다 — 화면(PAGES)에는 그대로 있다", run(`return ["plan","exec","dev","week","sheets"].every(function (id) { return PAGES.some(function (p) { return p[0] === id; }); })`));
 run(`S.ro = false;`);
 ok("다른 화면의 단추로는 그대로 열린다 (근거 자료에서 등록 등)", run(`return isPage("sheets") && isPage("dev") && isPage("week")`));
 run(`location.hash = "#dev";`);

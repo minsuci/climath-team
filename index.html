@@ -1097,7 +1097,8 @@ var PAGES = [["cal", "업무 달력"], ["plan", "월간계획"], ["tasks", "할 
 //   메뉴 끝 «⋯» (팀장만)을 누르면 숨긴 메뉴가 잠깐 보인다. 되살리려면 여기서 빼면 된다.
 // ⚠ 열던 화면이 숨긴 메뉴였어도 다시 켤 때는 «할 일» 로 연다(currentPage) — 메뉴 줄에 없는 화면에 갇히지 않게.
 // 10/10 «안쓰는것좀 닫자 월간계획 닫아» — 월간계획(plan)도 숨김. dash/monthPlan 자료는 그대로다.
-var HIDDEN_PAGES = ["plan", "dev", "week", "sheets"];
+// 10/10 «간부회의도 닫아» — 간부회의(exec)도 숨김.
+var HIDDEN_PAGES = ["plan", "exec", "dev", "week", "sheets"];
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
 function currentPage() {
