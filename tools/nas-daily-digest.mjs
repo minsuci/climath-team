@@ -27,6 +27,13 @@
 // ⚠ 문서 모양은 index.html 의 rpDigest 를 **그대로 꺼내 돌린다**(아래 PICK). 여기서 다시 짜면 화면과 파일이 어긋난다.
 //   index.html 에서 이름이 바뀌면 여기서 «못 찾았다» 로 멈춘다 — 조용히 옛 모양으로 가지 않는다.
 //
+// ⚠ **할 일 칸에 적은 보고(marks/<tid>.reports[할일id] = { text, at })도 싣는다** (2026-10-08).
+//   «보고받는 일»(할 일에 report:true)은 할 일 메뉴의 적는 칸으로 낸다 — 업무보고(dailyReports)와 **다른 자리**다.
+//   10/6 디스쿨 채널 주소 다섯 개 중 둘만 업무보고에 있고 셋은 여기에만 있어서, 원장님 보고에 둘만 갔다.
+//   그 날(at === 날짜) 적은 것을 그 선생님 «업무» 줄로 얹는다. 업무보고에 같은 할 일 줄이 있으면 새 줄을 만들지 않고
+//   메모에 붙인다(같은 글이면 그대로). 업무보고를 안 낸 선생님은 끝에 따로 «할 일 칸에 적은 것만» 으로 싣는다.
+//   at 은 **마지막으로 고친 날**이다(앱 saveReport). 늦게 고치면 고친 날 보고에 다시 뜬다.
+//
 // 이미 있는 파일: 이 스크립트가 쓴 것(맨 끝 표시 줄)이면 내용이 바뀌었을 때만 새로 쓴다 — 늦게 고친 보고가 따라온다.
 //   **표시 줄이 없는 파일은 안 건드린다** — 사람이 손본 것이다.
 
@@ -35,6 +42,7 @@ import path from "path";
 import os from "os";
 import vm from "vm";
 import crypto from "crypto";
+import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -59,7 +67,9 @@ const PICK = ["pad2", "DOW", "parseYmd", "fmtMD", "RP_START", "RP_STATE", "RP_MO
   // 퇴원 보고 세 입장 · 후속 (2026-10-06)
   "RP_WHY", "RP_FOLLOW", "rpWhyOf", "rpWhyText",
   // 쉬는 날(2026-10-03) — 앱과 같은 판정. 학원 달력(dash/calEvents)의 «안 쉼» 덮어쓰기까지 본다
-  "HOLIDAYS", "holEvent", "evEnd", "ACADEMY_OFF_RE", "holBuiltin", "holidayOf", "rpDayOf", "rpWorkOf", "rpHolidayFor"];
+  "HOLIDAYS", "holEvent", "evEnd", "ACADEMY_OFF_RE", "holBuiltin", "holidayOf", "rpDayOf", "rpWorkOf", "rpHolidayFor",
+  // 출결현황(2026-10-10) — 그 날 그 반에 수업이 있었나 · 누가 나오는 날인가. 앱과 같은 판정
+  "ymd", "addDays", "onlyDaysOf", "rpIndividual", "rpActiveOn", "RP_SKIP_CLASS_RE", "rpSkipClass", "rpMeets", "rpStudentsOn"];
 
 // 맨 앞줄에서 시작하는 `function 이름(` 또는 `var 이름 =` 을 찾아 괄호가 닫힐 때까지 자른다.
 // 문자열·정규식 속 괄호는 PICK 에 든 것들에 없다 — 들어오면 아래 컴파일 검사가 잡는다.
@@ -146,12 +156,60 @@ async function load(from, to) {
   const er = await fetch(BASE + "/dash/calEvents", { headers: H });
   if (!er.ok && er.status !== 404) throw new Error("dash/calEvents 를 못 읽었다 (" + er.status + ")");
   const events = er.ok ? (fields((await er.json()).fields || {}).items || []) : [];
-  return { teachers, reports, rpLeave, events };
+  // 할 일 칸 보고 — marks/<tid>.reports. 할 일 글은 dash/tasks 에서(지워졌으면 앱처럼 «지워진 할 일»)
+  const marks = {};
+  await Promise.all(teachers.map(async (t) => {
+    const r = await fetch(BASE + "/marks/" + t.tid, { headers: H });
+    if (!r.ok && r.status !== 404) throw new Error(t.name + " 할 일 보고(marks)를 못 읽었다 (" + r.status + ")");
+    marks[t.tid] = r.ok ? (fields((await r.json()).fields || {}).reports || {}) : {};
+  }));
+  const kr = await fetch(BASE + "/dash/tasks", { headers: H });
+  if (!kr.ok && kr.status !== 404) throw new Error("dash/tasks 를 못 읽었다 (" + kr.status + ")");
+  const tasks = kr.ok ? (fields((await kr.json()).fields || {}).items || []) : [];
+  // 반 명단 사본 — 앱이 팀장 로그인 때 적는다(index.html saveRpRoster). 출결현황만 쓴다. 없으면 출결현황을 못 만든다
+  const rr = await fetch(BASE + "/dash/rpRoster", { headers: H });
+  if (!rr.ok && rr.status !== 404) throw new Error("dash/rpRoster 를 못 읽었다 (" + rr.status + ")");
+  const rpRoster = rr.ok ? fields((await rr.json()).fields || {}) : null;
+  return { teachers, reports, rpLeave, events, marks, tasks, rpRoster };
+}
+
+// 그 날 할 일 칸에 적은 보고 — [{ id, text(할 일), note(적은 글) }]
+// «완료» 한 마디는 메모로 안 붙인다 — 상태가 이미 [완료] 다.
+const BARE_DONE = /^[\s<«(]*(완료|완)[\s>»).!]*$/;
+function taskReportsOn(data, tid, d) {
+  const byId = {};
+  (data.tasks || []).forEach((t) => { if (t && t.id) byId[t.id] = t; });
+  const m = (data.marks || {})[tid] || {};
+  return Object.keys(m).filter((id) => m[id] && m[id].at === d).map((id) => {
+    const note = String(m[id].text || "").trim();
+    return { id, text: byId[id] ? byId[id].text : "지워진 할 일", note: BARE_DONE.test(note) ? "" : note };
+  });
+}
+// 업무보고의 할 일 줄에 얹는다. 같은 할 일이 있으면 메모에 붙이고(이미 들어 있으면 그대로), 없으면 [완료] 줄을 더한다.
+function mergeTasks(tasks, extra) {
+  const out = (tasks || []).map((t) => Object.assign({}, t));
+  extra.forEach((x) => {
+    const t = out.find((y) => y.id && y.id === x.id);
+    if (!t) { out.push({ id: x.id, text: x.text, state: "done", note: x.note }); return; }
+    const n = String(t.note || "").trim();
+    if (!x.note || n.indexOf(x.note) >= 0) return;
+    t.note = n ? n + " / " + x.note : x.note;
+  });
+  return out;
 }
 
 // ---- 문서 만들기 ----
 function digestOf(data, d) {
-  const S = { teachers: data.teachers, reports: data.reports, rpLeave: data.rpLeave || {}, events: data.events || [] };
+  // 그 날 할 일 칸 보고를 업무보고 사본에 얹는다 — data.reports 는 다른 날도 쓰니 건드리지 않는다
+  const reports = Object.assign({}, data.reports), only = [];
+  data.teachers.forEach((t) => {
+    const extra = taskReportsOn(data, t.tid, d);
+    if (!extra.length) return;
+    const rep = (reports[t.tid] || {})[d];
+    if (rep && rep.submitted) reports[t.tid] = Object.assign({}, reports[t.tid], { [d]: Object.assign({}, rep, { tasks: mergeTasks(rep.tasks, extra) }) });
+    else only.push({ tid: t.tid, tasks: mergeTasks([], extra) });
+  });
+  const S = { teachers: data.teachers, reports, rpLeave: data.rpLeave || {}, events: data.events || [] };
   const ctx = {
     S,
     teacherName: (tid) => { const t = S.teachers.find((x) => x.tid === tid); return t ? t.name : (tid ? "?" : ""); },
@@ -167,10 +225,167 @@ function digestOf(data, d) {
       !!(t && (t.classIds || []).length);
   };
   const sm = ctx.rpSummary(d);
-  if (!sm.got.length) return null;                     // 아무도 안 낸 날 = 쉬는 날로 본다
+  if (!sm.got.length && !only.length) return null;    // 아무도 안 낸 날 = 쉬는 날로 본다 (할 일 칸 보고도 없을 때)
   let md = ctx.rpDigest(d).replace(" / 수업한 사람 ", " / 보고 대상 ");
-  md += "\n\n---\n\n*팀체크 업무보고에서 자동으로 옮겼다(매일 09:00). «보고 대상 · 안 낸 사람» 은 **출근 요일** 기준이라 그 날 수업이 없던 선생님이 섞일 수 있다.*\n" + MARK + "\n";
+  // 업무보고는 안 냈지만 할 일 칸에는 적은 사람 — 줄 모양은 rpDigest 의 «업무» 와 같다
+  only.filter((x) => !ctx.rpSkip(x.tid)).forEach((x) => {
+    md += "\n\n## " + ctx.teacherName(x.tid) + "\n\n업무 (업무보고는 안 냄 — 할 일 칸에 적은 것)\n" +
+      x.tasks.map((t) => "- [" + (ctx.RP_STATE[t.state] || "—") + "] " + t.text + (t.note ? " — " + t.note : "")).join("\n");
+  });
+  md += "\n\n---\n\n*팀체크 업무보고에서 자동으로 옮겼다(매일 09:00). 할 일 칸에 그 날 적은 보고도 «업무» 에 같이 실었다. «보고 대상 · 안 낸 사람» 은 **출근 요일** 기준이라 그 날 수업이 없던 선생님이 섞일 수 있다.*\n" + MARK + "\n";
   return md;
+}
+
+// ---- 예비고1 출결현황 (2026-10-10 원장님 #59 — 박솔 대리에게 넘긴다) ----
+//
+// 원장님 «예비고1 출결 현황이 박솔 대리에게 넘어가야 수강료 누락이 안 생긴다». 지금은 팀장이 업무보고로 보고
+// 박솔 대리는 구글시트로 따로 체크한다 — 두 군데라 어긋난다. **기준은 선생님이 업무보고에 찍은 출결(att) 하나**로 한다.
+//   ⚠ 학생 줄의 auto(수업관리 앱 출결)는 쓰지 않는다. 앱 체크인을 거의 안 해서 «결석» 이 대부분이다(10/9: 329칸 중 135칸이 att 와 다름).
+//
+// 언제: 이 스크립트가 09:00 에 돌 때 같이 본다.
+//   · **주 1회** — 이번 주(월요일부터) 그 달 파일이 없으면 «그 달 누적»(어제까지)을 만든다. 월요일에 PC가 꺼져 있었으면 다음에 켤 때.
+//   · **월 1회** — 그 달 2일부터, 지난달 «확정본» 이 없으면 만든다. 1일이 아니라 2일인 것은 말일 보고가 다음 날 아침 8시까지라서.
+//   손으로: --att-month 2026-09 (그 달 끝까지, 지난달이면 확정본) · --att (이번 주 것이 있어도 다시)
+// 파일: 제출 보고\YYYY-MM-DD_한민수_예비고1 출결현황(10월).xlsx · …(9월 확정).xlsx — 날짜는 만든 날(그 폴더 규칙).
+//
+// 무엇을: 예비고1 정규반 전원 + 개진반의 **중3** 학생. 반마다 «학생 × 수업일» 칸.
+//   출·결·지·조 = 업무보고 그대로 · ? = 보고는 냈는데 그 학생 출결을 안 찍음 · 미보고 = 수업 날인데 그 반 보고가 없음
+//   밖 = 업무보고를 안 받는 반·요일(원장님 개진반 · 중등관에 보고하는 요일) — 박솔 대리가 따로 챙길 칸
+//   ⚠ 빈칸을 출석으로 읽으면 안 된다. 그래서 «?» 와 «미보고» 를 따로 찍는다.
+// 요일·명단은 dash/rpRoster(앱이 팀장 로그인 때 적는 사본)에서. 그 날 보고에만 있고 명단에서 빠진 학생도 보고대로 싣는다.
+const ATT_FORCE = ARGS.includes("--att");
+const ATT_MONTH = ARGS.includes("--att-month") && /^\d{4}-\d{2}$/.test(ARGS[ARGS.indexOf("--att-month") + 1] || "") ? ARGS[ARGS.indexOf("--att-month") + 1] : "";
+const ATT_MARK = { "출석": "출", "결석": "결", "지각": "지", "조퇴": "조" };
+const ATT_PY = path.join(HERE, "att-xlsx.py");
+
+function monthLast(m) { const [y, mo] = m.split("-").map(Number); return m + "-" + String(new Date(y, mo, 0).getDate()).padStart(2, "0"); }
+function attCtx(data) {
+  const S = { teachers: data.teachers, reports: data.reports, rpLeave: data.rpLeave || {}, events: data.events || [] };
+  const ctx = { S, teacherName: (tid) => { const t = S.teachers.find((x) => x.tid === tid); return t ? t.name : ""; } };
+  vm.createContext(ctx);
+  vm.runInContext(appFns(), ctx);
+  return ctx;
+}
+// 그 달 1일 ~ until 의 표. 수업관리 앱 판정(rpMeets · rpStudentsOn)을 사본 명단으로 그대로 돌린다.
+function attendanceOf(data, month, until) {
+  if (!data.rpRoster || !(data.rpRoster.classes || []).length)
+    throw new Error("dash/rpRoster 가 비었다 — 팀체크에 팀장으로 한 번 로그인하면 적힌다");
+  // 업무보고는 RP_START(9/14)부터다. 그 전 날을 «미보고» 로 찍으면 안 한 일로 읽힌다 — 표를 거기서 시작한다
+  const ctx = attCtx(data), from = month + "-01" < ctx.RP_START ? ctx.RP_START : month + "-01";
+  const last = until < monthLast(month) ? until : monthLast(month);
+  const tname = (tid) => ctx.teacherName(tid);
+  const out = { month, from, until: last, made: kstYmd(0), rosterAt: data.rpRoster.at || "", classes: [], moves: [] };
+  const cids = {};
+  (data.rpRoster.classes || []).forEach((c) => {
+    cids[c.id] = 1;
+    const regular = /^예비고1/.test(c.name);
+    const want = (g) => regular || g === "중3";
+    const tids = c.tids || [];
+    const rows = {}, order = [], dates = [];
+    const rowOf = (sid, pid, name, school, grade) => {
+      const k = pid || sid || name;
+      if (!rows[k]) { rows[k] = { pid, name, school: school || "", grade: grade || "", cells: {}, notes: [] }; order.push(k); }
+      return rows[k];
+    };
+    for (let d = from; d <= last; d = ctx.addDays(d, 1)) {
+      if (!ctx.rpMeets(c, d)) continue;
+      // 그 반을 맡은 선생님 중 그 날 보고에 이 반을 적은 사람. 둘이 맡은 반은 먼저 찾은 쪽
+      let rc = null, rtid = "";
+      tids.forEach((tid) => { const r = (data.reports[tid] || {})[d]; const x = r && (r.classes || []).find((y) => y.cid === c.id); if (x && !rc) { rc = x; rtid = tid; } });
+      const working = tids.filter((tid) => !ctx.rpSkip(tid) && !ctx.rpOffDow(tid, d) && !ctx.rpHolidayFor(tid, d));
+      if (!rc && tids.length && tids.every((tid) => ctx.rpHolidayFor(tid, d))) continue;   // 학원 쉬는 날 — 수업이 없었다
+      const expected = ctx.rpStudentsOn(c, d).filter((r) => want(r.grade));
+      if (!rc && !expected.length) continue;
+      dates.push(d);
+      if (rc) {
+        const bySid = {};
+        (rc.students || []).forEach((s) => { bySid[s.sid] = s; });
+        const seen = {};
+        expected.forEach((r) => {
+          const s = bySid[r.id]; seen[r.id] = 1;
+          const row = rowOf(r.id, r.pid, r.name, r.school, r.grade);
+          row.cells[d] = s ? (ATT_MARK[s.att] || "?") : "?";
+          if (s && s.makeup) row.notes.push(d.slice(5) + " 보강 " + String(s.makeup).slice(5));
+        });
+        // 보고에는 있는데 지금 명단에 없는 학생(그 뒤에 빠졌다) — 정규반은 그대로, 개진반은 명단에서 학년을 찾을 때만
+        (rc.students || []).forEach((s) => {
+          if (seen[s.sid]) return;
+          const r = (c.roster || []).find((x) => x.id === s.sid || (s.pid && x.pid === s.pid)) || {};
+          if (!regular && r.grade !== "중3") return;
+          const row = rowOf(s.sid, s.pid || r.pid || "", s.name || r.name, r.school, r.grade);
+          row.cells[d] = ATT_MARK[s.att] || "?";
+          if (s.makeup) row.notes.push(d.slice(5) + " 보강 " + String(s.makeup).slice(5));
+        });
+      } else {
+        const mark = working.length ? "미보고" : "밖";
+        expected.forEach((r) => { rowOf(r.id, r.pid, r.name, r.school, r.grade).cells[d] = mark; });
+      }
+    }
+    if (!order.length) return;
+    const list = order.map((k) => rows[k]).sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+    list.forEach((row) => {
+      const v = Object.values(row.cells);
+      const n = (m) => v.filter((x) => x === m).length;
+      row.sum = { held: v.filter((x) => x !== "밖").length, att: n("출") + n("지") + n("조"), abs: n("결"),
+                  late: n("지") + n("조"), unknown: n("?") + n("미보고"), out: n("밖") };
+    });
+    out.classes.push({ id: c.id, name: c.name, teachers: tids.map(tname).join("·"), regular,
+                       outside: tids.length > 0 && tids.every((tid) => ctx.rpSkip(tid)), dates, rows: list });
+  });
+  out.classes.sort((a, b) => (b.regular - a.regular) || a.name.localeCompare(b.name, "ko"));
+  // 명단 변동 — 그 달 업무보고에 적힌 것 중 이 반들이 걸린 것
+  data.teachers.forEach((t) => {
+    Object.keys(data.reports[t.tid] || {}).sort().forEach((d) => {
+      if (d < from || d > last) return;
+      ((data.reports[t.tid][d] || {}).moves || []).forEach((m) => {
+        if (!cids[m.fromCid] && !cids[m.toCid]) return;
+        out.moves.push({ reported: d, teacher: t.name, kind: ctx.RP_MOVE[m.kind] || m.kind, name: m.name || "",
+                         what: ctx.rpMoveText(m), date: m.date || "", note: m.note || "" });
+      });
+    });
+  });
+  return out;
+}
+function writeAttXlsx(obj, file) {
+  const tmp = path.join(os.tmpdir(), "att-" + process.pid + ".json");
+  fs.writeFileSync(tmp, JSON.stringify(obj), "utf8");
+  const r = spawnSync(process.env.PYTHON || "python", [ATT_PY, tmp, file], { encoding: "utf8" });
+  try { fs.unlinkSync(tmp); } catch (e) {}
+  if (r.status !== 0) throw new Error("엑셀을 못 만들었다: " + ((r.stderr || r.error && r.error.message || "").trim().split("\n").pop()));
+}
+function attMonthName(m, final) { return Number(m.slice(5)) + "월" + (final ? " 확정" : ""); }
+function attFileName(made, m, final) { return made + "_" + WHO + "_예비고1 출결현황(" + attMonthName(m, final) + ").xlsx"; }
+function attHas(root, m, final, since) {
+  if (!root) return false;
+  const tail = "_" + WHO + "_예비고1 출결현황(" + attMonthName(m, final) + ").xlsx";
+  return fs.readdirSync(root).some((f) => f.endsWith(tail) && (!since || f.slice(0, 10) >= since));
+}
+// 이번에 만들 것 — [{ month, until, final }]
+function attJobs(root) {
+  const today = kstYmd(0), yest = kstYmd(-1), thisM = today.slice(0, 7);
+  if (ATT_MONTH) return [{ month: ATT_MONTH, until: ATT_MONTH < thisM ? monthLast(ATT_MONTH) : yest, final: ATT_MONTH < thisM }];
+  const jobs = [];
+  const pd = new Date(today + "T00:00:00Z"); pd.setUTCDate(0);
+  const prevM = pd.toISOString().slice(0, 7);
+  if (Number(today.slice(8)) >= 2 && !attHas(root, prevM, true)) jobs.push({ month: prevM, until: monthLast(prevM), final: true });
+  const dow = new Date(today + "T00:00:00Z").getUTCDay(), monday = kstYmd(-((dow + 6) % 7));
+  if (yest.slice(0, 7) === thisM && (ATT_FORCE || !attHas(root, thisM, false, monday))) jobs.push({ month: thisM, until: yest, final: false });
+  return jobs;
+}
+async function runAttendance(root) {
+  const jobs = attJobs(root);
+  if (!jobs.length) return;
+  for (const j of jobs) {
+    const data = await load(j.month + "-01", j.until);
+    const obj = attendanceOf(data, j.month, j.until);
+    obj.final = j.final;
+    if (DRY) { console.log("\n======== 출결현황 " + j.month + (j.final ? " 확정" : "") + " ~" + obj.until + "\n" +
+      obj.classes.map((c) => c.name + " (" + c.teachers + ") 수업 " + c.dates.length + "일 · " + c.rows.length + "명" + (c.outside ? " · 업무보고 밖" : "")).join("\n") +
+      "\n명단 변동 " + obj.moves.length + "건"); continue; }
+    const file = path.join(root, attFileName(obj.made, j.month, j.final));
+    writeAttXlsx(obj, file);
+    log("올림: " + file);
+  }
 }
 
 // ---- 나스 ----
@@ -192,6 +407,7 @@ function kstYmd(offsetDays) {
 async function main() {
   const root = nasRoot();
   if (!root && !DRY) throw new Error("나스 «제출 보고» 폴더를 못 찾았다 (RaiDrive 연결 확인): " + SUBMIT_DIR);
+  if (ATT_MONTH) { await runAttendance(root); return; }   // 출결현황만 손으로 — 업무보고는 안 건드린다
   const days = [];
   if (ONE) days.push(ONE);
   else for (let i = LOOKBACK; i >= 1; i--) days.push(kstYmd(-i));   // 오늘은 안 한다 — 보고가 아직 들어오는 중이다
@@ -213,6 +429,14 @@ async function main() {
     log("올림: " + file);
   }
   log("끝 — 올림 " + wrote + " · 그대로 " + same + " · 보고 없는 날 " + skip + (DRY ? " (dry)" : ""));
+  // 출결현황은 업무보고와 따로 실패한다 — 이게 막혀도 업무보고 파일은 이미 올라갔다
+  if (!ONE) {
+    try { await runAttendance(root); }
+    catch (e) { log("출결현황 실패: " + e.message); process.exitCode = 1; }
+  }
 }
 
-main().catch((e) => { log("실패: " + e.message); process.exit(1); });
+// 시험(tools/test-attendance.mjs)이 불러 쓸 때는 돌지 않는다
+export { attendanceOf, attJobs };
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  main().catch((e) => { log("실패: " + e.message); process.exit(1); });

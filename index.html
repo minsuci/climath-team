@@ -1219,6 +1219,7 @@ async function loadCore() {
   S.tasks = S.tasks.concat(ownTasks());          // 각자 적은 것도 같은 목록에 섞인다
   adoptMathFound();                              // 새벽에 찾아 둔 것을 손으로 돌린 것과 같은 자리에 놓는다
   saveMathWatch();                               // 내일 새벽에 볼 학교를 적어 둔다 (팀장일 때만)
+  saveRpRoster();                                // 나스 출결현황이 읽을 반 명단 사본 (팀장일 때만)
 }
 // 자기 할 일 문서들을 한 목록으로 편다.
 // ⚠ **담당은 문서 주인에서 다시 만든다.** 문서 안에 적힌 who 를 믿지 않는다 —
@@ -8354,6 +8355,33 @@ async function saveMathWatch() {
   if (sig === MATH_WATCH_SIG) return;
   MATH_WATCH_SIG = sig;
   try { await dashDoc("mathWatch").set(doc); } catch (e) {}
+}
+
+// 출결현황(나스 → 박솔 대리)이 읽을 반 명단 사본 (2026-10-10 원장님 #59 «예비고1 출결이 박솔 대리에게 넘어가야 수강료 누락이 안 생긴다»).
+// ⚠ 나스 도구(tools/nas-daily-digest.mjs 의 출결현황)는 서비스 계정으로 **팀 DB 만** 읽는다 — 수업관리 앱의 반·학생은 못 읽는다(403).
+//   보고에는 그 날 낸 반만 있어서 «수업이 있었는데 보고가 없는 날»과 개진반 학생의 학년을 모른다.
+//   그래서 팀장이 로그인할 때 예비고1 반 · 개진반의 요일과 명단을 dash/rpRoster 에 적어 둔다. 안 바뀌었으면 안 쓴다.
+//   학년·학교는 사람 문서에서(반 줄의 grade 는 옛 값일 수 있다). **끝난 줄도 넣는다** — 그 달 중간에 나간 학생도 그 전 회차가 있다.
+var RP_ROSTER_SIG = "";
+var RP_ROSTER_RE = /^(예비고1|개진반)/;
+function rpRosterCopy() {
+  var by = {}; (S.students || []).forEach(function (x) { by[x.pid] = x; });
+  return S.classes.filter(function (c) { return RP_ROSTER_RE.test(String(c.name || "")) && !rpSkipClass(c); }).map(function (c) {
+    return { id: c.id, name: c.name || "", type: c.type || "", classDays: c.classDays || [], endDate: c.endDate || "",
+      tids: S.teachers.filter(function (t) { return (t.classIds || []).indexOf(c.id) >= 0; }).map(function (t) { return t.tid; }),
+      roster: (c.roster || []).filter(function (r) { return !r.teacher; }).map(function (r) {
+        var p = by[r.pid] || {};
+        return { id: r.id || "", pid: r.pid || "", name: r.name || "", grade: p.grade || r.grade || "", school: p.school || r.school || "",
+          days: r.days || [], onlyDays: r.onlyDays || [], startDate: r.startDate || "", endDate: r.endDate || "" };
+      }) };
+  });
+}
+async function saveRpRoster() {
+  if (S.ro || !S.teamOk || !S.classes.length) return;
+  var classes = rpRosterCopy(), sig = JSON.stringify(classes);
+  if (sig === RP_ROSTER_SIG) return;
+  RP_ROSTER_SIG = sig;
+  try { await dashDoc("rpRoster").set({ classes: classes, at: new Date().toISOString(), by: myTid() }); } catch (e) {}
 }
 
 // ---------- 수학시험 날짜 넣기 (2026-09-08) ----------
