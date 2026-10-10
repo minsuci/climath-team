@@ -82,6 +82,7 @@
   .card h2 { margin: 0 0 10px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
   .card h2 .n { font-weight: 400; color: var(--muted); font-size: 12px; }
   .card h2 .sp { flex: 1; }
+  .card h2 .rpday { font-size: 14px; width: 78px; flex: none; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .card h2 button, .mini { font-size: 12px; padding: 3px 9px; border: 1px solid var(--line);
     background: #fff; border-radius: 6px; color: var(--text); }
   .card h2 button:hover, .mini:hover { background: #f5f7fb; }
@@ -3100,12 +3101,15 @@ function renderReport() {
   var late = S.ro ? rpOverdue(me).length : rpOverdue(me).length + rpOverdueAll().filter(function (x) { return x.tid !== me; }).length;
   navBadge("report", late, true);
   var sm = S.ro ? null : rpSummary(d);
+  // 날짜 화살표는 **제자리** (10/10 마왕님 «날짜 옮기는 화살표가 위치가 고정이었으면 좋겠다. 연속해서 누를 수 있도록»).
+  // 머리는 오른쪽 정렬이라 › 뒤에 붙던 «오늘로»·«휴무» 가 나타났다 사라질 때마다 ‹ › 가 밀렸다 → 그것들을 ‹ 앞으로 옮기고,
+  // 날짜 칸은 폭을 고정해 «9/9(수)» ↔ «10/10(토)» 처럼 글자 수가 달라도 › 가 안 움직이게 한다.
   el.innerHTML = '<h2>업무보고 <span class="sp"></span>' +
-    '<button class="mini" data-rpd="-1"' + RPK + '>‹</button><b style="font-size:14px">' + esc(fmtMD(d)) + '</b>' +
-    '<button class="mini" data-rpd="1"' + RPK + '>›</button>' +
+    (rpOffDow(me, d) ? '<span class="pill" title="휴무 요일이다 — 안 내도 «안 냈다» 로 안 센다">휴무</span>' : "") +
+    (rpLeaveOf(me, d) ? '<span class="pill" title="팀장이 이 날을 휴무로 적었다 — 안 내도 «안 냈다» 로 안 센다">휴무 · ' + esc(rpLeaveOf(me, d).note) + '</span>' : "") +
     (d !== TODAY ? '<button class="mini" data-rpd="0"' + RPK + '>오늘로</button>' : "") +
-    (rpOffDow(me, d) ? ' <span class="pill" title="휴무 요일이다 — 안 내도 «안 냈다» 로 안 센다">휴무</span>' : "") +
-    (rpLeaveOf(me, d) ? ' <span class="pill" title="팀장이 이 날을 휴무로 적었다 — 안 내도 «안 냈다» 로 안 센다">휴무 · ' + esc(rpLeaveOf(me, d).note) + '</span>' : "") + '</h2>' +
+    '<button class="mini" data-rpd="-1"' + RPK + '>‹</button><b class="rpday">' + esc(fmtMD(d)) + '</b>' +
+    '<button class="mini" data-rpd="1"' + RPK + '>›</button></h2>' +
     '<div class="chips">' +
       '<button class="mini' + (tab === "mine" ? " on" : "") + '" data-rpt="mine"' + RPK + '>내 보고</button>' +
       (S.ro ? "" : '<button class="mini' + (tab === "all" ? " on" : "") + '" data-rpt="all">받은 보고 ' + sm.got.length + '/' + sm.expect.length + '</button>') +
