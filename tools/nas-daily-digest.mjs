@@ -232,8 +232,47 @@ function digestOf(data, d) {
     md += "\n\n## " + ctx.teacherName(x.tid) + "\n\n업무 (업무보고는 안 냄 — 할 일 칸에 적은 것)\n" +
       x.tasks.map((t) => "- [" + (ctx.RP_STATE[t.state] || "—") + "] " + t.text + (t.note ? " — " + t.note : "")).join("\n");
   });
-  md += "\n\n---\n\n*팀체크 업무보고에서 자동으로 옮겼다(매일 09:00). 할 일 칸에 그 날 적은 보고도 «업무» 에 같이 실었다. «보고 대상 · 안 낸 사람» 은 **출근 요일** 기준이라 그 날 수업이 없던 선생님이 섞일 수 있다.*\n" + MARK + "\n";
+  const att = attDayOf(data, d);
+  if (att) md += "\n\n" + att.md;
+  md += "\n\n---\n\n*팀체크 업무보고에서 자동으로 옮겼다(매일 09:00). 할 일 칸에 그 날 적은 보고도 «업무» 에 같이 실었다. «보고 대상 · 안 낸 사람» 은 **출근 요일** 기준이라 그 날 수업이 없던 선생님이 섞일 수 있다.*\n";
+  if (att) md += "\n닫은 번호: 없음\n미룬 번호: 없음\n못 하는 번호: 없음\n요청: " + att.ask + "\n회신: 없음\n";
+  md += MARK + "\n";
   return md;
+}
+
+// ---- 그 날 출결 — 박솔 대리 참조 (2026-10-12 마왕님 #59) ----
+// «박솔대리가 굳이 팀체크에 들어와서 확인하는것도 별로 … 아침마다 원장님한테 업무보고 취합해서 올라가잖아. 그게 박솔대리도 같이 참조되면 안돼나?»
+// 원장님 10/12 «엑셀을 넘기는 방식이 아니라 키오스크 → MERP 자동 → 강사가 변동사항만 최종 수정». 선생님이 업무보고에 찍은 출결이
+// 그 «변동사항» 이다 — 박솔 대리는 결석·지각·확인 필요만 보고 ERP·수강료에 반영한다. 출석한 학생 이름은 싣지 않는다.
+// 꼬리 «요청: @박솔» — 나스 규칙(폴더 CLAUDE.md 2-1)대로 박솔 대리 쪽 AI가 «나에게 온 요청» 으로 찾아 간다.
+// 표는 엑셀 출결현황과 같은 계산(attendanceOf)의 그 날 칸. 대상도 같다 — 예비고1 정규반 전원 + 개진반 중3.
+function attDayOf(data, d) {
+  let obj;
+  try { obj = attendanceOf(data, d.slice(0, 7), d); } catch (e) { log("그 날 출결 못 붙임(" + d + "): " + e.message); return null; }
+  const cls = obj.classes.filter((c) => c.dates.indexOf(d) >= 0);
+  if (!cls.length) return null;
+  const tot = { att: 0, held: 0, abs: 0, late: 0, unk: 0 };
+  const lines = cls.map((c) => {
+    const by = {};
+    c.rows.forEach((r) => { const v = r.cells[d]; if (v) (by[v] = by[v] || []).push(r.name); });
+    const n = (k) => (by[k] || []).length;
+    const head = "- **" + c.name + "** (" + c.teachers + ")";
+    if (n("밖")) return head + " — 업무보고 밖 " + n("밖") + "명 · 따로 챙김";
+    if (n("미보고")) { tot.unk += n("미보고"); return head + " — **보고 없음** " + n("미보고") + "명 · 담임 확인"; }
+    const held = c.rows.filter((r) => r.cells[d]).length, att = n("출") + n("지") + n("조");
+    tot.att += att; tot.held += held; tot.abs += n("결"); tot.late += n("지") + n("조"); tot.unk += n("?");
+    const ex = [["결석", by["결"]], ["지각", by["지"]], ["조퇴", by["조"]], ["출결 안 찍음", by["?"]]]
+      .filter((x) => x[1] && x[1].length).map((x) => x[0] + " " + x[1].join(", "));
+    return head + " — 출석 " + att + "/" + held + (ex.length ? " · " + ex.join(" · ") : " · 전원 출석");
+  });
+  const mm = Number(d.slice(5, 7)) + "/" + Number(d.slice(8));
+  const md = "## 출결 — 박솔 대리 참조 (예비고1 · 개진반 중3)\n\n" +
+    "- 출석 " + tot.att + "/" + tot.held + " · 결석 " + tot.abs + " · 지각·조퇴 " + tot.late + " · 확인 필요 " + tot.unk + "\n" +
+    lines.join("\n") + "\n\n" +
+    "*선생님이 업무보고에 찍은 출결이다. «출결 안 찍음» · «보고 없음» 은 출석으로 읽지 않는다 — 담임에게 확인. 달 전체는 «예비고1 출결현황» 엑셀.*";
+  const ask = "@박솔 " + mm + " 예비고1 출결 — 결석 " + tot.abs + " · 지각·조퇴 " + tot.late + " · 확인 필요 " + tot.unk +
+    " (이 보고 «출결» 절) — ERP 출결 · 수강료 반영";
+  return { md, ask };
 }
 
 // ---- 예비고1 출결현황 (2026-10-10 원장님 #59 — 박솔 대리에게 넘긴다) ----
