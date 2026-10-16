@@ -9002,11 +9002,23 @@ function noSchoolDay(d) {
   var w = new Date(d + "T00:00:00").getDay();
   return w === 0 || w === 6 || !!HOLIDAYS[d];
 }
+// 손으로 고른 시각(prepH: 14 · 17)이 있으면 그것이 이긴다 (2026-10-16 마왕님 «2시인지 5시인지 선택할 수도 있게»).
+//   비어 있으면 아래 규칙대로 자동이다. 학생마다 사정이 달라 규칙이 틀리는 때가 있다.
 function prepHour(v) {
   if (!v || !v.prep) return 0;
+  if (v.prepH === 14 || v.prepH === 17) return v.prepH;
   if (noSchoolDay(v.prep)) return 14;
   if (!v.math || !v.start) return 0;
   return v.math <= v.start ? 17 : 14;
+}
+// 표에서 바로 고르는 칸. «자동» 옆에 규칙대로면 몇 시인지 같이 보여 준다.
+function prepHourSel(v, k) {
+  var auto = prepHour(Object.assign({}, v, { prepH: "" })), h = prepHour(v);
+  var m = h === 14 ? EXAM_MARKS.prep2 : h === 17 ? EXAM_MARKS.prep : null;
+  var opt = function (val, label) { return '<option value="' + val + '"' + (String(v.prepH || "") === String(val) ? " selected" : "") + '>' + label + '</option>'; };
+  return '<select class="mini" data-preph="' + esc(k) + '" data-keep title="직보 시작 시각 — 자동은 수학이 시험 첫날이면 5시, 아니면 2시"' +
+    (m ? ' style="background:' + m.bg + ';color:' + m.fg + ';border-color:' + m.bg + ';font-weight:700"' : "") + '>' +
+    opt("", "자동" + (auto ? "(" + (auto === 14 ? "2시" : "5시") + ")" : "")) + opt(14, "2시") + opt(17, "5시") + '</select>';
 }
 function prepMark(v) { return prepHour(v) === 14 ? EXAM_MARKS.prep2 : EXAM_MARKS.prep; }
 function prepHourPill(v) {
@@ -9148,7 +9160,7 @@ async function deleteExam(cid, sid) {
 // ⚠ 아직 참여표가 없는 학생은 여기서 못 만든다 — 복귀만 있는 반쪽 문서가 생기면 띠도 등원 회차도 엉킨다.
 //   팀장이 «학교 일정으로 채우기» 를 누른 뒤에 넣는다.
 // noPrep(직보 안 옴)도 선생님이 학생에게 듣고 오는 값이라 같이 연다 (2026-09-26).
-var EXAM_RO_FIELDS = ["math", "back", "noPrep"];
+var EXAM_RO_FIELDS = ["math", "back", "noPrep", "prepH"];
 function myClassIds() {
   var me = S.teachers.filter(function (t) { return t.tid === myTid(); })[0];
   return (me && me.classIds) || [];
@@ -9441,6 +9453,14 @@ function renderExams() {
       };
     });
   });
+  // 직보 2시·5시 — 고르면 바로 저장. «자동» 은 빈 값이다(규칙으로 돌아간다)
+  $$("[data-preph]", el).forEach(function (sel) {
+    sel.onchange = async function () {
+      var kk = sel.getAttribute("data-preph").split("|");
+      try { await saveExamRo(kk[0], kk[1], { prepH: Number(sel.value) || "" }); keepScrollIn("#sec-exams", renderExams); }
+      catch (e) { alert("저장하지 못했다: " + e.message); renderExams(); }
+    };
+  });
   $$("[data-noprep]", el).forEach(function (b) {
     b.onclick = async function () {
       var kk = b.getAttribute("data-noprep").split("|"), v = (S.exams[kk[0]] || {})[kk[1]] || {};
@@ -9594,7 +9614,7 @@ function tableHtml(rows, monthDays, examMonth) {
         '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
         (edit ? '<td><input type="date" value="' + esc(v.math || "") + '" data-math="' + esc(k) + '" data-keep style="width:130px"></td>'
               : '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>') +
-        '<td>' + (v.prep ? '<span' + (v.noPrep ? ' style="text-decoration:line-through;color:#999"' : "") + '>' + esc(fmtMD(v.prep)) + '</span> ' + prepHourPill(v) +
+        '<td>' + (v.prep ? '<span' + (v.noPrep ? ' style="text-decoration:line-through;color:#999"' : "") + '>' + esc(fmtMD(v.prep)) + '</span> ' + (edit && !v.noPrep ? prepHourSel(v, k) : prepHourPill(v)) +
           // 직보 안 옴 — 선생님도 담당 반은 누른다(EXAM_RO_FIELDS). 다시 누르면 «온다» 로 돌아간다
           (edit ? ' <button class="mini" data-noprep="' + esc(k) + '" data-keep title="' + (v.noPrep ? "직보에 온다로 되돌린다" : "직보에 안 온다고 표시한다 — 등원 회차에서 직보 날이 빠진다") + '">' +
             (v.noPrep ? "온다로" : "안 옴") + '</button>' : "") : "—") + '</td>' +
@@ -9628,6 +9648,7 @@ function openEntry(key) {
     math: (cur && cur.math) || (sch && sch.math) || "",
     prep: (cur && cur.prep) || (sch && sch.math ? dayBefore(sch.math) : "") || "",
     back: (cur && cur.back) || (sch && sch.back) || "",
+    prepH: (cur && cur.prepH) || "",
     note: (cur && cur.note) || "",
   };
   S.exDays = (cur && cur.days && cur.days.length) ? cur.days.slice()
@@ -9683,6 +9704,10 @@ function entryHtml() {
     (f.prep ? ' · 직보 <b>' + esc(fmtMD(f.prep)) + '</b>' : "") +
     (f.back ? ' · 복귀 <b>' + esc(fmtMD(f.back)) + '</b>' : "") +
     ' · <b style="color:var(--navy)">' + Number(S.exMonth.slice(5)) + '월 등원 ' + live + '회</b></div>' +
+    (f.prep ? '<div class="row"><span class="muted" style="width:44px">직보</span>' +
+      [["", "자동" + (function () { var a = prepHour(Object.assign({}, f, { prepH: "" })); return a ? "(" + (a === 14 ? "2시" : "5시") + ")" : ""; })()], [14, "2시"], [17, "5시"]].map(function (o) {
+        return '<button class="mini ' + (String(f.prepH || "") === String(o[0]) ? "on" : "") + '" data-enph="' + o[0] + '">' + o[1] + '</button>'; }).join("") +
+      '<span class="muted" style="font-size:12px">자동은 수학이 시험 첫날이면 5시, 아니면 2시(학교 안 가는 날이면 2시)</span></div>' : "") +
     '<div class="row"><span class="muted" style="width:44px">비고</span><input type="text" id="en-note" value="' + esc(f.note) + '"></div>' +
     '<div class="err" id="en-err"></div>' +
     '<div class="row"><button class="btn" id="en-save">저장</button><button class="mini" id="en-cancel">취소</button></div>' +
@@ -9723,6 +9748,7 @@ function bindEntry() {
   $$("[data-enm]", box).forEach(function (b) { b.onclick = function () { S.exMode = b.getAttribute("data-enm"); S.exAnchor = ""; drawEntry(); }; });
   $$("[data-enmo]", box).forEach(function (b) { b.onclick = function () { S.exMonth = shiftMonth(S.exMonth, Number(b.getAttribute("data-enmo"))); drawEntry(); }; });
   $$("[data-eng]", box).forEach(function (b) { b.onclick = function () { S.exForm.grade = b.getAttribute("data-eng"); drawEntry(); }; });
+  $$("[data-enph]", box).forEach(function (b) { b.onclick = function () { S.exForm.prepH = Number(b.getAttribute("data-enph")) || ""; drawEntry(); }; });
   $$("[data-end]", box).forEach(function (b) {
     b.onclick = function () {
       var i = Number(b.getAttribute("data-end"));
@@ -9746,7 +9772,7 @@ function bindEntry() {
     try {
       var e = S.exEntry;
       await saveExam(e.cid, e.sid, { name: e.st.name, school: f.school, grade: f.grade,
-        start: f.start, end: f.end, math: f.math, prep: f.prep, back: f.back,
+        start: f.start, end: f.end, math: f.math, prep: f.prep, back: f.back, prepH: f.prep ? (f.prepH || "") : "",
         note: (f.note || "").trim(), days: S.exDays, byTeacher: true });
       S.exEntry = null; S.exGrade = f.grade;
       renderExams();

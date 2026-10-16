@@ -29,7 +29,20 @@ ok("띠 색이 다르다 — 5시 주황 · 2시 보라",
   run(`return markOf(${A}, "2026-09-29") === EXAM_MARKS.prep && markOf(${B}, "2026-10-01") === EXAM_MARKS.prep2 && EXAM_MARKS.prep.bg !== EXAM_MARKS.prep2.bg`));
 ok("직보가 시험 기간 안이어도 «시» 가 아니라 «직» 으로 칠한다", run(`return markOf(${B}, "2026-10-01").t`) === "직");
 ok("표의 직보 칸에 «2시»/«5시»", /2시<\/span>/.test(run(`return prepHourPill(${B})`)) && /5시<\/span>/.test(run(`return prepHourPill(${A})`)) &&
-  /esc\(fmtMD\(v\.prep\)\) \+ '<\/span> ' \+ prepHourPill\(v\)/.test(src));
+  /esc\(fmtMD\(v\.prep\)\) \+ '<\/span> ' \+ \(edit && !v\.noPrep \? prepHourSel\(v, k\) : prepHourPill\(v\)\)/.test(src));
+
+// 손으로 고르기 (2026-10-16 «2시인지 5시인지 선택할 수도 있게»)
+ok("prepH 17 이면 규칙이 2시여도 5시", run(`return prepHour(Object.assign(${B}, { prepH: 17 }))`) === 17);
+ok("prepH 14 이면 규칙이 5시여도 2시", run(`return prepHour(Object.assign(${A}, { prepH: 14 }))`) === 14);
+ok("prepH 가 비면 자동(규칙)", run(`return prepHour(Object.assign(${A}, { prepH: "" }))`) === 17);
+ok("엉뚱한 값은 무시하고 자동", run(`return prepHour(Object.assign(${A}, { prepH: 9 }))`) === 17);
+ok("직보 날짜가 없으면 prepH 가 있어도 0", run(`return prepHour({ prepH: 14 })`) === 0);
+ok("고른 시각으로 띠 색도 바뀐다", run(`return markOf(Object.assign(${A}, { prepH: 14 }), "2026-09-29") === EXAM_MARKS.prep2`));
+ok("표 칸: 자동(5시) · 2시 · 5시, 고른 것이 selected",
+  (function () { var h = run(`return prepHourSel(Object.assign(${A}, { prepH: 14 }), "c|s")`);
+    return /자동\(5시\)/.test(h) && /value="14" selected>2시/.test(h) && /data-preph="c\|s"/.test(h) && /data-keep/.test(h); })());
+ok("선생님도 담당 반은 고른다 (EXAM_RO_FIELDS)", run(`return EXAM_RO_FIELDS.indexOf("prepH") >= 0`));
+ok("대신 입력 폼에도 고르기 + 저장에 prepH", /data-enph=/.test(src) && /prepH: f\.prep \? \(f\.prepH \|\| ""\) : ""/.test(src));
 ok("범례에 둘 다 뜬다 (참여표 · 중3 내신관리 HTML)", /직보 5시/.test(run(`return EXAM_MARKS.prep.label`)) && /직보 2시/.test(run(`return EXAM_MARKS.prep2.label`)) &&
   /\["exam", "math", "prep", "prep2", "noprep", "back"\]/.test(src));
 
