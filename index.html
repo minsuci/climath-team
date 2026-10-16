@@ -7396,7 +7396,8 @@ async function flushStudentLog() {
     var d = await ref.get();
     var items = ((d.exists && d.data().items) || []).concat(q);
     items = items.slice(-STUDENT_LOG_KEEP);
-    await ref.set({ items: items, updated: Date.now() }, { merge: true });
+    // 선생님이 학교를 적은 기록도 남긴다(saveSchoolRo). appConfig 는 앱 규칙상 선생님도 쓴다
+    await passWrite(function () { return ref.set({ items: items, updated: Date.now() }, { merge: true }); });
     S.stLog = items;
   } catch (e) {}   // 기록 때문에 저장이 실패하면 안 된다
 }
@@ -9166,6 +9167,57 @@ function myClassIds() {
   return (me && me.classIds) || [];
 }
 function canEditExam(cid) { return !S.ro || myClassIds().indexOf(cid) >= 0; }
+
+// ---- 선생님이 담당 학생의 학교를 적는다 (2026-10-16 마왕님 «선생님들 학교 적을 수 있게… 왜 아직도 안 되는 거야») ----
+// 전에는 선생님이 할 일 칸에 «이름 학교» 로 보내고 팀장이 넣었다. 수업관리 앱 규칙은 선생님에게 students 쓰기를 이미 열어 두었다 —
+// 막고 있던 것은 이 앱의 읽기 계정 문턱(guardWrites)뿐이다.
+// ⚠ **빈 학교만** 채운다. 반 명단 줄(roster.school)은 담당 반만 고칠 수 있다(앱 규칙 teaches(cid)).
+//   이미 적힌 학교를 바꾸면 남의 반 줄에 옛 학교가 남고, 화면(schoolOf)은 그 줄을 먼저 본다 — 반마다 학교가 달라진다.
+//   빈 칸을 채울 때는 남의 반 줄도 비어 있으니 사람 문서(school)로 떨어져 같은 값이 보인다.
+// ⚠ passWrite 는 동기 구간만 연다. await 를 사이에 둔 쓰기는 하나씩 감싼다(stSave 를 그대로 부르면 두 번째 쓰기부터 막힌다).
+function canEditSchoolOf(pid) {
+  if (!pid || !S.byPid[pid]) return false;
+  if (!S.ro) return true;
+  var mine = myClassIds();
+  var rows = [], inMine = false;
+  S.classes.forEach(function (c) {
+    (c.roster || []).forEach(function (r) {
+      if (r.pid !== pid) return;
+      rows.push(r);
+      if (mine.indexOf(c.id) >= 0 && !r.teacher && !isEnded(r)) inMine = true;
+    });
+  });
+  return inMine && !S.byPid[pid].school && rows.every(function (r) { return !r.school; });
+}
+async function saveSchoolRo(pid, school) {
+  school = String(school || "").trim();
+  if (!school) throw new Error("학교 이름을 넣어주세요");
+  if (!canEditSchoolOf(pid)) throw new Error(RO_MSG + " (담당 반 학생이고 학교가 비어 있을 때만 적는다)");
+  var p = S.byPid[pid];
+  await passWrite(function () { return db.collection("students").doc(pid).set({ school: school, updated: Date.now() }, { merge: true }); });
+  p.school = school;
+  var mine = S.ro ? myClassIds() : S.classes.map(function (c) { return c.id; });
+  var filled = 0;
+  for (var i = 0; i < S.classes.length; i++) {
+    var c = S.classes[i];
+    if (mine.indexOf(c.id) < 0 || !(c.roster || []).some(function (r) { return r.pid === pid; })) continue;
+    var snap = await db.collection("classes").doc(c.id).get();
+    var next = ((snap.exists && snap.data().roster) || []).map(function (r) {
+      return r.pid === pid ? Object.assign({}, r, { school: school }) : r;
+    });
+    await passWrite(function () { return db.collection("classes").doc(c.id).update({ roster: next }); });
+    c.roster = next;
+    // 학교 일정이 있으면 지금 회차 참여표도 채운다 — 선생님은 «학교 일정으로 채우기» 단추가 없다
+    var r = next.filter(function (x) { return x.pid === pid && !x.teacher && !isEnded(x); })[0];
+    if (!r || !activeClass(c) || ((S.exams[c.id] || {})[r.id])) continue;
+    var sc = schedFor(school, gradeOf(r));
+    if (!sc || !sc.start) continue;
+    await passWrite(function () { return saveExam(c.id, r.id, schedFields({ st: r }, sc, null)); });
+    filled++;
+  }
+  logStudentChange("고침", pid, p.name || "", "school");
+  return filled;
+}
 // 수학시험을 바꾸면 직보가 전날로 따라간다 — 손으로 고쳐둔 직보(전날이 아닌 것)는 놔둔다. 대신 입력(schedFields)과 같은 규칙.
 function prepFollow(v, math) {
   if (!math) return (v && v.prep) || "";
@@ -9244,6 +9296,11 @@ async function runFill(list, keepOld, btn, label) {
 }
 
 // 표에 놓을 줄 — 담당 반을 가로질러 모은다. 반별로 보면 "이번 주에 누가 빠지나"를 못 본다.
+// 참여표 학교 칸 — 비어 있고 적을 수 있으면 입력 칸(목록은 ex-schools-ro)
+function schoolCell(x) {
+  if (x.school || !canEditSchoolOf(x.st.pid)) return esc(x.school || "");
+  return '<input type="text" list="ex-schools-ro" data-stschool="' + esc(x.st.pid) + '" data-keep placeholder="학교 (예: 잠신중)" style="width:120px">';
+}
 function examRows() {
   var out = [];
   activeClasses().forEach(function (c) {
@@ -9453,6 +9510,16 @@ function renderExams() {
       };
     });
   });
+  // 빈 학교 칸 — 선생님도 담당 학생은 적는다(saveSchoolRo). 학교 일정이 있으면 참여표까지 채운다
+  $$("[data-stschool]", el).forEach(function (inp) {
+    inp.onchange = async function () {
+      var v = inp.value.trim(); if (!v) return;
+      inp.disabled = true;
+      try { var n = await saveSchoolRo(inp.getAttribute("data-stschool"), v); S.exams = {}; await loadExams(); keepScrollIn("#sec-exams", renderExams);
+            if (!n) alert(v + " — 학교는 적었다. 이 회차 학교 일정이 아직 없어서 참여표는 비어 있다(팀장이 일정을 넣으면 채워진다)."); }
+      catch (e) { inp.disabled = false; alert("저장하지 못했다: " + e.message); }
+    };
+  });
   // 직보 2시·5시 — 고르면 바로 저장. «자동» 은 빈 값이다(규칙으로 돌아간다)
   $$("[data-preph]", el).forEach(function (sel) {
     sel.onchange = async function () {
@@ -9603,14 +9670,14 @@ function tableHtml(rows, monthDays, examMonth) {
     rows.map(function (x) {
       var k = x.cls.id + "|" + x.st.id;
       if (!x.v) return '<tr><td><b>' + esc(x.st.name) + '</b></td><td>' + esc(x.cls.name) + '</td>' +
-        '<td>' + esc(homeroomOf(x.st)) + '</td><td>' + esc(x.school) + '</td>' +
+        '<td>' + esc(homeroomOf(x.st)) + '</td><td>' + schoolCell(x) + '</td>' +
         '<td colspan="6" class="muted">아직 안 냈다</td><td><button class="mini" data-ent="' + esc(k) + '">넣기</button></td></tr>';
       var v = x.v, ac = attendCount(x.cls, x.st, v, monthDays, examMonth);
       // 복귀·수학시험은 표에서 바로 넣는다. 선생님은 담당 반만 — 그 밖의 반은 글자로만 보인다.
       // data-keep 이 있어야 읽기 계정의 «감추기»(applyReadOnly)가 칸을 잠그지 않는다.
       var edit = canEditExam(x.cls.id);
       return '<tr><td><b>' + esc(x.st.name) + '</b>' + (v.byTeacher ? ' <span class="pill">대신</span>' : "") + '</td>' +
-        '<td>' + esc(x.cls.name) + '</td><td>' + esc(homeroomOf(x.st)) + '</td><td>' + esc(v.school || "") + '</td>' +
+        '<td>' + esc(x.cls.name) + '</td><td>' + esc(homeroomOf(x.st)) + '</td><td>' + (v.school ? esc(v.school) : schoolCell(x)) + '</td>' +
         '<td>' + (v.start ? esc(fmtMD(v.start) + " ~ " + fmtMD(v.end || v.start)) : '<span class="red">—</span>') + '</td>' +
         (edit ? '<td><input type="date" value="' + esc(v.math || "") + '" data-math="' + esc(k) + '" data-keep style="width:130px"></td>'
               : '<td>' + (v.math ? esc(fmtMD(v.math)) : '<span class="red">—</span>') + '</td>') +
@@ -9624,6 +9691,7 @@ function tableHtml(rows, monthDays, examMonth) {
         '<td class="wrapc">' + esc(v.note || "") + '</td>' +
         '<td><button class="mini" data-fix="' + esc(k) + '">고치기</button> <button class="x" data-del="' + esc(k) + '">×</button></td></tr>';
     }).join("") + '</tbody></table></div>' +
+    '<datalist id="ex-schools-ro">' + examSchoolOpts().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + '</datalist>' +
     '<p class="muted" style="font-size:12px;margin:4px 0 0">등원은 <b>' + (examMonth ? Number(examMonth.slice(5)) + "월" : "회차 달") +
     '</b> 기준이다. 그 달 수업일에서 <b>직보 다음날 ~ 복귀 전날</b>을 빼고, 직보·복귀를 더한 값. 수강료에 쓰는 숫자다. ' +
     '직보에 <b>안 옴</b>이면 직보 날부터 뺀다. ' +
