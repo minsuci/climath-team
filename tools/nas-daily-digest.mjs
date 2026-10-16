@@ -249,7 +249,8 @@ function digestOf(data, d) {
 //   **그 날 수업한 반의 학생 전원**을 표로 싣는다(출석한 학생도). 이름은 나스 간부 폴더 규칙대로 실명 그대로.
 // 꼬리 «요청: @박솔» — 나스 규칙(폴더 CLAUDE.md 2-1)대로 박솔 대리 쪽 AI가 «나에게 온 요청» 으로 찾아 간다.
 // 표는 엑셀 출결현황과 같은 계산(attendanceOf)의 그 날 칸. 대상도 같다 — 예비고1 정규반 전원 + 개진반 중3.
-const ATT_WORD = { "출": "출석", "결": "**결석**", "지": "**지각**", "조": "**조퇴**", "?": "**출결 안 찍음** — 담임 확인", "미보고": "**보고 없음** — 담임 확인", "밖": "업무보고 밖 — 따로 챙김" };
+// «밖» 반(원장님 개진반 등)은 업무보고가 없다 — 10/16 마왕님 «원장님 개진반은 merp로 오는걸 받아야» → 박솔 대리는 MERP(ERP) 출결로 본다.
+const ATT_WORD = { "출": "출석", "결": "**결석**", "지": "**지각**", "조": "**조퇴**", "?": "**출결 안 찍음** — 담임 확인", "미보고": "**보고 없음** — 담임 확인", "밖": "업무보고 밖 — **MERP 출결로 확인**" };
 function attDayOf(data, d) {
   let obj;
   try { obj = attendanceOf(data, d.slice(0, 7), d); } catch (e) { log("그 날 출결 못 붙임(" + d + "): " + e.message); return null; }
@@ -266,7 +267,7 @@ function attDayOf(data, d) {
     });
     const n = (k) => (by[k] || []).length;
     const head = "- **" + c.name + "** (" + c.teachers + ")";
-    if (n("밖")) return head + " — 업무보고 밖 " + n("밖") + "명 · 따로 챙김";
+    if (n("밖")) return head + " — 업무보고 밖 " + n("밖") + "명 · **MERP 출결로 확인**";
     if (n("미보고")) { tot.unk += n("미보고"); return head + " — **보고 없음** " + n("미보고") + "명 · 담임 확인"; }
     const held = c.rows.filter((r) => r.cells[d]).length, att = n("출") + n("지") + n("조");
     tot.att += att; tot.held += held; tot.abs += n("결"); tot.late += n("지") + n("조"); tot.unk += n("?");
