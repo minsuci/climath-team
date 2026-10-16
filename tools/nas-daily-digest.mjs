@@ -243,18 +243,27 @@ function digestOf(data, d) {
 // ---- 그 날 출결 — 박솔 대리 참조 (2026-10-12 마왕님 #59) ----
 // «박솔대리가 굳이 팀체크에 들어와서 확인하는것도 별로 … 아침마다 원장님한테 업무보고 취합해서 올라가잖아. 그게 박솔대리도 같이 참조되면 안돼나?»
 // 원장님 10/12 «엑셀을 넘기는 방식이 아니라 키오스크 → MERP 자동 → 강사가 변동사항만 최종 수정». 선생님이 업무보고에 찍은 출결이
-// 그 «변동사항» 이다 — 박솔 대리는 결석·지각·확인 필요만 보고 ERP·수강료에 반영한다. 출석한 학생 이름은 싣지 않는다.
+// 그 «변동사항» 이다 — 박솔 대리는 결석·지각·확인 필요를 ERP·수강료에 반영한다.
+// 10/16 마왕님 «반 명단이 쭉 나오고 출석인지 결석인지가 다 떠야 — 한 명씩 대조 가능하게» — 박솔 대리 쪽 AI가
+//   «출석 4/5 · 결석 1명» 처럼 숫자로만 요약해 ERP와 한 명씩 맞춰 볼 수가 없었다. 그래서 반별 요약 줄 밑에
+//   **그 날 수업한 반의 학생 전원**을 표로 싣는다(출석한 학생도). 이름은 나스 간부 폴더 규칙대로 실명 그대로.
 // 꼬리 «요청: @박솔» — 나스 규칙(폴더 CLAUDE.md 2-1)대로 박솔 대리 쪽 AI가 «나에게 온 요청» 으로 찾아 간다.
 // 표는 엑셀 출결현황과 같은 계산(attendanceOf)의 그 날 칸. 대상도 같다 — 예비고1 정규반 전원 + 개진반 중3.
+const ATT_WORD = { "출": "출석", "결": "**결석**", "지": "**지각**", "조": "**조퇴**", "?": "**출결 안 찍음** — 담임 확인", "미보고": "**보고 없음** — 담임 확인", "밖": "업무보고 밖 — 따로 챙김" };
 function attDayOf(data, d) {
   let obj;
   try { obj = attendanceOf(data, d.slice(0, 7), d); } catch (e) { log("그 날 출결 못 붙임(" + d + "): " + e.message); return null; }
   const cls = obj.classes.filter((c) => c.dates.indexOf(d) >= 0);
   if (!cls.length) return null;
   const tot = { att: 0, held: 0, abs: 0, late: 0, unk: 0 };
+  const rows = [];
   const lines = cls.map((c) => {
     const by = {};
-    c.rows.forEach((r) => { const v = r.cells[d]; if (v) (by[v] = by[v] || []).push(r.name); });
+    c.rows.forEach((r) => {
+      const v = r.cells[d]; if (!v) return;
+      (by[v] = by[v] || []).push(r.name);
+      rows.push("| " + c.name + " | " + r.name + " | " + (ATT_WORD[v] || v) + " |");
+    });
     const n = (k) => (by[k] || []).length;
     const head = "- **" + c.name + "** (" + c.teachers + ")";
     if (n("밖")) return head + " — 업무보고 밖 " + n("밖") + "명 · 따로 챙김";
@@ -269,6 +278,7 @@ function attDayOf(data, d) {
   const md = "## 출결 — 박솔 대리 참조 (예비고1 · 개진반 중3)\n\n" +
     "- 출석 " + tot.att + "/" + tot.held + " · 결석 " + tot.abs + " · 지각·조퇴 " + tot.late + " · 확인 필요 " + tot.unk + "\n" +
     lines.join("\n") + "\n\n" +
+    "### 학생별 — ERP와 한 명씩 대조\n\n| 반 | 학생 | 출결 |\n|---|---|---|\n" + rows.join("\n") + "\n\n" +
     "*선생님이 업무보고에 찍은 출결이다. «출결 안 찍음» · «보고 없음» 은 출석으로 읽지 않는다 — 담임에게 확인. 달 전체는 «예비고1 출결현황» 엑셀.*";
   const ask = "@박솔 " + mm + " 예비고1 출결 — 결석 " + tot.abs + " · 지각·조퇴 " + tot.late + " · 확인 필요 " + tot.unk +
     " (이 보고 «출결» 절) — ERP 출결 · 수강료 반영";
