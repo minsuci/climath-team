@@ -115,7 +115,7 @@ ok("휴무라고 못 내는 것은 아니다 (판은 그대로 열린다)", run(
 // 9/17 받은 요일표가 그대로 들어 있나 — 이름 한 글자(이창혁A)만 틀려도 그 사람은 매일 출근으로 남는다
 const WORK = JSON.parse(run(`return JSON.stringify(RP_WORK_DOWS_REAL)`));
 ok("받은 요일표 그대로 — 한민수 수일 휴무 · 정찬준 월~금 · 이창혁A 월~금+일 · 이현우 월~토 · 박준성 월금 · 이승엽 화목",
-  JSON.stringify(WORK) === JSON.stringify({ "한민수": [1,2,4,5,6], "정찬준": [1,2,3,4,5], "이창혁A": [0,1,2,3,4,5], "이현우": [1,2,3,4,5,6], "박준성": [1,5], "이승엽": [2,4] }), JSON.stringify(WORK));
+  JSON.stringify(WORK) === JSON.stringify({ "한민수": [1,2,4,5,6], "정찬준": [1,2,3,4,5], "이창혁A": [0,1,2,3,4,5], "이현우": [1,2,3,4,5,6], "박준성": [1,5,6], "이승엽": [2,4] }), JSON.stringify(WORK));
 // 9/19 «박준성 선생님은 월금에 이승엽 선생님은 화목에 고등관에 보고하는거야. 살려둬» — 빼는 사람이 아니라 요일이 정해진 사람
 ok("빠지는 사람 셋 — 원장님 · 서초 실장 · 평촌 지점 계정 (박준성·이승엽은 요일로)",
   run(`return JSON.stringify(RP_SKIP_NAMES)`) === JSON.stringify(["박리안", "김재헌", "평촌"]), run(`return JSON.stringify(RP_SKIP_NAMES)`));

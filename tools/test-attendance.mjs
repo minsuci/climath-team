@@ -17,7 +17,7 @@ const rpRoster = { at: "2026-10-10T00:00:00Z", classes: [
     { id: "g11", pid: "p1", name: "가나", grade: "중3", school: "대청중", days: [4], onlyDays: [], startDate: "", endDate: "" },
     { id: "g12", pid: "p9", name: "고일", grade: "고1", school: "", days: [4], onlyDays: [], startDate: "", endDate: "" } ] },
   { id: "g2", name: "개진반 박준성", type: "individual", classDays: [], endDate: "", tids: ["TP"], roster: [
-    { id: "g21", pid: "p3", name: "마바", grade: "중3", school: "", days: [6], onlyDays: [], startDate: "", endDate: "" } ] },
+    { id: "g21", pid: "p3", name: "마바", grade: "중3", school: "", days: [0], onlyDays: [], startDate: "", endDate: "" } ] },
   { id: "g3", name: "개진반 박리안", type: "individual", classDays: [], endDate: "", tids: ["TB"], roster: [
     { id: "g31", pid: "p4", name: "사아", grade: "중3", school: "", days: [4], onlyDays: [], startDate: "", endDate: "" } ] },
 ] };
@@ -46,7 +46,7 @@ ok("합계 — 수업 3 · 출석 1(지각 포함) · 결석 1 · 확인 1", g.s
 const d = row("예비고1S 월금", "다라");
 ok("등록 전 날은 빈칸, 출결 안 찍은 날은 ?", !("2026-10-02" in d.cells) && d.cells["2026-10-05"] === "?" && d.cells["2026-10-09"] === "미보고", JSON.stringify(d.cells));
 ok("개진반은 중3만 — 고1 학생은 안 싣는다", !row("개진반 이현우", "고일") && row("개진반 이현우", "가나").cells["2026-10-01"] === "출");
-ok("중등관에 보고하는 요일(박준성 토)은 «밖»", row("개진반 박준성", "마바").cells["2026-10-03"] === "밖" && row("개진반 박준성", "마바").sum.held === 0);
+ok("중등관에 보고하는 요일(박준성 일 — 토는 10/17부터 고등관)은 «밖»", row("개진반 박준성", "마바").cells["2026-10-04"] === "밖" && row("개진반 박준성", "마바").sum.held === 0);
 ok("원장님 개진반은 «업무보고 밖» 반", cls("개진반 박리안").outside === true && row("개진반 박리안", "사아").cells["2026-10-01"] === "밖");
 ok("명단 변동 — 학생 추가가 실린다", o.moves.length === 1 && o.moves[0].kind === "학생 추가" && o.moves[0].name === "다라" && o.moves[0].date === "2026-10-05", JSON.stringify(o.moves));
 ok("까지 — 어제", o.until === "2026-10-09" && o.from === "2026-10-01");
