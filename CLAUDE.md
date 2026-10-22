@@ -812,6 +812,8 @@ tests/{tid}                { kind: midterm|final|mock, name, grade, date, create
 testScores/{tid}__{pid}    { tid, pid, name, raw, ach, grade, std, pct, avg, note, updated }
 ```
 
+**시험 고르기 줄 (2026-10-22 «내신이랑 모의고사 따로 · 순서대로»)** — `testChipRows()` 가 `TEST_ROWS`(내신 = midterm·final / 모의고사 = mock)로 줄을 나누고, 줄 안은 학년 높은 순 → 날짜 오래된 순 → 중간이 기말 앞(`testRowList`). `S.tests` 는 최근 순 그대로(다른 데서 씀). 테스트 `test-testrows.js`.
+
 - 시험 종류마다 칸이 다르다 — 중간·기말은 `원점수 · 성취도(A~E) · 등급`
   («과목평균» 은 2026-10-05 «시험 성적 텝에 과목평균은 없애자» 로 뺐다. 적어 둔 `avg` 값은 DB 에 그대로 있다),
   모의고사는 `원점수 · 표준점수 · 백분위 · 등급`. `TEST_KINDS[kind].cols` 하나만 보면 된다.

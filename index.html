@@ -10114,6 +10114,28 @@ function avgOf(list) {
   return Math.round(n.reduce(function (a, b) { return a + b; }, 0) / n.length * 10) / 10;
 }
 
+// 시험 고르기 줄 — 내신(중간·기말)과 모의고사를 줄로 나누고, 줄 안에서는 학년 → 날짜 오래된 순 (2026-10-22 마왕님
+// «줄을 나눠서 내신이랑 모의고사 따로 볼 수 있게 하고 순서대로 정렬도»). S.tests 자체는 최근 순 그대로 둔다(다른 데서 씀).
+var TEST_ROWS = [{ label: "내신", kinds: ["midterm", "final"] }, { label: "모의고사", kinds: ["mock"] }];
+function testRowList(kinds) {
+  var gi = function (g) { var i = GRADES.indexOf(g); return i < 0 ? 99 : i; };
+  return S.tests.filter(function (x) { return kinds.indexOf(x.kind) >= 0; }).slice().sort(function (a, b) {
+    return (gi(b.grade) - gi(a.grade)) || ((a.date || "") < (b.date || "") ? -1 : (a.date || "") > (b.date || "") ? 1 : 0) ||
+      (a.kind === b.kind ? 0 : a.kind === "midterm" ? -1 : 1);
+  });
+}
+function testChipRows() {
+  return TEST_ROWS.map(function (row) {
+    var list = testRowList(row.kinds);
+    if (!list.length) return "";
+    return '<div class="chips"><span class="muted" style="width:62px;font-size:12px;font-weight:700">' + row.label + '</span>' +
+      list.map(function (x) {
+        return '<button class="mini ' + (x.tid === S.testPick ? "on" : "") + '" data-tsp="' + esc(x.tid) + '">' +
+          '<b>' + esc(TEST_KINDS[x.kind].short) + '</b> ' + esc(x.name) +
+          ' <span class="muted">' + esc(x.grade || "") + (x.date ? " · " + esc(fmtMD(x.date)) : "") + '</span></button>';
+      }).join("") + '</div>';
+  }).join("");
+}
 function renderScores() {
   var el = $("#sec-scores");
   var t = S.tests.filter(function (x) { return x.tid === S.testPick; })[0] || null;
@@ -10123,11 +10145,7 @@ function renderScores() {
   el.innerHTML = '<h2>시험 성적 <span class="n">' + S.tests.length + '개</span><span class="sp"></span>' +
     (t ? '<button class="mini" id="ts-del">이 시험 지우기</button>' : "") +
     '<button class="mini" id="ts-new">새 시험</button></h2>' +
-    '<div class="chips">' + (S.tests.length ? S.tests.map(function (x) {
-      return '<button class="mini ' + (x.tid === S.testPick ? "on" : "") + '" data-tsp="' + esc(x.tid) + '">' +
-        '<b>' + esc(TEST_KINDS[x.kind].short) + '</b> ' + esc(x.name) +
-        ' <span class="muted">' + esc(x.grade || "") + (x.date ? " · " + esc(fmtMD(x.date)) : "") + '</span></button>';
-    }).join("") : '<span class="muted">아직 만든 시험이 없다. "새 시험"으로 만든다.</span>') + '</div>' +
+    (S.tests.length ? testChipRows() : '<div class="chips"><span class="muted">아직 만든 시험이 없다. "새 시험"으로 만든다.</span></div>') +
     '<div id="ts-form"></div>' +
     sheetLineHtml() +
     (t ? testPanelHtml(t) : '') +
