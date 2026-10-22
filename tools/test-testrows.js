@@ -32,5 +32,12 @@ ok("모의고사가 하나도 없으면 그 줄은 안 그린다", (function () 
   run(`S.__keep = S.tests; S.tests = S.tests.filter(function (x) { return x.kind !== "mock"; })`);
   const r = run(`return testChipRows()`); run(`S.tests = S.__keep`);
   return (r.match(/class="chips"/g) || []).length === 1; })());
+// 기말 합산등급 (2026-10-22 «기말탭에는 합산등급도 넣자»)
+ok("기말 칸: 원점수 · 성취도 · 등급 · 합산등급", JSON.stringify(run(`return TEST_KINDS.final.cols`)) === JSON.stringify(["raw", "ach", "grade", "sem"]));
+ok("중간·모의에는 합산등급 없음", run(`return TEST_KINDS.midterm.cols.indexOf("sem") < 0 && TEST_KINDS.mock.cols.indexOf("sem") < 0`));
+ok("합산등급 칸 이름 · 1~9", run(`return TEST_COLS.sem.label === "합산등급" && TEST_COLS.sem.max === 9`));
+ok("붙여넣기: 이름 원점수 성취도 등급 합산등급", JSON.stringify(run(`return parseScoreLine("홍길동 88 B 3 2", TEST_KINDS.final.cols).vals`)) === JSON.stringify({ ach: "B", raw: "88", grade: "3", sem: "2" }),
+  JSON.stringify(run(`return parseScoreLine("홍길동 88 B 3 2", TEST_KINDS.final.cols).vals`)));
+ok("합산등급만 적어도 빈 문서로 안 지운다", run(`return Object.keys(TEST_COLS).indexOf("sem") >= 0`));
 console.log(T.join("\n"));
 if (T.some((x) => x.startsWith("FAIL"))) process.exitCode = 1;

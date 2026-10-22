@@ -10030,13 +10030,15 @@ function downloadMid3() {
 //   적어 둔 값(testScores.avg)은 지우지 않는다 — 화면·붙여넣기 차례에서만 빠진다. 되살리려면 cols 에 "avg" 를 다시 넣는다.
 var TEST_KINDS = {
   midterm: { label: "중간고사", short: "중간", cols: ["raw", "ach", "grade"] },
-  final:   { label: "기말고사", short: "기말", cols: ["raw", "ach", "grade"] },
+  // 기말에만 «합산등급» — 중간·기말을 합친 그 학기 등급 (2026-10-22 마왕님 «기말탭에는 합산등급도 넣자»)
+  final:   { label: "기말고사", short: "기말", cols: ["raw", "ach", "grade", "sem"] },
   mock:    { label: "모의고사", short: "모의", cols: ["raw", "std", "pct", "grade"] },
 };
 var TEST_COLS = {
   raw:   { label: "원점수", w: 74, max: 100 },
   ach:   { label: "성취도", w: 66, text: true },      // A~E
   grade: { label: "등급", w: 62, max: 9 },
+  sem:   { label: "합산등급", w: 74, max: 9 },     // 기말만 — 그 학기 중간+기말 합산
   avg:   { label: "과목평균", w: 78, max: 100 },
   std:   { label: "표준점수", w: 78, max: 200 },
   pct:   { label: "백분위", w: 70, max: 100 },
@@ -10356,7 +10358,7 @@ function testPanelHtml(t) {
         '<td>' + esc(x.homeroom) + '</td><td>' + esc(x.p.school || "") + '</td>' +
         cols.map(function (c) {
           var val = v[c] == null ? "" : v[c];
-          var tone = c === "grade" ? gradeTone(val) : "";
+          var tone = (c === "grade" || c === "sem") ? gradeTone(val) : "";
           return '<td><input data-keep type="' + (TEST_COLS[c].text ? "text" : "number") + '" data-c="' + c + '" value="' + esc(val) + '"' +
             (TEST_COLS[c].max ? ' max="' + TEST_COLS[c].max + '" min="0"' : "") +
             ' class="' + tone + '"></td>';
@@ -10386,7 +10388,7 @@ function bindTestPanel(t) {
       try {
         await saveScore(t.tid, pid, name, patch);
         inp.classList.add("ok"); setTimeout(function () { inp.classList.remove("ok"); }, 900);
-        if (c === "grade") { inp.className = gradeTone(inp.value) + " ok"; }
+        if (c === "grade" || c === "sem") { inp.className = gradeTone(inp.value) + " ok"; }
       } catch (e) { inp.classList.add("bad"); alert("저장하지 못했다: " + e.message); }
     };
   });

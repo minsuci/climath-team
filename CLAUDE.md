@@ -813,6 +813,7 @@ testScores/{tid}__{pid}    { tid, pid, name, raw, ach, grade, std, pct, avg, not
 ```
 
 **시험 고르기 줄 (2026-10-22 «내신이랑 모의고사 따로 · 순서대로»)** — `testChipRows()` 가 `TEST_ROWS`(내신 = midterm·final / 모의고사 = mock)로 줄을 나누고, 줄 안은 학년 높은 순 → 날짜 오래된 순 → 중간이 기말 앞(`testRowList`). `S.tests` 는 최근 순 그대로(다른 데서 씀). 테스트 `test-testrows.js`.
+**기말 «합산등급»** (2026-10-22) — `TEST_COLS.sem`(1~9), `TEST_KINDS.final.cols` 끝에만. 그 학기 중간+기말 합산 등급. 색은 등급과 같이 `gradeTone`. 붙여넣기 차례는 «이름 원점수 성취도 등급 합산등급».
 
 - 시험 종류마다 칸이 다르다 — 중간·기말은 `원점수 · 성취도(A~E) · 등급`
   («과목평균» 은 2026-10-05 «시험 성적 텝에 과목평균은 없애자» 로 뺐다. 적어 둔 `avg` 값은 DB 에 그대로 있다),
