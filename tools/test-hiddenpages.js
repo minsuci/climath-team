@@ -26,8 +26,16 @@ run(`location.hash = ""; localStorage.setItem("dash.page", "sheets");`);
 ok("마지막에 본 것이 숨긴 메뉴여도 «할 일» 로", run(`return currentPage()`) === "tasks");
 run(`localStorage.setItem("dash.page", "report");`);
 ok("숨기지 않은 메뉴는 기억한 대로", run(`return currentPage()`) === "report");
+// 10/26~ 선생님(읽기만)은 내신 참여표만 (10/24 마왕님 «팀체크 축소» · #106)
+run(`S.ro = true; location.hash = ""; localStorage.setItem("dash.page", "tasks");`);
+ok("선생님 — 메뉴 줄에는 내신 참여표만", run(`return PAGES.filter(function (p) { return isPage(p[0]) && !navHidden(p[0]); }).map(function (p) { return p[0]; }).join(",")`) === "exams");
+ok("선생님 — 기억한 화면이 할 일이어도 내신 참여표로", run(`return currentPage()`) === "exams");
+run(`location.hash = "#report";`);
+ok("선생님 — 주소가 업무보고여도 내신 참여표로", run(`return currentPage()`) === "exams");
+run(`S.ro = false; location.hash = "";`);
+ok("팀장 — 메뉴는 그대로(할 일 · 업무보고 · 시험 성적 …)", run(`return ["tasks","report","minutes","scores","exams","terms"].every(function (id) { return isPage(id) && !navHidden(id); })`));
 ok("메뉴 단추는 hidden 으로 그리고, 팀장에게만 «⋯» 로 잠깐 보인다",
-  /HIDDEN_PAGES\.indexOf\(p\[0\]\) >= 0 \? ' class="nav-hid" hidden' : ""/.test(src) && /\(S\.ro \? "" : '<button id="nav-more"/.test(src));
+  /navHidden\(p\[0\]\) \? ' class="nav-hid" hidden' : ""/.test(src) && /\(S\.ro \? "" : '<button id="nav-more"/.test(src));
 ok("메뉴 단추 연결은 data-page 가 있는 것만 («⋯» 가 showPage(null) 을 부르지 않게)", /\$\$\("\.nav button\[data-page\]"\)/.test(src));
 
 T.forEach((l) => console.log(l));

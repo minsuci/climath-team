@@ -1062,7 +1062,7 @@ function renderShell() {
     '<button class="link" id="btn-out">로그아웃</button></div>' +
     '<div class="wrap"><div id="banner"></div><div class="nav">' +
     myPages().map(function (p) {
-      return '<button data-page="' + p[0] + '"' + (HIDDEN_PAGES.indexOf(p[0]) >= 0 ? ' class="nav-hid" hidden' : "") + '>' + p[1] +
+      return '<button data-page="' + p[0] + '"' + (navHidden(p[0]) ? ' class="nav-hid" hidden' : "") + '>' + p[1] +
         '<span class="b" id="nb-' + p[0] + '" hidden></span></button>'; }).join("") +
     (S.ro ? "" : '<button id="nav-more" title="숨긴 메뉴 (개발 현황 · 앞으로 2주 · 근거 자료) — 안 쓰는 기능이라 감춰 두었다">⋯</button>') +
     '</div><div class="grid">' +
@@ -1099,17 +1099,23 @@ var PAGES = [["cal", "업무 달력"], ["plan", "월간계획"], ["tasks", "할 
 // 10/10 «안쓰는것좀 닫자 월간계획 닫아» — 월간계획(plan)도 숨김. dash/monthPlan 자료는 그대로다.
 // 10/10 «간부회의도 닫아» — 간부회의(exec)도 숨김.
 var HIDDEN_PAGES = ["plan", "exec", "dev", "week", "sheets"];
+// 선생님(읽기만) 메뉴 — 10/26(월)부터 강사는 **내신 참여표만** 본다 (10/24 마왕님 #102 · #106 «팀체크 축소»).
+//   업무보고 · 할 일 · 회의록 · 출결 · 반 명단은 업무판으로 갔다. 진도계획표 메뉴를 만들면 여기에 더한다.
+//   화면(sec-*)은 그대로 만든다 — render 함수 몇은 칸이 없으면 멈춘다. 메뉴 줄에서만 뺀다(HIDDEN_PAGES 와 같은 방식).
+var RO_PAGES = ["exams"];
+function navHidden(id) { return HIDDEN_PAGES.indexOf(id) >= 0 || (S.ro && RO_PAGES.indexOf(id) < 0); }
 function myPages() { return PAGES.filter(function (p) { return p[2] !== "owner" || !S.ro; }); }
 function isPage(id) { return myPages().some(function (p) { return p[0] === id; }); }
 function currentPage() {
   var h = (location.hash || "").replace("#", "");
-  var ok = function (v) { return isPage(v) && HIDDEN_PAGES.indexOf(v) < 0; };
+  var ok = function (v) { return isPage(v) && !navHidden(v); };
   if (ok(h)) return h;
   try { var v = localStorage.getItem("dash.page"); if (ok(v)) return v; } catch (e) {}
-  return "tasks";
+  return S.ro ? RO_PAGES[0] : "tasks";
 }
 function showPage(id) {
   if (!isPage(id)) id = "tasks";     // 선생님이 주소에 #minutes 를 쳐도 안 열린다
+  if (S.ro && RO_PAGES.indexOf(id) < 0) id = RO_PAGES[0];   // 10/26~ 선생님은 내신 참여표만 (종 · 단추로 할 일을 불러도)
   PAGES.forEach(function (p) { var el = $("#sec-" + p[0]); if (el) el.hidden = p[0] !== id; });
   $$(".nav button").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-page") === id); });
   try { localStorage.setItem("dash.page", id); } catch (e) {}
